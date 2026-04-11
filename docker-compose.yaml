@@ -1,0 +1,58 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    depends_on:
+      opensandbox:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: standalone
+      APP_SQLITE_PATH: /app/data/sqlite/deepdataagent.db
+      OPEN_SANDBOX_PROTOCOL: http
+      OPEN_SANDBOX_DOMAIN: opensandbox:8080
+      OPEN_SANDBOX_API_KEY: ${OPEN_SANDBOX_API_KEY:-deepdataagent-internal-key}
+      OPEN_SANDBOX_USE_SERVER_PROXY: "true"
+      OPEN_SANDBOX_DEFAULT_IMAGE: ${OPEN_SANDBOX_DEFAULT_IMAGE:-opensandbox/code-interpreter:latest}
+      OPEN_SANDBOX_DEFAULT_TIMEOUT_SECONDS: "1800"
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://localhost:8080/actuator/health" ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "18080:8080"
+    restart: unless-stopped
+    volumes:
+      - ./data/sqlite:/app/data/sqlite
+
+  opensandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.opensandbox
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+    expose:
+      - "8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: [ "CMD", "curl", "-fsS", "http://localhost:8080/health" ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./deploy/opensandbox/opensandbox.toml:/app/opensandbox.toml:ro

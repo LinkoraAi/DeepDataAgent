@@ -1,0 +1,10 @@
+.git
+.idea
+.mvn/wrapper/maven-wrapper.jar
+target
+core/core-backend/target
+core/core-frontend/dist
+core/core-frontend/node
+core/core-frontend/node_modules
+data/sqlite/*.db
+.env
