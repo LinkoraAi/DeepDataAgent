@@ -19,10 +19,37 @@ management:
 app:
   sqlite:
     path: ${APP_SQLITE_PATH:./data/sqlite/deepdataagent.db}
-  opensandbox:
-    protocol: ${OPEN_SANDBOX_PROTOCOL:http}
-    domain: ${OPEN_SANDBOX_DOMAIN:opensandbox:8080}
-    api-key: ${OPEN_SANDBOX_API_KEY:deepdataagent-internal-key}
-    use-server-proxy: ${OPEN_SANDBOX_USE_SERVER_PROXY:true}
-    default-image: ${OPEN_SANDBOX_DEFAULT_IMAGE:opensandbox/code-interpreter:latest}
-    default-timeout-seconds: ${OPEN_SANDBOX_DEFAULT_TIMEOUT_SECONDS:1800}
+  memory:
+    root-path: ${APP_MEMORY_ROOT_PATH:./data/memory}
+    index:
+      db-path: ${APP_MEMORY_INDEX_DB_PATH:}
+      rebuild-on-startup: ${APP_MEMORY_INDEX_REBUILD_ON_STARTUP:true}
+    chunking:
+      max-chars: ${APP_MEMORY_CHUNKING_MAX_CHARS:1200}
+      overlap-chars: ${APP_MEMORY_CHUNKING_OVERLAP_CHARS:120}
+    retrieve:
+      top-k: ${APP_MEMORY_RETRIEVE_TOP_K:8}
+      max-chars: ${APP_MEMORY_RETRIEVE_MAX_CHARS:4000}
+      rrf-k: ${APP_MEMORY_RETRIEVE_RRF_K:60}
+      min-score: ${APP_MEMORY_RETRIEVE_MIN_SCORE:0.0}
+    record:
+      min-round-size: ${APP_MEMORY_RECORD_MIN_ROUND_SIZE:2}
+      capture-full-conversation: ${APP_MEMORY_RECORD_CAPTURE_FULL_CONVERSATION:true}
+    temporal:
+      recall-boost-factor: ${APP_MEMORY_TEMPORAL_RECALL_BOOST_FACTOR:0.2}
+    io:
+      cache:
+        preload-files:
+          - MEMORY.md
+          - USER.md
+        flush-on-record: ${APP_MEMORY_IO_FLUSH_ON_RECORD:true}
+        max-cache-size: ${APP_MEMORY_IO_MAX_CACHE_SIZE:200}
+    vector:
+      dimension: ${APP_MEMORY_VECTOR_DIMENSION:1536}
+      distance-metric: ${APP_MEMORY_VECTOR_DISTANCE_METRIC:cosine}
+      extension-path: ${APP_MEMORY_SQLITE_VEC_EXTENSION_PATH:}
+  embedding:
+    base-url: ${APP_EMBEDDING_BASE_URL:https://api.openai.com/v1}
+    api-key: ${APP_EMBEDDING_API_KEY:}
+    model: ${APP_EMBEDDING_MODEL:text-embedding-3-small}
+    dimension: ${APP_EMBEDDING_DIMENSION:1536}
