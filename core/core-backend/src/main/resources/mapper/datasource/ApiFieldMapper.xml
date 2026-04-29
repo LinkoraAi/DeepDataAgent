@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.linkroa.deepdataagent.datasource.infrastructure.persistence.mapper.ApiFieldMapper">
+
+    <select id="selectByApiSchemaId" resultType="com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.ApiFieldEntity">
+        SELECT *
+        FROM api_field
+        WHERE api_schema_id = #{apiSchemaId}
+          AND is_deleted = 0
+        ORDER BY id ASC
+    </select>
+
+    <update id="deleteByApiSchemaId">
+        UPDATE api_field
+        SET is_deleted = 1,
+            updated_at = datetime('now')
+        WHERE api_schema_id = #{apiSchemaId}
+    </update>
+
+</mapper>

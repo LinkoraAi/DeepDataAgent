@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.linkroa.deepdataagent.datasource.infrastructure.persistence.mapper.DatasourceConnectionMapper">
+
+    <select id="selectByName" resultType="com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.DatasourceConnectionEntity">
+        SELECT *
+        FROM datasource_connection
+        WHERE name = #{name}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="selectAll" resultType="com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.DatasourceConnectionEntity">
+        SELECT *
+        FROM datasource_connection
+        WHERE is_deleted = 0
+        ORDER BY updated_at DESC
+    </select>
+
+    <select id="selectByCondition" resultType="com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.DatasourceConnectionEntity">
+        SELECT *
+        FROM datasource_connection
+        WHERE is_deleted = 0
+        <if test="keyword != null and keyword != ''">
+            AND name LIKE '%' || #{keyword} || '%'
+        </if>
+        <if test="type != null and type != ''">
+            AND type = #{type}
+        </if>
+        <if test="status != null and status != ''">
+            AND status = #{status}
+        </if>
+        ORDER BY updated_at DESC
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+
+    <select id="countByCondition" resultType="long">
+        SELECT COUNT(*)
+        FROM datasource_connection
+        WHERE is_deleted = 0
+        <if test="keyword != null and keyword != ''">
+            AND name LIKE '%' || #{keyword} || '%'
+        </if>
+        <if test="type != null and type != ''">
+            AND type = #{type}
+        </if>
+        <if test="status != null and status != ''">
+            AND status = #{status}
+        </if>
+    </select>
+
+    <update id="updateStatus">
+        UPDATE datasource_connection
+        SET status = #{status},
+            updated_at = #{updatedAt}
+        WHERE id = #{id}
+    </update>
+
+    <select id="selectByIdAndNotDeleted" resultType="com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.DatasourceConnectionEntity">
+        SELECT *
+        FROM datasource_connection
+        WHERE id = #{id}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <update id="softDeleteById">
+        UPDATE datasource_connection
+        SET is_deleted = 1,
+            updated_at = #{updatedAt}
+        WHERE id = #{id}
+    </update>
+
+</mapper>

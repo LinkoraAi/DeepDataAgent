@@ -1,4 +1,17 @@
 package com.linkroa.deepdataagent.datasource.domain.model;
 
-public record TableInfo(String name) {
+import java.time.LocalDateTime;
+
+/**
+ * 表信息领域模型
+ */
+public record TableInfo(
+        Long id,
+        Long databaseSchemaId,
+        String tableName,
+        String tableComment,
+        String tableCustomComment,
+        LocalDateTime createdAt,
+        LocalDateTime updatedAt
+) {
 }
