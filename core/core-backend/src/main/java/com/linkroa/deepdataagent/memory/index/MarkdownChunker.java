@@ -3,7 +3,6 @@ package com.linkroa.deepdataagent.memory.index;
 import com.linkroa.deepdataagent.memory.config.MemoryProperties;
 import com.linkroa.deepdataagent.memory.model.MemoryChunk;
 import com.linkroa.deepdataagent.memory.util.MemoryText;
-import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -21,7 +20,6 @@ import java.util.regex.Pattern;
  * <p>把单个 Markdown 记忆文件拆成可检索的连续行片段，同时解析 layer、
  * sub_category、memory_id、importance 和 created_at 等索引元数据。</p>
  */
-@Component
 public class MarkdownChunker {
 
     private static final Pattern MEMORY_ID = Pattern.compile("mem-[a-zA-Z0-9\\-]+");

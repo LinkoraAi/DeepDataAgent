@@ -2,7 +2,6 @@ package com.linkroa.deepdataagent.memory.retrieval;
 
 import com.linkroa.deepdataagent.memory.config.MemoryProperties;
 import com.linkroa.deepdataagent.memory.model.MemorySearchResult;
-import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -14,7 +13,6 @@ import java.util.List;
  * <p>根据记忆层级、子类别、创建时间、重要性和访问次数计算最终强度，
  * 让稳定知识慢慢衰减、会话事件更快衰减，同时对常被召回的记忆给予增强。</p>
  */
-@Component
 public class TemporalReranker {
 
     private final MemoryProperties properties;

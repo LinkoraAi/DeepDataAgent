@@ -2,24 +2,19 @@ package com.linkroa.deepdataagent.memory.index;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Component;
-
-import static com.linkroa.deepdataagent.memory.config.MemoryIndexJdbcConfiguration.JDBC_TEMPLATE_BEAN;
 
 /**
  * Creates the disposable SQLite index schema used by the memory module.
  */
-@Component
 public class MemoryIndexSchemaInitializer {
 
     private static final Logger log = LoggerFactory.getLogger(MemoryIndexSchemaInitializer.class);
 
     private final JdbcTemplate jdbcTemplate;
 
-    public MemoryIndexSchemaInitializer(@Qualifier(JDBC_TEMPLATE_BEAN) JdbcTemplate jdbcTemplate) {
+    public MemoryIndexSchemaInitializer(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

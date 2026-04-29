@@ -4,11 +4,8 @@ import com.linkroa.deepdataagent.memory.config.MemoryProperties;
 import com.linkroa.deepdataagent.memory.model.ConversationContext;
 import com.linkroa.deepdataagent.memory.model.ExtractedMemory;
 import com.linkroa.deepdataagent.memory.util.MemoryText;
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -27,8 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 文件，并通过内存缓存 + 脏文件批量刷盘降低 I/O 开销。索引层只能从这里读取或重建，
  * 不应把 SQLite 内容当作长期记忆真相源。</p>
  */
-@Component
-public class MarkdownFileManager {
+public class MarkdownFileManager implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(MarkdownFileManager.class);
     private static final DateTimeFormatter DATE = DateTimeFormatter.ISO_LOCAL_DATE.withZone(ZoneId.systemDefault());
@@ -44,7 +40,6 @@ public class MarkdownFileManager {
         this.rootPath = Path.of(properties.getRootPath()).toAbsolutePath().normalize();
     }
 
-    @PostConstruct
     public void initialize() {
         try {
             Files.createDirectories(rootPath);
@@ -160,10 +155,14 @@ public class MarkdownFileManager {
         }
     }
 
-    @PreDestroy
     public void shutdown() {
         flushDirtyFiles();
         contentCache.clear();
+    }
+
+    @Override
+    public void close() {
+        shutdown();
     }
 
     private String writeEpisodicMemory(ConversationContext context, ExtractedMemory memory) {

@@ -39,3 +39,4 @@ core/core-frontend/node_modules/
 # Runtime data
 data/sqlite/*.db
 .env
+docs/

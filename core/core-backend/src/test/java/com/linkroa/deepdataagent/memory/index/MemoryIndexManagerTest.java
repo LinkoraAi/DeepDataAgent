@@ -3,6 +3,7 @@ package com.linkroa.deepdataagent.memory.index;
 import com.linkroa.deepdataagent.memory.config.MemoryProperties;
 import com.linkroa.deepdataagent.memory.file.MarkdownFileManager;
 import com.linkroa.deepdataagent.memory.model.MemoryChunk;
+import com.linkroa.deepdataagent.memory.vector.JVectorMemoryStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,6 +37,9 @@ class MemoryIndexManagerTest {
     @Mock
     private MarkdownChunker chunker;
 
+    @Mock
+    private JVectorMemoryStore vectorStore;
+
     private MemoryIndexManager indexManager;
 
     @BeforeEach
@@ -57,7 +61,8 @@ class MemoryIndexManagerTest {
                 chunker,
                 new MemoryIndexSchemaInitializer(jdbcTemplate),
                 new MemoryIndexRepository(jdbcTemplate),
-                transactionTemplate
+                transactionTemplate,
+                vectorStore
         );
         indexManager.initialize();
     }

@@ -1,29 +1,42 @@
 package com.linkroa.deepdataagent.memory;
 
-import com.linkroa.deepdataagent.memory.config.MemoryProperties;
-import com.linkroa.deepdataagent.memory.extractor.SimpleMemoryExtractor;
-import com.linkroa.deepdataagent.memory.file.MarkdownFileManager;
-import com.linkroa.deepdataagent.memory.index.MemoryIndexManager;
-import com.linkroa.deepdataagent.memory.model.*;
-import com.linkroa.deepdataagent.memory.retrieval.HybridRetriever;
-import io.agentscope.core.message.Msg;
-import io.agentscope.core.message.MsgRole;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import com.linkroa.deepdataagent.memory.config.MemoryProperties;
+import com.linkroa.deepdataagent.memory.extractor.SimpleMemoryExtractor;
+import com.linkroa.deepdataagent.memory.file.MarkdownFileManager;
+import com.linkroa.deepdataagent.memory.index.MemoryIndexManager;
+import com.linkroa.deepdataagent.memory.model.ConversationContext;
+import com.linkroa.deepdataagent.memory.model.ExtractedMemory;
+import com.linkroa.deepdataagent.memory.model.MemoryChunk;
+import com.linkroa.deepdataagent.memory.model.MemorySearchResult;
+import com.linkroa.deepdataagent.memory.model.MemorySessionContext;
+import com.linkroa.deepdataagent.memory.model.RetrieveOptions;
+import com.linkroa.deepdataagent.memory.retrieval.HybridRetriever;
+
+import io.agentscope.core.message.Msg;
+import io.agentscope.core.message.MsgRole;
 
 @ExtendWith(MockitoExtension.class)
 class DeepLongMemoryTest {
@@ -41,19 +54,29 @@ class DeepLongMemoryTest {
     private HybridRetriever retriever;
 
     private MemoryProperties properties;
-
-    @InjectMocks
+    private MemorySessionContext sessionContext;
     private DeepLongMemory memory;
 
     @BeforeEach
     void setUp() {
         properties = new MemoryProperties();
-        memory = new DeepLongMemory(memoryExtractor, fileManager, indexManager, retriever, properties);
+        sessionContext = new MemorySessionContext(
+                "session-main",
+                "bound-user",
+                Instant.parse("2026-04-21T00:00:00Z")
+        );
+        memory = new DeepLongMemory(
+                memoryExtractor,
+                fileManager,
+                indexManager,
+                retriever,
+                properties,
+                sessionContext
+        );
     }
 
     @Test
     void should_syncExtractedMemories_when_record_given_validConversationAndQuery() {
-        // given
         ExtractedMemory extractedMemory = new ExtractedMemory(
                 "mem-pref",
                 "semantic",
@@ -67,18 +90,16 @@ class DeepLongMemoryTest {
         when(memoryExtractor.extractAndClassify(any(ConversationContext.class))).thenReturn(List.of(extractedMemory));
         when(fileManager.writeExtractedMemories(any(ConversationContext.class), any())).thenReturn(Set.of("USER.md"));
 
-        // when
         memory.record(List.of(
-                user("session-main", "请记住：我偏好 Spring Boot YAML 配置，不要 XML。"),
-                assistant("session-main", "已记录，后续会优先使用 YAML 配置。")
+                user("msg-session", "Remember that I prefer Spring Boot YAML configuration."),
+                assistant("msg-session", "Got it, I will prefer YAML configuration later.")
         )).block();
 
-        // then
         ArgumentCaptor<ConversationContext> contextCaptor = ArgumentCaptor.forClass(ConversationContext.class);
         verify(memoryExtractor).extractAndClassify(contextCaptor.capture());
         ConversationContext context = contextCaptor.getValue();
         assertEquals("session-main", context.sessionId());
-        assertEquals("user", context.userName());
+        assertEquals("bound-user", context.userName());
         assertEquals(2, context.messages().size());
 
         verify(fileManager).writeExtractedMemories(contextCaptor.capture(), any());
@@ -89,13 +110,10 @@ class DeepLongMemoryTest {
 
     @Test
     void should_skipRecord_when_record_given_messageCountBelowMinimum() {
-        // given
         properties.getRecord().setMinRoundSize(3);
 
-        // when
-        memory.record(List.of(user("session-skip", "请记住：我偏好 Redis。"))).block();
+        memory.record(List.of(user("msg-session", "Remember Redis."))).block();
 
-        // then
         verify(memoryExtractor, never()).extractAndClassify(any());
         verify(fileManager, never()).writeExtractedMemories(any(), any());
         verify(indexManager, never()).syncIncremental(any());
@@ -103,7 +121,6 @@ class DeepLongMemoryTest {
 
     @Test
     void should_notPersistFullConversation_when_record_given_episodicCaptureDisabled() {
-        // given
         properties.getRecord().setCaptureFullConversation(false);
         ExtractedMemory episodic = new ExtractedMemory(
                 "mem-episodic",
@@ -113,7 +130,7 @@ class DeepLongMemoryTest {
                 "Conversation transcript",
                 0.4,
                 Instant.parse("2026-04-21T00:00:00Z"),
-                "session-light"
+                "session-main"
         );
         ExtractedMemory semantic = new ExtractedMemory(
                 "mem-pref",
@@ -123,18 +140,16 @@ class DeepLongMemoryTest {
                 "Prefer MyBatis-Plus over JPA.",
                 0.8,
                 Instant.parse("2026-04-21T00:00:00Z"),
-                "session-light"
+                "session-main"
         );
         when(memoryExtractor.extractAndClassify(any(ConversationContext.class))).thenReturn(List.of(episodic, semantic));
         when(fileManager.writeExtractedMemories(any(ConversationContext.class), any())).thenReturn(Set.of("USER.md"));
 
-        // when
         memory.record(List.of(
-                user("session-light", "请记住：我偏好 MyBatis-Plus，不使用 JPA。"),
-                assistant("session-light", "已记录。")
+                user("msg-session", "Remember that I prefer MyBatis-Plus instead of JPA."),
+                assistant("msg-session", "Recorded.")
         )).block();
 
-        // then
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<ExtractedMemory>> memoriesCaptor = ArgumentCaptor.forClass(List.class);
         verify(fileManager).writeExtractedMemories(any(ConversationContext.class), memoriesCaptor.capture());
@@ -147,7 +162,6 @@ class DeepLongMemoryTest {
 
     @Test
     void should_returnEmptyOrFormattedResults_when_retrieve_given_blankOrMatchedQuery() {
-        // given
         MemoryChunk chunk = new MemoryChunk(
                 "chunk-1",
                 "mem-pref",
@@ -166,37 +180,150 @@ class DeepLongMemoryTest {
         when(retriever.hybridSearch(any(), any(RetrieveOptions.class))).thenReturn(List.of(result));
         when(fileManager.readLines("USER.md", 10, 14)).thenReturn("Prefer Spring Boot YAML configuration.");
 
-        // when
         String nullResult = memory.retrieve(null).block();
-        String blankResult = memory.retrieve(user("session-empty", "   ")).block();
-        String retrieved = memory.retrieve(user("session-main", "YAML 配置")).block();
+        String blankResult = memory.retrieve(user("msg-session", "   ")).block();
+        String retrieved = memory.retrieve(user("msg-session", "YAML configuration")).block();
 
-        // then
         assertEquals("", nullResult);
         assertEquals("", blankResult);
         assertNotNull(retrieved);
-        assertTrue(retrieved.contains("## 相关记忆"));
+        assertTrue(retrieved.startsWith("##"));
         assertTrue(retrieved.contains("mem-pref"));
         assertTrue(retrieved.contains("Prefer Spring Boot YAML configuration."));
         verify(retriever).hybridSearch(any(), any(RetrieveOptions.class));
         verify(fileManager).readLines("USER.md", 10, 14);
     }
 
-    private static Msg user(String sessionId, String content) {
+    @Test
+    void should_useBoundSessionId_when_record_given_conflictingMessageMetadata() {
+        ExtractedMemory extractedMemory = new ExtractedMemory(
+                "mem-test",
+                "semantic",
+                "fact",
+                "test fact",
+                "Test memory content",
+                0.9,
+                Instant.parse("2026-04-21T00:00:00Z"),
+                "session-main"
+        );
+        when(memoryExtractor.extractAndClassify(any(ConversationContext.class))).thenReturn(List.of(extractedMemory));
+        when(fileManager.writeExtractedMemories(any(ConversationContext.class), any())).thenReturn(Set.of("USER.md"));
+
+        memory.record(List.of(
+                user("session-from-message", "Test message"),
+                assistant("session-from-message", "Reply")
+        )).block();
+
+        ArgumentCaptor<ConversationContext> contextCaptor = ArgumentCaptor.forClass(ConversationContext.class);
+        verify(memoryExtractor).extractAndClassify(contextCaptor.capture());
+        assertEquals("session-main", contextCaptor.getValue().sessionId());
+    }
+
+    @Test
+    void should_useBoundUserName_when_record_given_messageNames() {
+        ExtractedMemory extractedMemory = new ExtractedMemory(
+                "mem-test",
+                "semantic",
+                "fact",
+                "test fact",
+                "Test memory content",
+                0.9,
+                Instant.parse("2026-04-21T00:00:00Z"),
+                "session-main"
+        );
+        when(memoryExtractor.extractAndClassify(any(ConversationContext.class))).thenReturn(List.of(extractedMemory));
+        when(fileManager.writeExtractedMemories(any(ConversationContext.class), any())).thenReturn(Set.of("USER.md"));
+
+        Msg userMsg = Msg.builder()
+                .name("alice")
+                .role(MsgRole.USER)
+                .metadata(Map.of("sessionId", "session-from-message"))
+                .timestamp("2026-04-21T00:00:00Z")
+                .textContent("Test message")
+                .build();
+        Msg assistantMsg = Msg.builder()
+                .name("assistant-bot")
+                .role(MsgRole.ASSISTANT)
+                .metadata(Map.of("sessionId", "session-from-message"))
+                .timestamp("2026-04-21T00:00:01Z")
+                .textContent("Reply")
+                .build();
+
+        memory.record(List.of(userMsg, assistantMsg)).block();
+
+        ArgumentCaptor<ConversationContext> contextCaptor = ArgumentCaptor.forClass(ConversationContext.class);
+        verify(memoryExtractor).extractAndClassify(contextCaptor.capture());
+        assertEquals("bound-user", contextCaptor.getValue().userName());
+    }
+
+    @Test
+    void should_parseAgentScopeDefaultTimestampFormat_when_record_given_frameworkFormattedTimestamp() {
+        MemorySessionContext laterSessionContext = new MemorySessionContext(
+                "session-main",
+                "bound-user",
+                Instant.parse("2026-04-21T01:00:00Z")
+        );
+        DeepLongMemory laterBoundMemory = new DeepLongMemory(
+                memoryExtractor,
+                fileManager,
+                indexManager,
+                retriever,
+                properties,
+                laterSessionContext
+        );
+        ExtractedMemory extractedMemory = new ExtractedMemory(
+                "mem-test",
+                "semantic",
+                "fact",
+                "test fact",
+                "Test memory content",
+                0.9,
+                Instant.parse("2026-04-21T00:00:00Z"),
+                "session-main"
+        );
+        when(memoryExtractor.extractAndClassify(any(ConversationContext.class))).thenReturn(List.of(extractedMemory));
+        when(fileManager.writeExtractedMemories(any(ConversationContext.class), any())).thenReturn(Set.of("USER.md"));
+
+        Msg userMsg = Msg.builder()
+                .name("user")
+                .role(MsgRole.USER)
+                .metadata(Map.of("sessionId", "session-from-message"))
+                .timestamp("2026-04-21 08:15:30.123")
+                .textContent("Test message")
+                .build();
+        Msg assistantMsg = Msg.builder()
+                .name("assistant")
+                .role(MsgRole.ASSISTANT)
+                .metadata(Map.of("sessionId", "session-from-message"))
+                .timestamp("2026-04-21 08:15:31.456")
+                .textContent("Reply")
+                .build();
+
+        laterBoundMemory.record(List.of(userMsg, assistantMsg)).block();
+
+        ArgumentCaptor<ConversationContext> contextCaptor = ArgumentCaptor.forClass(ConversationContext.class);
+        verify(memoryExtractor).extractAndClassify(contextCaptor.capture());
+        Instant expected = LocalDateTime.of(2026, 4, 21, 8, 15, 30, 123_000_000)
+                .atZone(ZoneId.systemDefault())
+                .toInstant();
+        assertEquals(expected, contextCaptor.getValue().createdAt());
+    }
+
+    private static Msg user(String metadataSessionId, String content) {
         return Msg.builder()
                 .name("user")
                 .role(MsgRole.USER)
-                .metadata(Map.of("sessionId", sessionId))
+                .metadata(Map.of("sessionId", metadataSessionId))
                 .timestamp("2026-04-21T00:00:00Z")
                 .textContent(content)
                 .build();
     }
 
-    private static Msg assistant(String sessionId, String content) {
+    private static Msg assistant(String metadataSessionId, String content) {
         return Msg.builder()
                 .name("assistant")
                 .role(MsgRole.ASSISTANT)
-                .metadata(Map.of("sessionId", sessionId))
+                .metadata(Map.of("sessionId", metadataSessionId))
                 .timestamp("2026-04-21T00:00:01Z")
                 .textContent(content)
                 .build();

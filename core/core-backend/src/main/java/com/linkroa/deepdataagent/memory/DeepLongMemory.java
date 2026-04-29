@@ -1,51 +1,91 @@
 package com.linkroa.deepdataagent.memory;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+
+import javax.sql.DataSource;
+
+import com.linkroa.deepdataagent.memory.config.MemoryIndexJdbcConfiguration;
 import com.linkroa.deepdataagent.memory.config.MemoryProperties;
+import com.linkroa.deepdataagent.memory.embedding.HashingMemoryEmbeddingModel;
 import com.linkroa.deepdataagent.memory.extractor.SimpleMemoryExtractor;
 import com.linkroa.deepdataagent.memory.file.MarkdownFileManager;
+import com.linkroa.deepdataagent.memory.index.MarkdownChunker;
 import com.linkroa.deepdataagent.memory.index.MemoryIndexManager;
+import com.linkroa.deepdataagent.memory.index.MemoryIndexRepository;
+import com.linkroa.deepdataagent.memory.index.MemoryIndexSchemaInitializer;
 import com.linkroa.deepdataagent.memory.model.ConversationContext;
 import com.linkroa.deepdataagent.memory.model.ConversationContext.ConversationMessage;
 import com.linkroa.deepdataagent.memory.model.ExtractedMemory;
 import com.linkroa.deepdataagent.memory.model.MemorySearchResult;
+import com.linkroa.deepdataagent.memory.model.MemorySessionContext;
 import com.linkroa.deepdataagent.memory.model.RetrieveOptions;
 import com.linkroa.deepdataagent.memory.retrieval.HybridRetriever;
+import com.linkroa.deepdataagent.memory.retrieval.HybridRetrieverImpl;
+import com.linkroa.deepdataagent.memory.retrieval.TemporalReranker;
+import com.linkroa.deepdataagent.memory.vector.JVectorMemoryStore;
+
 import io.agentscope.core.memory.LongTermMemory;
 import io.agentscope.core.message.Msg;
-import org.springframework.stereotype.Component;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.publisher.Mono;
 
-import java.time.Instant;
-import java.time.format.DateTimeParseException;
-import java.util.*;
-
 /**
- * AgentScope LongTermMemory 的主入口。
- *
- * <p>负责把框架传入的对话消息写入长期记忆，并在推理前按查询召回相关记忆。
- * 该类只编排流程：提取、Markdown 真相源写入、索引同步、检索和源文件回读分别委托给子组件完成。</p>
+ * Session-bound long-term memory implementation for DeepDataAgent.
  */
-@Component
-public class DeepLongMemory implements LongTermMemory {
+public class DeepLongMemory implements LongTermMemory, AutoCloseable {
+
+    private static final DateTimeFormatter AGENTSCOPE_TIMESTAMP_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     private final SimpleMemoryExtractor memoryExtractor;
     private final MarkdownFileManager fileManager;
     private final MemoryIndexManager indexManager;
     private final HybridRetriever retriever;
     private final MemoryProperties properties;
+    private final MemorySessionContext sessionContext;
+    private final List<AutoCloseable> ownedResources;
 
-    public DeepLongMemory(
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    DeepLongMemory(
             SimpleMemoryExtractor memoryExtractor,
             MarkdownFileManager fileManager,
             MemoryIndexManager indexManager,
             HybridRetriever retriever,
-            MemoryProperties properties
+            MemoryProperties properties,
+            MemorySessionContext sessionContext
     ) {
-        this.memoryExtractor = memoryExtractor;
-        this.fileManager = fileManager;
-        this.indexManager = indexManager;
-        this.retriever = retriever;
-        this.properties = properties;
+        this(memoryExtractor, fileManager, indexManager, retriever, properties, sessionContext, List.of());
+    }
+
+    private DeepLongMemory(
+            SimpleMemoryExtractor memoryExtractor,
+            MarkdownFileManager fileManager,
+            MemoryIndexManager indexManager,
+            HybridRetriever retriever,
+            MemoryProperties properties,
+            MemorySessionContext sessionContext,
+            List<AutoCloseable> ownedResources
+    ) {
+        this.memoryExtractor = Objects.requireNonNull(memoryExtractor, "memoryExtractor");
+        this.fileManager = Objects.requireNonNull(fileManager, "fileManager");
+        this.indexManager = Objects.requireNonNull(indexManager, "indexManager");
+        this.retriever = Objects.requireNonNull(retriever, "retriever");
+        this.properties = Objects.requireNonNull(properties, "properties");
+        this.sessionContext = Objects.requireNonNull(sessionContext, "sessionContext");
+        this.ownedResources = List.copyOf(ownedResources);
     }
 
     @Override
@@ -57,7 +97,6 @@ public class DeepLongMemory implements LongTermMemory {
 
             ConversationContext context = buildConversationContext(msgs);
             List<ExtractedMemory> memories = memoryExtractor.extractAndClassify(context);
-            // episodic 会保存完整会话片段，量最大；该开关用于需要更轻量记录时只保留沉淀后的长期事实/技能。
             if (!properties.getRecord().isCaptureFullConversation()) {
                 memories = memories.stream()
                         .filter(memory -> !"episodic".equals(memory.layer()))
@@ -67,7 +106,6 @@ public class DeepLongMemory implements LongTermMemory {
                 return;
             }
 
-            // 先写 Markdown 真相源，再同步可重建索引；索引失败不会改变“已经记住”的事实来源。
             Set<String> changedPaths = fileManager.writeExtractedMemories(context, memories);
             if (properties.getIo().getCache().isFlushOnRecord()) {
                 fileManager.flushDirtyFiles();
@@ -84,7 +122,6 @@ public class DeepLongMemory implements LongTermMemory {
                 return "";
             }
 
-            // 每次 retrieve 都从配置生成选项，方便运行期通过环境变量调整召回规模和输出长度。
             RetrieveOptions options = new RetrieveOptions(
                     properties.getRetrieve().getTopK(),
                     properties.getRetrieve().getMaxChars(),
@@ -101,7 +138,7 @@ public class DeepLongMemory implements LongTermMemory {
     }
 
     private String formatResultsFromSource(List<MemorySearchResult> results, int maxChars) {
-        StringBuilder builder = new StringBuilder("## 相关记忆\n\n");
+        StringBuilder builder = new StringBuilder("## Related Memory\n\n");
         int remaining = Math.max(maxChars, 500);
         for (MemorySearchResult result : results) {
             if (remaining <= 0) {
@@ -111,8 +148,7 @@ public class DeepLongMemory implements LongTermMemory {
             if (source.isBlank()) {
                 continue;
             }
-            // 检索命中的 content 只是索引副本；最终注入给模型的内容必须回读 Markdown 源文件。
-            String header = "### [%s] 来源: %s (行 %d-%d, score %.4f)\n"
+            String header = "### [%s] Source: %s (lines %d-%d, score %.4f)\n"
                     .formatted(
                             result.memoryId(),
                             result.filePath(),
@@ -132,21 +168,11 @@ public class DeepLongMemory implements LongTermMemory {
 
     private ConversationContext buildConversationContext(List<Msg> msgs) {
         List<ConversationMessage> messages = new ArrayList<>();
-        String sessionId = null;
-        String userName = null;
-        Instant createdAt = Instant.now();
+        Instant createdAt = sessionContext.createdAt();
 
-        // 尽量沿用上游会话元数据，缺失时再生成稳定兜底 ID，避免同一轮消息被写到随机文件。
         for (Msg msg : msgs) {
             if (msg == null) {
                 continue;
-            }
-            Map<String, Object> metadata = msg.getMetadata();
-            if (sessionId == null && metadata != null) {
-                sessionId = firstMetadata(metadata, "sessionId", "session_id", "conversationId", "threadId");
-            }
-            if (userName == null && "user".equalsIgnoreCase(roleOf(msg))) {
-                userName = msg.getName();
             }
             Instant timestamp = parseInstant(msg.getTimestamp());
             if (timestamp != null && timestamp.isBefore(createdAt)) {
@@ -160,23 +186,12 @@ public class DeepLongMemory implements LongTermMemory {
             ));
         }
 
-        if (sessionId == null || sessionId.isBlank()) {
-            sessionId = "session-" + Integer.toHexString(new LinkedHashSet<>(messages).hashCode());
-        }
-        if (userName == null || userName.isBlank()) {
-            userName = "user";
-        }
-        return new ConversationContext(sessionId, userName, createdAt, List.copyOf(messages));
-    }
-
-    private static String firstMetadata(Map<String, Object> metadata, String... keys) {
-        for (String key : keys) {
-            Object value = metadata.get(key);
-            if (value != null && !value.toString().isBlank()) {
-                return value.toString();
-            }
-        }
-        return null;
+        return new ConversationContext(
+                sessionContext.sessionId(),
+                sessionContext.userName(),
+                createdAt,
+                List.copyOf(messages)
+        );
     }
 
     private static Instant parseInstant(String timestamp) {
@@ -186,11 +201,105 @@ public class DeepLongMemory implements LongTermMemory {
         try {
             return Instant.parse(timestamp);
         } catch (DateTimeParseException ignored) {
-            return null;
+            try {
+                return LocalDateTime.parse(timestamp, AGENTSCOPE_TIMESTAMP_FORMATTER)
+                        .atZone(ZoneId.systemDefault())
+                        .toInstant();
+            } catch (DateTimeParseException ignoredAgain) {
+                return null;
+            }
         }
     }
 
     private static String roleOf(Msg msg) {
         return msg.getRole() == null ? "unknown" : msg.getRole().name().toLowerCase();
+    }
+
+    @Override
+    public void close() {
+        RuntimeException failure = null;
+        for (AutoCloseable resource : ownedResources) {
+            try {
+                resource.close();
+            } catch (Exception e) {
+                if (failure == null) {
+                    failure = new IllegalStateException("Failed to close memory resource", e);
+                } else {
+                    failure.addSuppressed(e);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    public static class Builder {
+        private String sessionId;
+        private String userName;
+        private MemoryProperties properties = new MemoryProperties();
+
+        public Builder sessionId(String sessionId) {
+            this.sessionId = sessionId;
+            return this;
+        }
+
+        public Builder userName(String userName) {
+            this.userName = userName;
+            return this;
+        }
+
+        public Builder properties(MemoryProperties properties) {
+            this.properties = Objects.requireNonNull(properties, "properties");
+            return this;
+        }
+
+        public DeepLongMemory build() {
+            MemorySessionContext sessionContext = new MemorySessionContext(sessionId, userName, null);
+            MemoryIndexJdbcConfiguration jdbcFactory = new MemoryIndexJdbcConfiguration();
+            DataSource dataSource = jdbcFactory.memoryIndexDataSource(properties);
+            JdbcTemplate jdbcTemplate = jdbcFactory.memoryIndexJdbcTemplate(dataSource);
+            PlatformTransactionManager transactionManager = jdbcFactory.memoryIndexTransactionManager(dataSource);
+            TransactionTemplate transactionTemplate = jdbcFactory.memoryIndexTransactionTemplate(transactionManager);
+
+            SimpleMemoryExtractor memoryExtractor = new SimpleMemoryExtractor();
+            MarkdownFileManager fileManager = new MarkdownFileManager(properties);
+            MarkdownChunker chunker = new MarkdownChunker(properties);
+            MemoryIndexSchemaInitializer schemaInitializer = new MemoryIndexSchemaInitializer(jdbcTemplate);
+            MemoryIndexRepository repository = new MemoryIndexRepository(jdbcTemplate);
+            HashingMemoryEmbeddingModel embeddingModel = new HashingMemoryEmbeddingModel(properties);
+            JVectorMemoryStore vectorStore = new JVectorMemoryStore(properties, embeddingModel);
+            MemoryIndexManager indexManager = new MemoryIndexManager(
+                    properties,
+                    fileManager,
+                    chunker,
+                    schemaInitializer,
+                    repository,
+                    transactionTemplate,
+                    vectorStore
+            );
+            TemporalReranker temporalReranker = new TemporalReranker(properties);
+            HybridRetriever retriever = new HybridRetrieverImpl(indexManager, temporalReranker);
+
+            fileManager.initialize();
+            indexManager.initialize();
+
+            List<AutoCloseable> resources = new ArrayList<>();
+            resources.add(fileManager);
+            resources.add(vectorStore);
+            if (dataSource instanceof AutoCloseable closeableDataSource) {
+                resources.add(closeableDataSource);
+            }
+
+            return new DeepLongMemory(
+                    memoryExtractor,
+                    fileManager,
+                    indexManager,
+                    retriever,
+                    properties,
+                    sessionContext,
+                    resources
+            );
+        }
     }
 }

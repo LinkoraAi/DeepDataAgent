@@ -4,7 +4,6 @@ import com.linkroa.deepdataagent.memory.model.ConversationContext;
 import com.linkroa.deepdataagent.memory.model.ConversationContext.ConversationMessage;
 import com.linkroa.deepdataagent.memory.model.ExtractedMemory;
 import com.linkroa.deepdataagent.memory.util.MemoryText;
-import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -18,7 +17,6 @@ import java.util.UUID;
  * <p>当前实现不依赖 LLM，使用明确的中文/英文信号词从对话中提取 episodic、
  * semantic 和 skills 记忆。后续接入 LLM 提取时，可以保持输出模型不变并替换该组件内部策略。</p>
  */
-@Component
 public class SimpleMemoryExtractor {
 
     public List<ExtractedMemory> extractAndClassify(ConversationContext context) {

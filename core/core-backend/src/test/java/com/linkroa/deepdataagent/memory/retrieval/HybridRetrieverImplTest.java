@@ -45,12 +45,13 @@ class HybridRetrieverImplTest {
         assertEquals(List.of(), blankResults);
         assertEquals(List.of(), nullResults);
         verify(indexManager, never()).keywordSearch(any(), any(Integer.class));
+        verify(indexManager, never()).vectorSearch(any(), any(Integer.class));
         verify(indexManager, never()).scanSearch(any(), any(Integer.class));
         verify(indexManager, never()).updateAccessCounts(any());
     }
 
     @Test
-    void should_mergeRankAndUpdateAccessCounts_when_hybridSearch_given_keywordAndSemanticMatches() {
+    void should_mergeRankAndUpdateAccessCounts_when_hybridSearch_given_keywordAndVectorMatches() {
         // given
         MemoryChunk chunk1 = chunk("chunk-1", "mem-yaml", "USER.md", "Prefer YAML");
         MemoryChunk chunk2 = chunk("chunk-2", "mem-rule", "MEMORY.md", "Use health checks");
@@ -59,7 +60,7 @@ class HybridRetrieverImplTest {
                 new ScoredChunk(chunk1, 0.9),
                 new ScoredChunk(chunk2, 0.4)
         ));
-        when(indexManager.scanSearch("YAML 配置", 6)).thenReturn(List.of(
+        when(indexManager.vectorSearch("YAML 配置", 6)).thenReturn(List.of(
                 new ScoredChunk(chunk2, 0.8)
         ));
         when(temporalReranker.rerank(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -76,7 +77,25 @@ class HybridRetrieverImplTest {
         ArgumentCaptor<List<MemorySearchResult>> rerankCaptor = ArgumentCaptor.forClass(List.class);
         verify(temporalReranker).rerank(rerankCaptor.capture());
         assertEquals(2, rerankCaptor.getValue().size());
+        verify(indexManager, never()).scanSearch(any(), any(Integer.class));
         verify(indexManager).updateAccessCounts(List.of("chunk-2", "chunk-1"));
+    }
+
+    @Test
+    void should_fallBackToScanSearch_when_hybridSearch_given_emptyVectorMatches() {
+        // given
+        MemoryChunk chunk = chunk("chunk-1", "mem-yaml", "USER.md", "Prefer YAML");
+        when(indexManager.keywordSearch(eq("YAML 配置"), eq(3))).thenReturn(List.of());
+        when(indexManager.vectorSearch(eq("YAML 配置"), eq(3))).thenReturn(List.of());
+        when(indexManager.scanSearch(eq("YAML 配置"), eq(3))).thenReturn(List.of(new ScoredChunk(chunk, 0.6)));
+
+        // when
+        List<MemorySearchResult> results = retriever.hybridSearch("YAML 配置", new RetrieveOptions(1, 1000, 60, 0.0, false));
+
+        // then
+        assertEquals(1, results.size());
+        assertEquals("chunk-1", results.getFirst().chunkId());
+        verify(indexManager).scanSearch("YAML 配置", 3);
     }
 
     @Test
@@ -84,6 +103,7 @@ class HybridRetrieverImplTest {
         // given
         MemoryChunk chunk = chunk("chunk-1", "mem-yaml", "USER.md", "Prefer YAML");
         when(indexManager.keywordSearch(eq("YAML 配置"), eq(3))).thenReturn(List.of(new ScoredChunk(chunk, 0.1)));
+        when(indexManager.vectorSearch(eq("YAML 配置"), eq(3))).thenReturn(List.of());
         when(indexManager.scanSearch(eq("YAML 配置"), eq(3))).thenReturn(List.of());
 
         // when
@@ -98,6 +118,7 @@ class HybridRetrieverImplTest {
         // given
         MemoryChunk chunk = chunk("chunk-1", "mem-yaml", "USER.md", "Prefer YAML");
         when(indexManager.keywordSearch(eq("YAML 配置"), eq(3))).thenReturn(List.of(new ScoredChunk(chunk, 0.1)));
+        when(indexManager.vectorSearch(eq("YAML 配置"), eq(3))).thenReturn(List.of());
         when(indexManager.scanSearch(eq("YAML 配置"), eq(3))).thenReturn(List.of());
 
         // when

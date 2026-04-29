@@ -5,19 +5,17 @@ import com.linkroa.deepdataagent.memory.file.MarkdownFileManager;
 import com.linkroa.deepdataagent.memory.model.MemoryChunk;
 import com.linkroa.deepdataagent.memory.model.ScoredChunk;
 import com.linkroa.deepdataagent.memory.util.MemoryText;
-import jakarta.annotation.PostConstruct;
+import com.linkroa.deepdataagent.memory.vector.JVectorMemoryStore;
+import com.linkroa.deepdataagent.memory.vector.VectorSearchHit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
-import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-
-import static com.linkroa.deepdataagent.memory.config.MemoryIndexJdbcConfiguration.TRANSACTION_TEMPLATE_BEAN;
+import java.util.Objects;
 
 /**
  * SQLite 索引生命周期管理器。
@@ -26,7 +24,6 @@ import static com.linkroa.deepdataagent.memory.config.MemoryIndexJdbcConfigurati
  * 对变更文件做增量同步，并提供关键词检索与文本扫描回退。该组件保存的是可丢弃索引，
  * Markdown 文件才是最终数据来源。</p>
  */
-@Component
 public class MemoryIndexManager {
 
     private static final Logger log = LoggerFactory.getLogger(MemoryIndexManager.class);
@@ -37,6 +34,7 @@ public class MemoryIndexManager {
     private final MemoryIndexSchemaInitializer schemaInitializer;
     private final MemoryIndexRepository repository;
     private final TransactionTemplate transactionTemplate;
+    private final JVectorMemoryStore vectorStore;
     private volatile boolean ftsAvailable = true;
 
     public MemoryIndexManager(
@@ -45,7 +43,8 @@ public class MemoryIndexManager {
             MarkdownChunker chunker,
             MemoryIndexSchemaInitializer schemaInitializer,
             MemoryIndexRepository repository,
-            @Qualifier(TRANSACTION_TEMPLATE_BEAN) TransactionTemplate transactionTemplate
+            TransactionTemplate transactionTemplate,
+            JVectorMemoryStore vectorStore
     ) {
         this.properties = properties;
         this.fileManager = fileManager;
@@ -53,9 +52,9 @@ public class MemoryIndexManager {
         this.schemaInitializer = schemaInitializer;
         this.repository = repository;
         this.transactionTemplate = transactionTemplate;
+        this.vectorStore = vectorStore;
     }
 
-    @PostConstruct
     public void initialize() {
         ftsAvailable = schemaInitializer.initializeSchema();
         if (properties.getIndex().isRebuildOnStartup()) {
@@ -65,6 +64,7 @@ public class MemoryIndexManager {
 
     public synchronized void rebuildAllIndexes() {
         transactionTemplate.executeWithoutResult(status -> repository.clearAll(ftsAvailable));
+        vectorStore.clear();
         syncIncremental(fileManager.scanMarkdownFiles());
     }
 
@@ -72,8 +72,12 @@ public class MemoryIndexManager {
         if (relativePaths == null || relativePaths.isEmpty()) {
             return;
         }
+        boolean changed = false;
         for (String path : relativePaths) {
-            syncFile(path);
+            changed |= syncFile(path);
+        }
+        if (changed) {
+            rebuildVectorIndex();
         }
     }
 
@@ -103,6 +107,16 @@ public class MemoryIndexManager {
                 .toList();
     }
 
+    public List<ScoredChunk> vectorSearch(String query, int limit) {
+        if (query == null || query.isBlank()) {
+            return List.of();
+        }
+        return vectorStore.search(query, Math.max(limit, 1)).stream()
+                .map(this::toScoredChunk)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
     public MemoryChunk findChunk(String chunkId) {
         return repository.findChunk(chunkId);
     }
@@ -115,15 +129,14 @@ public class MemoryIndexManager {
         }
     }
 
-    private void syncFile(String relativePath) {
+    private boolean syncFile(String relativePath) {
         String content = fileManager.readIfExists(relativePath);
         String hash = MemoryText.sha256(content);
         if (content.isBlank()) {
-            removeFile(relativePath);
-            return;
+            return removeFile(relativePath);
         }
         if (hash.equals(repository.currentFileHash(relativePath))) {
-            return;
+            return false;
         }
 
         List<MemoryChunk> chunks = chunker.chunk(relativePath, content);
@@ -146,13 +159,32 @@ public class MemoryIndexManager {
         } catch (DataAccessException e) {
             throw new IllegalStateException("Failed to sync memory index: " + relativePath, e);
         }
+        return true;
     }
 
-    private void removeFile(String relativePath) {
+    private boolean removeFile(String relativePath) {
         try {
             transactionTemplate.executeWithoutResult(status -> repository.removeFile(relativePath, ftsAvailable));
         } catch (DataAccessException e) {
             throw new IllegalStateException("Failed to remove memory index: " + relativePath, e);
+        }
+        return true;
+    }
+
+    private ScoredChunk toScoredChunk(VectorSearchHit hit) {
+        MemoryChunk chunk = repository.findChunk(hit.chunkId());
+        if (chunk == null) {
+            return null;
+        }
+        return new ScoredChunk(chunk, hit.score());
+    }
+
+    private void rebuildVectorIndex() {
+        try {
+            vectorStore.rebuild(repository.loadAllChunks());
+        } catch (RuntimeException e) {
+            log.warn("Failed to rebuild JVector memory index; keyword and scan search remain available: {}", e.getMessage());
+            log.debug("JVector memory index rebuild failure", e);
         }
     }
 

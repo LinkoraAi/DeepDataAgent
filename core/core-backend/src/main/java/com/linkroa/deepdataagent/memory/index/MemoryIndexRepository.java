@@ -3,10 +3,8 @@ package com.linkroa.deepdataagent.memory.index;
 import com.linkroa.deepdataagent.memory.model.MemoryChunk;
 import com.linkroa.deepdataagent.memory.model.ScoredChunk;
 import org.jspecify.annotations.NonNull;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
 
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -15,19 +13,16 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 
-import static com.linkroa.deepdataagent.memory.config.MemoryIndexJdbcConfiguration.JDBC_TEMPLATE_BEAN;
-
 /**
  * SQL boundary for the memory index.
  */
-@Repository
 public class MemoryIndexRepository {
 
     private static final String SELECT_CHUNKS = "SELECT * FROM chunks";
 
     private final JdbcTemplate jdbcTemplate;
 
-    public MemoryIndexRepository(@Qualifier(JDBC_TEMPLATE_BEAN) JdbcTemplate jdbcTemplate) {
+    public MemoryIndexRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

@@ -2,7 +2,6 @@ package com.linkroa.deepdataagent.memory.config;
 
 import lombok.Getter;
 import lombok.Setter;
-import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -15,7 +14,6 @@ import java.util.List;
  */
 @Getter
 @Setter
-@ConfigurationProperties(prefix = "app.memory")
 public class MemoryProperties {
 
     /**
@@ -54,6 +52,8 @@ public class MemoryProperties {
      * <p>SQLite 是从 Markdown 派生出的可重建索引层，不是长期记忆真相源。</p>
      */
     private Index index = new Index();
+
+    private Vector vector = new Vector();
 
     /**
      * 文件 I/O 配置。
@@ -205,6 +205,29 @@ public class MemoryProperties {
     /**
      * 文件 I/O 配置。
      */
+    @Getter
+    @Setter
+    public static class Vector {
+
+        private boolean enabled = true;
+
+        private int dimension = 1536;
+
+        private String distanceMetric = "cosine";
+
+        private String persistencePath = "";
+
+        private int maxDegree = 16;
+
+        private int beamWidth = 100;
+
+        private float neighborOverflow = 1.2f;
+
+        private float alpha = 1.2f;
+
+        private int rebuildThreshold = 0;
+    }
+
     @Getter
     @Setter
     public static class Io {

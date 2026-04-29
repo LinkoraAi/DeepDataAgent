@@ -45,9 +45,15 @@ app:
         flush-on-record: ${APP_MEMORY_IO_FLUSH_ON_RECORD:true}
         max-cache-size: ${APP_MEMORY_IO_MAX_CACHE_SIZE:200}
     vector:
+      enabled: ${APP_MEMORY_VECTOR_ENABLED:true}
       dimension: ${APP_MEMORY_VECTOR_DIMENSION:1536}
       distance-metric: ${APP_MEMORY_VECTOR_DISTANCE_METRIC:cosine}
-      extension-path: ${APP_MEMORY_SQLITE_VEC_EXTENSION_PATH:}
+      persistence-path: ${APP_MEMORY_VECTOR_PERSISTENCE_PATH:}
+      max-degree: ${APP_MEMORY_VECTOR_MAX_DEGREE:16}
+      beam-width: ${APP_MEMORY_VECTOR_BEAM_WIDTH:100}
+      neighbor-overflow: ${APP_MEMORY_VECTOR_NEIGHBOR_OVERFLOW:1.2}
+      alpha: ${APP_MEMORY_VECTOR_ALPHA:1.2}
+      rebuild-threshold: ${APP_MEMORY_VECTOR_REBUILD_THRESHOLD:0}
   embedding:
     base-url: ${APP_EMBEDDING_BASE_URL:https://api.openai.com/v1}
     api-key: ${APP_EMBEDDING_API_KEY:}
