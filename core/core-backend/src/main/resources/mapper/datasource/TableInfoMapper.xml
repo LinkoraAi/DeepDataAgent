@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.linkroa.deepdataagent.datasource.infrastructure.persistence.mapper.TableInfoMapper">
+
+    <select id="selectByDatabaseSchemaId" resultType="com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.TableInfoEntity">
+        SELECT *
+        FROM table_info
+        WHERE database_schema_id = #{databaseSchemaId}
+          AND is_deleted = 0
+        ORDER BY table_name ASC
+    </select>
+
+    <update id="updateTableCustomComment">
+        UPDATE table_info
+        SET table_custom_comment = #{tableCustomComment},
+            updated_at = datetime('now')
+        WHERE id = #{id}
+    </update>
+
+    <update id="softDeleteByDatabaseSchemaId">
+        UPDATE table_info
+        SET is_deleted = 1,
+            updated_at = datetime('now')
+        WHERE database_schema_id = #{databaseSchemaId}
+    </update>
+
+    <update id="softDeleteById">
+        UPDATE table_info
+        SET is_deleted = 1,
+            updated_at = datetime('now')
+        WHERE id = #{id}
+    </update>
+
+    <select id="selectByDatabaseSchemaIdAndKeyword" resultType="com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.TableInfoEntity">
+        SELECT *
+        FROM table_info
+        WHERE database_schema_id = #{databaseSchemaId}
+          AND is_deleted = 0
+        <if test="keyword != null and keyword != ''">
+            AND table_name LIKE '%' || #{keyword} || '%'
+        </if>
+        ORDER BY table_name ASC
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+
+    <select id="countByDatabaseSchemaIdAndKeyword" resultType="long">
+        SELECT COUNT(*)
+        FROM table_info
+        WHERE database_schema_id = #{databaseSchemaId}
+          AND is_deleted = 0
+        <if test="keyword != null and keyword != ''">
+            AND table_name LIKE '%' || #{keyword} || '%'
+        </if>
+    </select>
+
+    <select id="selectByDatabaseSchemaIdAndTableName" resultType="com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.TableInfoEntity">
+        SELECT *
+        FROM table_info
+        WHERE database_schema_id = #{databaseSchemaId}
+          AND table_name = #{tableName}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+</mapper>

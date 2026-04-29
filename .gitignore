@@ -40,3 +40,14 @@ core/core-frontend/node_modules/
 data/sqlite/*.db
 .env
 docs/
+
+# Trea
+.trae/
+
+# openspec
+openspec/
+
+# graphify
+graphify-out/
+
+AGENTS.md
