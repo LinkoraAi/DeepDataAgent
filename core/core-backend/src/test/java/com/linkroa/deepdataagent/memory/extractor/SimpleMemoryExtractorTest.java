@@ -20,7 +20,6 @@ class SimpleMemoryExtractorTest {
         // given
         ConversationContext context = new ConversationContext(
                 "session-test",
-                "user",
                 Instant.parse("2026-04-21T00:00:00Z"),
                 List.of(
                         new ConversationMessage("user", "user", "请记住：我偏好 Spring Boot YAML 配置，不要 XML。", null),
@@ -42,7 +41,6 @@ class SimpleMemoryExtractorTest {
         // given
         ConversationContext context = new ConversationContext(
                 "session-facts",
-                "user",
                 Instant.parse("2026-04-21T00:00:00Z"),
                 List.of(
                         new ConversationMessage("user", "user", "项目使用 PostgreSQL 15，接口统一 REST。", null),
@@ -71,7 +69,6 @@ class SimpleMemoryExtractorTest {
                 """;
         ConversationContext context = new ConversationContext(
                 "session-skill",
-                "user",
                 Instant.parse("2026-04-21T00:00:00Z"),
                 List.of(
                         new ConversationMessage("user", "user", "这个部署流程应该怎么做？", null),
@@ -92,7 +89,6 @@ class SimpleMemoryExtractorTest {
         // given
         ConversationContext context = new ConversationContext(
                 "session-chat",
-                "user",
                 Instant.parse("2026-04-21T00:00:00Z"),
                 List.of(
                         new ConversationMessage("user", "user", "你好，今天状态怎么样？", null),

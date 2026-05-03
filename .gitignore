@@ -36,7 +36,16 @@ core/core-frontend/dist/
 core/core-frontend/node/
 core/core-frontend/node_modules/
 
+## TRAE
+.trae/
+
+## OPENSPEC
+openspec/
+
 # Runtime data
 data/sqlite/*.db
 .env
 docs/
+
+# Git worktrees
+.worktrees/

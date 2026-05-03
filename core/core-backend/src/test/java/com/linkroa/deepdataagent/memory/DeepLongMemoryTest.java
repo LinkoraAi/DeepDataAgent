@@ -62,7 +62,6 @@ class DeepLongMemoryTest {
         properties = new MemoryProperties();
         sessionContext = new MemorySessionContext(
                 "session-main",
-                "bound-user",
                 Instant.parse("2026-04-21T00:00:00Z")
         );
         memory = new DeepLongMemory(
@@ -99,7 +98,6 @@ class DeepLongMemoryTest {
         verify(memoryExtractor).extractAndClassify(contextCaptor.capture());
         ConversationContext context = contextCaptor.getValue();
         assertEquals("session-main", context.sessionId());
-        assertEquals("bound-user", context.userName());
         assertEquals(2, context.messages().size());
 
         verify(fileManager).writeExtractedMemories(contextCaptor.capture(), any());
@@ -220,47 +218,9 @@ class DeepLongMemoryTest {
     }
 
     @Test
-    void should_useBoundUserName_when_record_given_messageNames() {
-        ExtractedMemory extractedMemory = new ExtractedMemory(
-                "mem-test",
-                "semantic",
-                "fact",
-                "test fact",
-                "Test memory content",
-                0.9,
-                Instant.parse("2026-04-21T00:00:00Z"),
-                "session-main"
-        );
-        when(memoryExtractor.extractAndClassify(any(ConversationContext.class))).thenReturn(List.of(extractedMemory));
-        when(fileManager.writeExtractedMemories(any(ConversationContext.class), any())).thenReturn(Set.of("USER.md"));
-
-        Msg userMsg = Msg.builder()
-                .name("alice")
-                .role(MsgRole.USER)
-                .metadata(Map.of("sessionId", "session-from-message"))
-                .timestamp("2026-04-21T00:00:00Z")
-                .textContent("Test message")
-                .build();
-        Msg assistantMsg = Msg.builder()
-                .name("assistant-bot")
-                .role(MsgRole.ASSISTANT)
-                .metadata(Map.of("sessionId", "session-from-message"))
-                .timestamp("2026-04-21T00:00:01Z")
-                .textContent("Reply")
-                .build();
-
-        memory.record(List.of(userMsg, assistantMsg)).block();
-
-        ArgumentCaptor<ConversationContext> contextCaptor = ArgumentCaptor.forClass(ConversationContext.class);
-        verify(memoryExtractor).extractAndClassify(contextCaptor.capture());
-        assertEquals("bound-user", contextCaptor.getValue().userName());
-    }
-
-    @Test
     void should_parseAgentScopeDefaultTimestampFormat_when_record_given_frameworkFormattedTimestamp() {
         MemorySessionContext laterSessionContext = new MemorySessionContext(
                 "session-main",
-                "bound-user",
                 Instant.parse("2026-04-21T01:00:00Z")
         );
         DeepLongMemory laterBoundMemory = new DeepLongMemory(

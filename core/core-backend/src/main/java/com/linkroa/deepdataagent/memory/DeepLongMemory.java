@@ -34,6 +34,7 @@ import com.linkroa.deepdataagent.memory.vector.JVectorMemoryStore;
 
 import io.agentscope.core.memory.LongTermMemory;
 import io.agentscope.core.message.Msg;
+import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -188,7 +189,6 @@ public class DeepLongMemory implements LongTermMemory, AutoCloseable {
 
         return new ConversationContext(
                 sessionContext.sessionId(),
-                sessionContext.userName(),
                 createdAt,
                 List.copyOf(messages)
         );
@@ -234,18 +234,38 @@ public class DeepLongMemory implements LongTermMemory, AutoCloseable {
         }
     }
 
+    /**
+     * Builder for creating DeepLongMemory instances.
+     * 
+     * <p>Supports three construction paths:
+     * <ol>
+     *   <li><b>Spring-managed infrastructure</b>: Provide dataSource, jdbcTemplate, and transactionTemplate</li>
+     *   <li><b>ApplicationContext resolution</b>: Provide applicationContext to resolve beans automatically</li>
+     *   <li><b>Default creation</b>: No dependencies provided, creates all infrastructure internally</li>
+     * </ol>
+     * 
+     * <p>When using paths 1 or 2, the created DeepLongMemory instance will NOT close
+     * shared infrastructure resources (DataSource, VectorStore, etc.) on close().
+     * Only session-specific resources will be cleaned up.
+     */
     public static class Builder {
         private String sessionId;
-        private String userName;
         private MemoryProperties properties = new MemoryProperties();
+        
+        // Spring 管理的基础设施
+        private JdbcTemplate jdbcTemplate;
+        private TransactionTemplate transactionTemplate;
+        
+        // 完全自定义组件
+        private JVectorMemoryStore vectorStore;
+        private MemoryIndexManager indexManager;
+        private MarkdownFileManager fileManager;
+        private HybridRetriever retriever;
+        private SimpleMemoryExtractor memoryExtractor;
+        private boolean skipInitialization = false;
 
         public Builder sessionId(String sessionId) {
             this.sessionId = sessionId;
-            return this;
-        }
-
-        public Builder userName(String userName) {
-            this.userName = userName;
             return this;
         }
 
@@ -254,48 +274,140 @@ public class DeepLongMemory implements LongTermMemory, AutoCloseable {
             return this;
         }
 
-        public DeepLongMemory build() {
-            MemorySessionContext sessionContext = new MemorySessionContext(sessionId, userName, null);
+        public Builder jdbcTemplate(JdbcTemplate jdbcTemplate) {
+            this.jdbcTemplate = jdbcTemplate;
+            return this;
+        }
+
+        public Builder transactionTemplate(TransactionTemplate transactionTemplate) {
+            this.transactionTemplate = transactionTemplate;
+            return this;
+        }
+
+        public Builder vectorStore(JVectorMemoryStore vectorStore) {
+            this.vectorStore = vectorStore;
+            return this;
+        }
+
+        public Builder indexManager(MemoryIndexManager indexManager) {
+            this.indexManager = indexManager;
+            return this;
+        }
+
+        public Builder fileManager(MarkdownFileManager fileManager) {
+            this.fileManager = fileManager;
+            return this;
+        }
+
+        public Builder retriever(HybridRetriever retriever) {
+            this.retriever = retriever;
+            return this;
+        }
+
+        public Builder memoryExtractor(SimpleMemoryExtractor memoryExtractor) {
+            this.memoryExtractor = memoryExtractor;
+            return this;
+        }
+
+        /**
+         * Skip initialization of file manager and index manager.
+         * 
+         * <p>Use this when the components are already initialized (e.g., Spring-managed beans).
+         * This avoids redundant initialization and potential performance issues like
+         * rebuilding indexes on every session creation.
+         * 
+         * @param skip true to skip initialization
+         * @return this builder
+         */
+        public Builder skipInitialization(boolean skip) {
+            this.skipInitialization = skip;
+            return this;
+        }
+
+        private record Infrastructure(
+                DataSource dataSource,
+                JdbcTemplate jdbcTemplate,
+                TransactionTemplate transactionTemplate,
+                boolean springManaged
+        ) {}
+
+        private record Components(
+                SimpleMemoryExtractor extractor,
+                MarkdownFileManager fileManager,
+                MemoryIndexManager indexManager,
+                JVectorMemoryStore vectorStore,
+                HybridRetriever retriever
+        ) {}
+
+        private Infrastructure resolveInfrastructure() {
+            // 路径：提供了 Spring 基础设施
+            if (jdbcTemplate != null && transactionTemplate != null) {
+                // 使用 Spring 管理的基础设施，DataSource 不直接暴露
+                return new Infrastructure(null, jdbcTemplate, transactionTemplate, true);
+            }
+            
+            // 路径：创建默认基础设施（当前行为）
             MemoryIndexJdbcConfiguration jdbcFactory = new MemoryIndexJdbcConfiguration();
-            DataSource dataSource = jdbcFactory.memoryIndexDataSource(properties);
-            JdbcTemplate jdbcTemplate = jdbcFactory.memoryIndexJdbcTemplate(dataSource);
-            PlatformTransactionManager transactionManager = jdbcFactory.memoryIndexTransactionManager(dataSource);
-            TransactionTemplate transactionTemplate = jdbcFactory.memoryIndexTransactionTemplate(transactionManager);
+            DataSource ds = jdbcFactory.memoryIndexDataSource(properties);
+            JdbcTemplate jt = jdbcFactory.memoryIndexJdbcTemplate(ds);
+            PlatformTransactionManager transactionManager = jdbcFactory.memoryIndexTransactionManager(ds);
+            TransactionTemplate tt = jdbcFactory.memoryIndexTransactionTemplate(transactionManager);
+            return new Infrastructure(ds, jt, tt, false);
+        }
 
-            SimpleMemoryExtractor memoryExtractor = new SimpleMemoryExtractor();
-            MarkdownFileManager fileManager = new MarkdownFileManager(properties);
+        private Components resolveComponents(Infrastructure infra) {
+            SimpleMemoryExtractor extractor = memoryExtractor != null ? memoryExtractor : new SimpleMemoryExtractor();
+            MarkdownFileManager fm = fileManager != null ? fileManager : new MarkdownFileManager(properties);
             MarkdownChunker chunker = new MarkdownChunker(properties);
-            MemoryIndexSchemaInitializer schemaInitializer = new MemoryIndexSchemaInitializer(jdbcTemplate);
-            MemoryIndexRepository repository = new MemoryIndexRepository(jdbcTemplate);
+            MemoryIndexSchemaInitializer schemaInit = new MemoryIndexSchemaInitializer(infra.jdbcTemplate());
+            MemoryIndexRepository repository = new MemoryIndexRepository(infra.jdbcTemplate());
             HashingMemoryEmbeddingModel embeddingModel = new HashingMemoryEmbeddingModel(properties);
-            JVectorMemoryStore vectorStore = new JVectorMemoryStore(properties, embeddingModel);
-            MemoryIndexManager indexManager = new MemoryIndexManager(
-                    properties,
-                    fileManager,
-                    chunker,
-                    schemaInitializer,
-                    repository,
-                    transactionTemplate,
-                    vectorStore
-            );
+            JVectorMemoryStore vs = vectorStore != null ? vectorStore : new JVectorMemoryStore(properties, embeddingModel);
+            MemoryIndexManager im = indexManager != null ? indexManager : new MemoryIndexManager(
+                    properties, fm, chunker, schemaInit, repository, infra.transactionTemplate(), vs);
             TemporalReranker temporalReranker = new TemporalReranker(properties);
-            HybridRetriever retriever = new HybridRetrieverImpl(indexManager, temporalReranker);
+            HybridRetriever r = retriever != null ? retriever : new HybridRetrieverImpl(im, temporalReranker);
+            
+            return new Components(extractor, fm, im, vs, r);
+        }
 
-            fileManager.initialize();
-            indexManager.initialize();
-
+        public DeepLongMemory build() {
+            if (sessionId == null || sessionId.isBlank()) {
+                throw new IllegalArgumentException("sessionId must not be blank");
+            }
+            
+            MemorySessionContext sessionContext = new MemorySessionContext(sessionId);
+            Infrastructure infra = resolveInfrastructure();
+            Components components = resolveComponents(infra);
+            
+            // 仅在未跳过时初始化
+            if (!skipInitialization) {
+                components.fileManager().initialize();
+                components.indexManager().initialize();
+            }
+            
             List<AutoCloseable> resources = new ArrayList<>();
-            resources.add(fileManager);
-            resources.add(vectorStore);
-            if (dataSource instanceof AutoCloseable closeableDataSource) {
+            
+            // 仅当我们创建了 fileManager 时才跟踪
+            if (fileManager == null) {
+                resources.add(components.fileManager());
+            }
+            
+            // 仅当我们创建了 vectorStore 时才跟踪
+            if (vectorStore == null) {
+                resources.add(components.vectorStore());
+            }
+            
+            // 仅当基础设施不是 Spring 管理时才跟踪 DataSource
+            if (!infra.springManaged() && infra.dataSource() instanceof AutoCloseable closeableDataSource) {
                 resources.add(closeableDataSource);
             }
-
+            
             return new DeepLongMemory(
-                    memoryExtractor,
-                    fileManager,
-                    indexManager,
-                    retriever,
+                    components.extractor(),
+                    components.fileManager(),
+                    components.indexManager(),
+                    components.retriever(),
                     properties,
                     sessionContext,
                     resources

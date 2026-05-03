@@ -65,7 +65,6 @@ class MarkdownFileManagerTest {
         MarkdownFileManager fileManager = fileManager();
         ConversationContext context = new ConversationContext(
                 "session-file",
-                "user",
                 Instant.parse("2026-04-21T00:00:00Z"),
                 List.of()
         );
