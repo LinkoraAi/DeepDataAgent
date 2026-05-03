@@ -23,7 +23,8 @@ import org.springframework.test.context.TestPropertySource;
 @TestPropertySource(properties = {
     "app.memory.root-path=target/test-memory-integration",
     "app.memory.vector.dimension=64",
-    "app.memory.index.rebuild-on-startup=false"
+    "app.memory.index.rebuild-on-startup=false",
+    "app.memory.extractor.type=fallback"
 })
 class DeepLongMemorySpringIntegrationTest {
 

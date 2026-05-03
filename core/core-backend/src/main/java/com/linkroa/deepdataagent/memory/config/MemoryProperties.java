@@ -73,6 +73,13 @@ public class MemoryProperties {
     private Temporal temporal = new Temporal();
 
     /**
+     * 记忆提取器配置。
+     *
+     * <p>控制使用哪种提取策略（LLM 或降级方案）以及 LLM 相关参数。</p>
+     */
+    private Extractor extractor = new Extractor();
+
+    /**
      * Markdown 分块参数配置。
      */
     @Getter
@@ -296,5 +303,67 @@ public class MemoryProperties {
          * {@code APP_MEMORY_TEMPORAL_RECALL_BOOST_FACTOR}。</p>
          */
         private double recallBoostFactor = 0.2;
+    }
+
+    /**
+     * 记忆提取器配置。
+     */
+    @Getter
+    @Setter
+    public static class Extractor {
+
+        /**
+         * 提取器类型。
+         *
+         * <p>默认 {@code llm}，使用 LLM 进行智能记忆提取。设置为 {@code fallback} 时使用
+         * 基于关键词匹配的降级提取器，适用于 LLM 不可用或成本敏感的场景。
+         * 对应配置：{@code app.memory.extractor.type} / {@code APP_MEMORY_EXTRACTOR_TYPE}。</p>
+         */
+        private String type = "llm";
+
+        /**
+         * LLM 提供商。
+         *
+         * <p>默认 {@code dashscope}。支持 {@code dashscope}（通义千问）和 {@code openai}。
+         * 对应配置：{@code app.memory.extractor.llm.provider} /
+         * {@code APP_MEMORY_EXTRACTOR_LLM_PROVIDER}。</p>
+         */
+        private String llmProvider = "dashscope";
+
+        /**
+         * LLM 模型名称。
+         *
+         * <p>默认 {@code qwen-plus}。使用 DashScope 时可配置为 qwen-turbo/qwen-plus/qwen-max 等。
+         * 对应配置：{@code app.memory.extractor.llm.model-name} /
+         * {@code APP_MEMORY_EXTRACTOR_LLM_MODEL_NAME}。</p>
+         */
+        private String llmModelName = "qwen-plus";
+
+        /**
+         * LLM 温度参数。
+         *
+         * <p>默认 {@code 0.3}。较低的温度使输出更稳定一致，适合结构化提取任务。
+         * 对应配置：{@code app.memory.extractor.llm.temperature} /
+         * {@code APP_MEMORY_EXTRACTOR_LLM_TEMPERATURE}。</p>
+         */
+        private double llmTemperature = 0.3;
+
+        /**
+         * LLM 调用超时时间（秒）。
+         *
+         * <p>默认 {@code 30} 秒。超时后提取器将返回空列表并记录警告。
+         * 对应配置：{@code app.memory.extractor.llm.timeout-seconds} /
+         * {@code APP_MEMORY_EXTRACTOR_LLM_TIMEOUT_SECONDS}。</p>
+         */
+        private int llmTimeoutSeconds = 30;
+
+        /**
+         * LLM 调用失败时最大重试次数。
+         *
+         * <p>默认 {@code 1}。网络错误时会重试指定次数，超过后降级到 fallback。
+         * 对应配置：{@code app.memory.extractor.llm.max-retries} /
+         * {@code APP_MEMORY_EXTRACTOR_LLM_MAX_RETRIES}。</p>
+         */
+        private int llmMaxRetries = 1;
     }
 }

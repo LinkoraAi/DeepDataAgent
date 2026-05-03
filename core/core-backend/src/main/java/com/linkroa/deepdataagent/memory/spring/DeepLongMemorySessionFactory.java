@@ -4,7 +4,7 @@ import java.util.Objects;
 
 import com.linkroa.deepdataagent.memory.DeepLongMemory;
 import com.linkroa.deepdataagent.memory.config.MemoryProperties;
-import com.linkroa.deepdataagent.memory.extractor.SimpleMemoryExtractor;
+import com.linkroa.deepdataagent.memory.extractor.MemoryExtractor;
 import com.linkroa.deepdataagent.memory.file.MarkdownFileManager;
 import com.linkroa.deepdataagent.memory.index.MemoryIndexManager;
 import com.linkroa.deepdataagent.memory.retrieval.HybridRetriever;
@@ -22,7 +22,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * to create lightweight session-specific DeepLongMemory instances via the enhanced Builder API.
  * 
  * <p>When a factory-created DeepLongMemory instance is closed, only session-specific resources
- * (SimpleMemoryExtractor, session context) are cleaned up. Shared infrastructure resources
+ * (MemoryExtractor, session context) are cleaned up. Shared infrastructure resources
  * remain available for other sessions.
  */
 public class DeepLongMemorySessionFactory {
@@ -34,6 +34,7 @@ public class DeepLongMemorySessionFactory {
     private final MarkdownFileManager fileManager;
     private final HybridRetriever retriever;
     private final MemoryProperties defaultProperties;
+    private final MemoryExtractor memoryExtractor;
 
     public DeepLongMemorySessionFactory(
             JdbcTemplate jdbcTemplate,
@@ -42,7 +43,8 @@ public class DeepLongMemorySessionFactory {
             MemoryIndexManager indexManager,
             MarkdownFileManager fileManager,
             HybridRetriever retriever,
-            MemoryProperties defaultProperties) {
+            MemoryProperties defaultProperties,
+            MemoryExtractor memoryExtractor) {
         this.jdbcTemplate = Objects.requireNonNull(jdbcTemplate, "jdbcTemplate");
         this.transactionTemplate = Objects.requireNonNull(transactionTemplate, "transactionTemplate");
         this.vectorStore = Objects.requireNonNull(vectorStore, "vectorStore");
@@ -50,6 +52,7 @@ public class DeepLongMemorySessionFactory {
         this.fileManager = Objects.requireNonNull(fileManager, "fileManager");
         this.retriever = Objects.requireNonNull(retriever, "retriever");
         this.defaultProperties = Objects.requireNonNull(defaultProperties, "defaultProperties");
+        this.memoryExtractor = Objects.requireNonNull(memoryExtractor, "memoryExtractor");
     }
 
     /**
@@ -87,8 +90,8 @@ public class DeepLongMemorySessionFactory {
                 .indexManager(indexManager)
                 .fileManager(fileManager)
                 .retriever(retriever)
-                .memoryExtractor(new SimpleMemoryExtractor())
-                .skipInitialization(true)  // Spring beans already initialized
+                .memoryExtractor(memoryExtractor)
+                .skipInitialization(true)
                 .build();
     }
 }

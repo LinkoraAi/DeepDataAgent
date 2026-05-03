@@ -15,7 +15,8 @@ import javax.sql.DataSource;
 import com.linkroa.deepdataagent.memory.config.MemoryIndexJdbcConfiguration;
 import com.linkroa.deepdataagent.memory.config.MemoryProperties;
 import com.linkroa.deepdataagent.memory.embedding.HashingMemoryEmbeddingModel;
-import com.linkroa.deepdataagent.memory.extractor.SimpleMemoryExtractor;
+import com.linkroa.deepdataagent.memory.extractor.FallbackMemoryExtractor;
+import com.linkroa.deepdataagent.memory.extractor.MemoryExtractor;
 import com.linkroa.deepdataagent.memory.file.MarkdownFileManager;
 import com.linkroa.deepdataagent.memory.index.MarkdownChunker;
 import com.linkroa.deepdataagent.memory.index.MemoryIndexManager;
@@ -48,7 +49,7 @@ public class DeepLongMemory implements LongTermMemory, AutoCloseable {
     private static final DateTimeFormatter AGENTSCOPE_TIMESTAMP_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
-    private final SimpleMemoryExtractor memoryExtractor;
+    private final MemoryExtractor memoryExtractor;
     private final MarkdownFileManager fileManager;
     private final MemoryIndexManager indexManager;
     private final HybridRetriever retriever;
@@ -61,7 +62,7 @@ public class DeepLongMemory implements LongTermMemory, AutoCloseable {
     }
 
     DeepLongMemory(
-            SimpleMemoryExtractor memoryExtractor,
+            MemoryExtractor memoryExtractor,
             MarkdownFileManager fileManager,
             MemoryIndexManager indexManager,
             HybridRetriever retriever,
@@ -72,7 +73,7 @@ public class DeepLongMemory implements LongTermMemory, AutoCloseable {
     }
 
     private DeepLongMemory(
-            SimpleMemoryExtractor memoryExtractor,
+            MemoryExtractor memoryExtractor,
             MarkdownFileManager fileManager,
             MemoryIndexManager indexManager,
             HybridRetriever retriever,
@@ -261,7 +262,7 @@ public class DeepLongMemory implements LongTermMemory, AutoCloseable {
         private MemoryIndexManager indexManager;
         private MarkdownFileManager fileManager;
         private HybridRetriever retriever;
-        private SimpleMemoryExtractor memoryExtractor;
+        private MemoryExtractor memoryExtractor;
         private boolean skipInitialization = false;
 
         public Builder sessionId(String sessionId) {
@@ -304,7 +305,7 @@ public class DeepLongMemory implements LongTermMemory, AutoCloseable {
             return this;
         }
 
-        public Builder memoryExtractor(SimpleMemoryExtractor memoryExtractor) {
+        public Builder memoryExtractor(MemoryExtractor memoryExtractor) {
             this.memoryExtractor = memoryExtractor;
             return this;
         }
@@ -332,7 +333,7 @@ public class DeepLongMemory implements LongTermMemory, AutoCloseable {
         ) {}
 
         private record Components(
-                SimpleMemoryExtractor extractor,
+                MemoryExtractor extractor,
                 MarkdownFileManager fileManager,
                 MemoryIndexManager indexManager,
                 JVectorMemoryStore vectorStore,
@@ -356,7 +357,7 @@ public class DeepLongMemory implements LongTermMemory, AutoCloseable {
         }
 
         private Components resolveComponents(Infrastructure infra) {
-            SimpleMemoryExtractor extractor = memoryExtractor != null ? memoryExtractor : new SimpleMemoryExtractor();
+            MemoryExtractor extractor = memoryExtractor != null ? memoryExtractor : new FallbackMemoryExtractor();
             MarkdownFileManager fm = fileManager != null ? fileManager : new MarkdownFileManager(properties);
             MarkdownChunker chunker = new MarkdownChunker(properties);
             MemoryIndexSchemaInitializer schemaInit = new MemoryIndexSchemaInitializer(infra.jdbcTemplate());

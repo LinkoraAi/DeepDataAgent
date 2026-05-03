@@ -6,6 +6,9 @@ import com.linkroa.deepdataagent.memory.DeepLongMemory;
 import com.linkroa.deepdataagent.memory.config.MemoryIndexJdbcConfiguration;
 import com.linkroa.deepdataagent.memory.config.MemoryProperties;
 import com.linkroa.deepdataagent.memory.embedding.HashingMemoryEmbeddingModel;
+import com.linkroa.deepdataagent.memory.extractor.FallbackMemoryExtractor;
+import com.linkroa.deepdataagent.memory.extractor.LLMMemoryExtractor;
+import com.linkroa.deepdataagent.memory.extractor.MemoryExtractor;
 import com.linkroa.deepdataagent.memory.file.MarkdownFileManager;
 import com.linkroa.deepdataagent.memory.index.MarkdownChunker;
 import com.linkroa.deepdataagent.memory.index.MemoryIndexManager;
@@ -16,9 +19,14 @@ import com.linkroa.deepdataagent.memory.retrieval.HybridRetrieverImpl;
 import com.linkroa.deepdataagent.memory.retrieval.TemporalReranker;
 import com.linkroa.deepdataagent.memory.vector.JVectorMemoryStore;
 
+import io.agentscope.core.model.ChatModelBase;
+import io.agentscope.core.model.DashScopeChatModel;
+import io.agentscope.core.model.OpenAIChatModel;
+
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -142,9 +150,42 @@ public class MemoryAutoConfiguration {
             MemoryIndexManager indexManager,
             MarkdownFileManager fileManager,
             HybridRetriever retriever,
-            MemoryProperties properties) {
+            MemoryProperties properties,
+            MemoryExtractor memoryExtractor) {
         return new DeepLongMemorySessionFactory(
                 jdbcTemplate, transactionTemplate, vectorStore, 
-                indexManager, fileManager, retriever, properties);
+                indexManager, fileManager, retriever, properties, memoryExtractor);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(name = "app.memory.extractor.type", havingValue = "llm", matchIfMissing = true)
+    public MemoryExtractor llmMemoryExtractor(MemoryProperties properties) {
+        ChatModel chatModel = createChatModel(properties);
+        return new LLMMemoryExtractor(chatModel);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(name = "app.memory.extractor.type", havingValue = "fallback")
+    public MemoryExtractor fallbackMemoryExtractor() {
+        return new FallbackMemoryExtractor();
+    }
+
+    private ChatModelBase createChatModel(MemoryProperties properties) {
+        String provider = properties.getExtractor().getLlmProvider();
+        String modelName = properties.getExtractor().getLlmModelName();
+        double temperature = properties.getExtractor().getLlmTemperature();
+
+        return switch (provider.toLowerCase()) {
+            case "openai" -> OpenAIChatModel.builder()
+                    .modelName(modelName)
+                    .temperature(temperature)
+                    .build();
+            default -> DashScopeChatModel.builder()
+                    .modelName(modelName)
+                    .temperature(temperature)
+                    .build();
+        };
     }
 }

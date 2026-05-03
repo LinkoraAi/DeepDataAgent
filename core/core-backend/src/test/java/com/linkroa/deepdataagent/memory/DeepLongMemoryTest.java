@@ -24,7 +24,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.linkroa.deepdataagent.memory.config.MemoryProperties;
-import com.linkroa.deepdataagent.memory.extractor.SimpleMemoryExtractor;
+import com.linkroa.deepdataagent.memory.extractor.MemoryExtractor;
 import com.linkroa.deepdataagent.memory.file.MarkdownFileManager;
 import com.linkroa.deepdataagent.memory.index.MemoryIndexManager;
 import com.linkroa.deepdataagent.memory.model.ConversationContext;
@@ -42,7 +42,7 @@ import io.agentscope.core.message.MsgRole;
 class DeepLongMemoryTest {
 
     @Mock
-    private SimpleMemoryExtractor memoryExtractor;
+    private MemoryExtractor memoryExtractor;
 
     @Mock
     private MarkdownFileManager fileManager;
