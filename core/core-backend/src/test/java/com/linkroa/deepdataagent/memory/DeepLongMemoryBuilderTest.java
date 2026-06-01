@@ -26,7 +26,6 @@ class DeepLongMemoryBuilderTest {
 
         DeepLongMemory memory = DeepLongMemory.builder()
                 .sessionId("session-built")
-                .userName("user-built")
                 .properties(properties)
                 .build();
 

@@ -7,15 +7,20 @@ import java.time.Instant;
  */
 public record MemorySessionContext(
         String sessionId,
-        String userName,
         Instant createdAt
 ) {
+
+    /**
+     * Convenience constructor that auto-fills createdAt.
+     */
+    public MemorySessionContext(String sessionId) {
+        this(sessionId, null);
+    }
 
     public MemorySessionContext {
         if (sessionId == null || sessionId.isBlank()) {
             throw new IllegalArgumentException("sessionId must not be blank");
         }
-        userName = (userName == null || userName.isBlank()) ? "user" : userName;
         createdAt = createdAt == null ? Instant.now() : createdAt;
     }
 }

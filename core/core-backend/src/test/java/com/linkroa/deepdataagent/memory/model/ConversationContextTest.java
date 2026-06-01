@@ -19,7 +19,6 @@ class ConversationContextTest {
         // given
         ConversationContext context = new ConversationContext(
                 "session-model",
-                "user",
                 Instant.parse("2026-04-21T00:00:00Z"),
                 List.of(
                         new ConversationMessage(null, "system", "   ", null),
@@ -47,7 +46,6 @@ class ConversationContextTest {
         // given
         ConversationContext context = new ConversationContext(
                 "session-empty",
-                "user",
                 Instant.now(),
                 List.of(new ConversationMessage(null, null, "hello", null))
         );

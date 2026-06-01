@@ -12,7 +12,6 @@ import java.util.Locale;
  */
 public record ConversationContext(
         String sessionId,
-        String userName,
         Instant createdAt,
         List<ConversationMessage> messages
 ) {
