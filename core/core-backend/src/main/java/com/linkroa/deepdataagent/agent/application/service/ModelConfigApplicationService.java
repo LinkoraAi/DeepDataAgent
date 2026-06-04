@@ -2,6 +2,8 @@ package com.linkroa.deepdataagent.agent.application.service;
 
 import com.linkroa.deepdataagent.agent.controller.request.AddModelConfigRequest;
 import com.linkroa.deepdataagent.agent.controller.request.UpdateModelConfigRequest;
+import com.linkroa.deepdataagent.agent.controller.response.TestConnectionResult;
+import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.LlmModelConfigEntity;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.LlmModelTemplateEntity;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper.LlmModelConfigMapper;
@@ -14,6 +16,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 模型配置应用服务
@@ -26,13 +30,18 @@ public class ModelConfigApplicationService {
     private final LlmModelTemplateMapper templateMapper;
     private final LlmModelConfigMapper configMapper;
     private final PasswordEncryptionUtil encryptionUtil;
+    private final LLMClient llmClient;
+    private final Map<Long, Long> lastTestTime = new ConcurrentHashMap<>();
+    private static final long TEST_COOLDOWN_MS = 5000;
 
     public ModelConfigApplicationService(LlmModelTemplateMapper templateMapper,
                                          LlmModelConfigMapper configMapper,
-                                         PasswordEncryptionUtil encryptionUtil) {
+                                         PasswordEncryptionUtil encryptionUtil,
+                                         LLMClient llmClient) {
         this.templateMapper = templateMapper;
         this.configMapper = configMapper;
         this.encryptionUtil = encryptionUtil;
+        this.llmClient = llmClient;
     }
 
     /**
@@ -113,6 +122,9 @@ public class ModelConfigApplicationService {
         entity.setUpdatedAt(now);
 
         configMapper.updateById(entity);
+
+        // 清除 LLM 客户端缓存，使新配置立即生效
+        llmClient.evictCache(id);
     }
 
     /**
@@ -139,6 +151,9 @@ public class ModelConfigApplicationService {
                 configMapper.updateById(newDefault);
             }
         }
+
+        // 清除 LLM 客户端缓存
+        llmClient.evictCache(id);
     }
 
     /**
@@ -179,5 +194,31 @@ public class ModelConfigApplicationService {
      */
     public String decryptApiKey(String encryptedKey) {
         return encryptionUtil.decrypt(encryptedKey);
+    }
+
+    /**
+     * 测试模型连接（带频率限制）
+     * <p>5 秒内只能测试一次成功连接，防止频繁请求 LLM 接口</p>
+     *
+     * @param id 模型配置 ID
+     * @return 连接测试结果
+     */
+    public TestConnectionResult testConnection(Long id) {
+        LlmModelConfigEntity entity = configMapper.selectByIdAndNotDeleted(id);
+        if (entity == null) {
+            return new TestConnectionResult(false, "模型配置不存在", 0L);
+        }
+
+        // 频率限制
+        Long lastTime = lastTestTime.get(id);
+        if (lastTime != null && System.currentTimeMillis() - lastTime < TEST_COOLDOWN_MS) {
+            return new TestConnectionResult(false, "测试过于频繁，请稍后再试", 0L);
+        }
+
+        TestConnectionResult result = llmClient.testConnection(id);
+        if (result.available()) {
+            lastTestTime.put(id, System.currentTimeMillis());
+        }
+        return result;
     }
 }
