@@ -106,6 +106,6 @@ public class ModelConfigController {
         if (result.available()) {
             return ApiResponse.success(result);
         }
-        return ApiResponse.error(result);
+        return ApiResponse.error("500", result.message(), result);
     }
 }
