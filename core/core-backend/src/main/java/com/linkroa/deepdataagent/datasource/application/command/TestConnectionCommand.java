@@ -1,5 +1,7 @@
 package com.linkroa.deepdataagent.datasource.application.command;
 
+import java.util.Map;
+
 /**
  * 测试数据源连接命令
  */
@@ -14,6 +16,10 @@ public record TestConnectionCommand(
         String password,
         String apiUrl,
         String apiMethod,
+        Map<String, String> apiHeaders,
+        Map<String, String> apiParams,
+        String apiBody,
+        String apiBodyType,
         String apiAuthType,
         String apiAuthUsername,
         String apiAuthPassword,

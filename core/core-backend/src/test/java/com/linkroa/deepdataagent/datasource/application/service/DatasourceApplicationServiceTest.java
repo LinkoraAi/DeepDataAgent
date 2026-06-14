@@ -114,7 +114,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_throwException_when_testConnection_given_notFound() {
         when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
-        TestConnectionCommand command = new TestConnectionCommand(999L, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        TestConnectionCommand command = new TestConnectionCommand(999L, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         assertThrows(DeepDataAgentException.class, () -> service.testConnection(command));
     }
 
@@ -191,7 +191,7 @@ class DatasourceApplicationServiceTest {
     void should_testApiConnection_when_testConnection_given_apiSchema() {
         TestConnectionCommand command = new TestConnectionCommand(
                 null, "API", null, null, null, null, null, null,
-                "http://example.com/api", "GET", null, null, null, 30, null);
+                "http://example.com/api", "GET", null, null, null, null, null, null, null, 30, null);
         DatasourceConnectionStrategy.ConnectionTestResult expectedResult =
                 DatasourceConnectionStrategy.ConnectionTestResult.ok();
         when(strategyFactory.getStrategy(DatasourceType.API, null)).thenAnswer(inv -> {
@@ -325,7 +325,7 @@ class DatasourceApplicationServiceTest {
         when(strategy.testConnection(connection)).thenReturn(
                 DatasourceConnectionStrategy.ConnectionTestResult.ok());
 
-        TestConnectionCommand command = new TestConnectionCommand(1L, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        TestConnectionCommand command = new TestConnectionCommand(1L, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         DatasourceConnectionStrategy.ConnectionTestResult result = service.testConnection(command);
 
         assertTrue(result.success());
@@ -335,7 +335,7 @@ class DatasourceApplicationServiceTest {
     void should_testJdbcConnection_when_testConnection_given_newConnection() {
         TestConnectionCommand command = new TestConnectionCommand(
                 null, "JDBC", "MYSQL", "localhost", 3306, "testdb", "root", "pass",
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null);
         DatasourceConnectionStrategy strategy = mock(DatasourceConnectionStrategy.class);
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(strategy.testConnection(any())).thenReturn(

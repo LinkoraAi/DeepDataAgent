@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper.ConversationMsgMapper">
+
+    <select id="selectBySessionIdPaged" resultType="com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.ConversationMsgEntity">
+        SELECT *
+        FROM conversation_msg
+        WHERE session_id = #{sessionId}
+        ORDER BY id ASC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="selectRecentBySessionId" resultType="com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.ConversationMsgEntity">
+        SELECT *
+        FROM conversation_msg
+        WHERE session_id = #{sessionId}
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="countBySessionId" resultType="int">
+        SELECT COUNT(*)
+        FROM conversation_msg
+        WHERE session_id = #{sessionId}
+    </select>
+
+</mapper>

@@ -1,6 +1,12 @@
 package com.linkroa.deepdataagent.agent.controller;
 
 import com.linkroa.deepdataagent.agent.controller.request.AddModelConfigRequest;
+import com.linkroa.deepdataagent.agent.controller.request.DeleteModelConfigRequest;
+import com.linkroa.deepdataagent.agent.controller.request.GetModelConfigRequest;
+import com.linkroa.deepdataagent.agent.controller.request.ListModelConfigsRequest;
+import com.linkroa.deepdataagent.agent.controller.request.ListModelTemplatesRequest;
+import com.linkroa.deepdataagent.agent.controller.request.SetDefaultModelRequest;
+import com.linkroa.deepdataagent.agent.controller.request.TestConnectionRequest;
 import com.linkroa.deepdataagent.agent.controller.request.UpdateModelConfigRequest;
 import com.linkroa.deepdataagent.agent.controller.response.ModelConfigResponse;
 import com.linkroa.deepdataagent.agent.controller.response.ModelTemplateResponse;
@@ -15,6 +21,7 @@ import java.util.List;
 
 /**
  * LLM 模型配置 REST 控制器
+ * <p>所有接口统一使用 POST + body 传参方式。</p>
  */
 @RestController
 @RequestMapping("/api/llm-models")
@@ -29,8 +36,8 @@ public class ModelConfigController {
     /**
      * 获取预置模板列表
      */
-    @GetMapping("/templates")
-    public ApiResponse<List<ModelTemplateResponse>> listTemplates() {
+    @PostMapping("/templates/list")
+    public ApiResponse<List<ModelTemplateResponse>> listTemplates(@RequestBody(required = false) ListModelTemplatesRequest request) {
         List<ModelTemplateResponse> templates = modelConfigService.listTemplates().stream()
                 .map(ModelTemplateResponse::from)
                 .toList();
@@ -40,8 +47,8 @@ public class ModelConfigController {
     /**
      * 获取我的模型配置列表
      */
-    @GetMapping("/configs")
-    public ApiResponse<List<ModelConfigResponse>> listConfigs() {
+    @PostMapping("/configs/list")
+    public ApiResponse<List<ModelConfigResponse>> listConfigs(@RequestBody(required = false) ListModelConfigsRequest request) {
         List<ModelConfigResponse> configs = modelConfigService.listConfigs().stream()
                 .map(ModelConfigResponse::from)
                 .toList();
@@ -51,7 +58,7 @@ public class ModelConfigController {
     /**
      * 添加模型配置
      */
-    @PostMapping("/configs")
+    @PostMapping("/configs/add")
     public ApiResponse<String> addConfig(@Valid @RequestBody AddModelConfigRequest request) {
         modelConfigService.addConfig(request);
         return ApiResponse.success("添加模型配置成功");
@@ -60,36 +67,35 @@ public class ModelConfigController {
     /**
      * 编辑模型配置
      */
-    @PutMapping("/configs/{id}")
-    public ApiResponse<String> updateConfig(@PathVariable Long id,
-                                            @RequestBody UpdateModelConfigRequest request) {
-        modelConfigService.updateConfig(id, request);
+    @PostMapping("/configs/update")
+    public ApiResponse<String> updateConfig(@Valid @RequestBody UpdateModelConfigRequest request) {
+        modelConfigService.updateConfig(request.id(), request);
         return ApiResponse.success("更新模型配置成功");
     }
 
     /**
      * 删除模型配置
      */
-    @DeleteMapping("/configs/{id}")
-    public ApiResponse<String> deleteConfig(@PathVariable Long id) {
-        modelConfigService.deleteConfig(id);
+    @PostMapping("/configs/delete")
+    public ApiResponse<String> deleteConfig(@Valid @RequestBody DeleteModelConfigRequest request) {
+        modelConfigService.deleteConfig(request.id());
         return ApiResponse.success("删除模型配置成功");
     }
 
     /**
      * 设置默认模型
      */
-    @PostMapping("/configs/{id}/default")
-    public ApiResponse<String> setDefault(@PathVariable Long id) {
-        modelConfigService.setDefaultModel(id);
+    @PostMapping("/configs/set-default")
+    public ApiResponse<String> setDefault(@Valid @RequestBody SetDefaultModelRequest request) {
+        modelConfigService.setDefaultModel(request.id());
         return ApiResponse.success("设置默认模型成功");
     }
 
     /**
      * 获取默认模型
      */
-    @GetMapping("/default")
-    public ApiResponse<ModelConfigResponse> getDefault() {
+    @PostMapping("/default/get")
+    public ApiResponse<ModelConfigResponse> getDefault(@RequestBody(required = false) Object request) {
         LlmModelConfigEntity config = modelConfigService.getDefaultModel();
         if (config == null) {
             return ApiResponse.success(null);
@@ -100,9 +106,9 @@ public class ModelConfigController {
     /**
      * 测试连接
      */
-    @PostMapping("/configs/{id}/test")
-    public ApiResponse<TestConnectionResult> testConnection(@PathVariable Long id) {
-        TestConnectionResult result = modelConfigService.testConnection(id);
+    @PostMapping("/configs/test")
+    public ApiResponse<TestConnectionResult> testConnection(@Valid @RequestBody TestConnectionRequest request) {
+        TestConnectionResult result = modelConfigService.testConnection(request.id());
         if (result.available()) {
             return ApiResponse.success(result);
         }

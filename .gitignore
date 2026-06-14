@@ -44,6 +44,7 @@ openspec/
 
 # Runtime data
 data/sqlite/*.db
+data/memory/**
 .env
 docs/
 
@@ -53,4 +54,5 @@ docs/
 # graphify
 graphify-out/
 
+# AGETNS.MD
 AGENTS.md

@@ -1,6 +1,5 @@
 package com.linkroa.deepdataagent.datasource.controller.request;
 
-import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 
 import java.util.List;

@@ -1,15 +1,18 @@
 package com.linkroa.deepdataagent.memory.extractor;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.linkroa.deepdataagent.memory.model.ConversationContext;
 import com.linkroa.deepdataagent.memory.model.ConversationContext.ConversationMessage;
 import com.linkroa.deepdataagent.memory.model.ExtractedMemory;
 
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
+import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.model.ChatModelBase;
+import io.agentscope.core.model.ChatResponse;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +23,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * 基于 LLM 的记忆提取器。
@@ -108,7 +112,7 @@ public class LLMMemoryExtractor implements MemoryExtractor {
         return sb.toString().strip();
     }
 
-    private List<LlmMemoryCandidate> callLlm(String conversationText) throws JsonProcessingException {
+    private List<LlmMemoryCandidate> callLlm(String conversationText) {
         Msg userMsg = Msg.builder()
                 .role(MsgRole.USER)
                 .textContent(conversationText)
@@ -122,14 +126,25 @@ public class LLMMemoryExtractor implements MemoryExtractor {
                 userMsg
         );
 
-        Msg response = chatModel.call(messages).block();
+        List<ChatResponse> responses = chatModel.stream(messages, null, null).collectList().block();
 
-        if (response == null || response.getTextContent() == null) {
+        if (responses == null || responses.isEmpty()) {
             log.warn("LLM 返回空响应");
             return Collections.emptyList();
         }
 
-        String jsonText = response.getTextContent().strip();
+        String jsonText = responses.stream()
+                .flatMap(r -> r.getContent().stream())
+                .filter(TextBlock.class::isInstance)
+                .map(TextBlock.class::cast)
+                .map(TextBlock::getText)
+                .collect(Collectors.joining())
+                .strip();
+
+        if (jsonText.isEmpty()) {
+            log.warn("LLM 返回空响应");
+            return Collections.emptyList();
+        }
         jsonText = extractJsonArray(jsonText);
 
         return objectMapper.readValue(jsonText, new TypeReference<List<LlmMemoryCandidate>>() {});

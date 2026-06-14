@@ -4,12 +4,31 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 @ExtendWith(MockitoExtension.class)
 class MemoryPropertiesTest {
+
+    private static String resolveProjectBasePath() {
+        String envPath = System.getenv("APP_BASE_DIR");
+        if (envPath != null && !envPath.isBlank()) {
+            return envPath;
+        }
+        Path currentDir = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+        Path searchDir = currentDir;
+        Path topmostProjectDir = null;
+        while (searchDir != null) {
+            if (Files.exists(searchDir.resolve("pom.xml"))) {
+                topmostProjectDir = searchDir;
+            }
+            searchDir = searchDir.getParent();
+        }
+        return topmostProjectDir != null ? topmostProjectDir.toString() : currentDir.toString();
+    }
 
     @Test
     void should_returnDocumentedDefaults_when_accessorsInvoked_given_defaultProperties() {
@@ -20,7 +39,8 @@ class MemoryPropertiesTest {
         String rootPath = properties.getRootPath();
 
         // then
-        assertEquals("./data/memory", rootPath);
+        String expectedRootPath = resolveProjectBasePath() + "/data/memory";
+        assertEquals(expectedRootPath, rootPath);
         assertEquals(1200, properties.getChunking().getMaxChars());
         assertEquals(120, properties.getChunking().getOverlapChars());
         assertEquals(8, properties.getRetrieve().getTopK());

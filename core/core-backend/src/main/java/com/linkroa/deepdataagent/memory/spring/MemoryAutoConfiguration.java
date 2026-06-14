@@ -21,6 +21,7 @@ import com.linkroa.deepdataagent.memory.vector.JVectorMemoryStore;
 
 import io.agentscope.core.model.ChatModelBase;
 import io.agentscope.core.model.DashScopeChatModel;
+import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.OpenAIChatModel;
 
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -159,15 +160,15 @@ public class MemoryAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    @ConditionalOnProperty(name = "app.memory.extractor.type", havingValue = "llm", matchIfMissing = true)
+    @ConditionalOnProperty(name = "app.memory.extractor.type", havingValue = "llm")
     public MemoryExtractor llmMemoryExtractor(MemoryProperties properties) {
-        ChatModel chatModel = createChatModel(properties);
+        ChatModelBase chatModel = createChatModel(properties);
         return new LLMMemoryExtractor(chatModel);
     }
 
     @Bean
     @ConditionalOnMissingBean
-    @ConditionalOnProperty(name = "app.memory.extractor.type", havingValue = "fallback")
+    @ConditionalOnProperty(name = "app.memory.extractor.type", havingValue = "fallback", matchIfMissing = true)
     public MemoryExtractor fallbackMemoryExtractor() {
         return new FallbackMemoryExtractor();
     }
@@ -180,11 +181,15 @@ public class MemoryAutoConfiguration {
         return switch (provider.toLowerCase()) {
             case "openai" -> OpenAIChatModel.builder()
                     .modelName(modelName)
-                    .temperature(temperature)
+                    .generateOptions(GenerateOptions.builder()
+                            .temperature(temperature)
+                            .build())
                     .build();
             default -> DashScopeChatModel.builder()
                     .modelName(modelName)
-                    .temperature(temperature)
+                    .defaultOptions(GenerateOptions.builder()
+                            .temperature(temperature)
+                            .build())
                     .build();
         };
     }

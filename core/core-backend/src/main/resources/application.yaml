@@ -29,7 +29,7 @@ app:
   sqlite:
     path: ${APP_SQLITE_PATH:}
   memory:
-    root-path: ${APP_MEMORY_ROOT_PATH:./data/memory}
+    root-path: ${APP_MEMORY_ROOT_PATH:}
     index:
       db-path: ${APP_MEMORY_INDEX_DB_PATH:}
       rebuild-on-startup: ${APP_MEMORY_INDEX_REBUILD_ON_STARTUP:true}
@@ -68,3 +68,11 @@ app:
     api-key: ${APP_EMBEDDING_API_KEY:}
     model: ${APP_EMBEDDING_MODEL:text-embedding-3-small}
     dimension: ${APP_EMBEDDING_DIMENSION:1536}
+  data-analysis:
+    query:
+      max-rows: ${APP_DATA_ANALYSIS_MAX_ROWS:1000}
+      timeout-seconds: ${APP_DATA_ANALYSIS_TIMEOUT:30}
+    max-retry-count: ${APP_DATA_ANALYSIS_MAX_RETRY:3}
+  session:
+    max-active-sessions: ${APP_SESSION_MAX_ACTIVE:100}
+    context-load-size: ${APP_SESSION_CONTEXT_LOAD_SIZE:5}

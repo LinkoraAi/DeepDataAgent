@@ -94,4 +94,46 @@ public class DeepLongMemorySessionFactory {
                 .skipInitialization(true)
                 .build();
     }
+
+    /**
+     * Create a new DeepLongMemory instance with control over initialization.
+     * 
+     * @param sessionId unique session identifier (must not be blank)
+     * @param skipInitialization true to skip file manager and index initialization
+     * @return configured DeepLongMemory instance sharing Spring-managed infrastructure
+     * @throws IllegalArgumentException if sessionId is null or blank
+     */
+    public DeepLongMemory create(String sessionId, boolean skipInitialization) {
+        return create(sessionId, defaultProperties, skipInitialization);
+    }
+
+    /**
+     * Create a new DeepLongMemory instance with custom properties and initialization control.
+     * 
+     * @param sessionId unique session identifier (must not be blank)
+     * @param customProperties session-specific properties
+     * @param skipInitialization true to skip file manager and index initialization
+     * @return configured DeepLongMemory instance sharing Spring-managed infrastructure
+     * @throws IllegalArgumentException if sessionId is null or blank
+     * @throws NullPointerException if customProperties is null
+     */
+    public DeepLongMemory create(String sessionId, MemoryProperties customProperties, boolean skipInitialization) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("sessionId must not be blank");
+        }
+        Objects.requireNonNull(customProperties, "customProperties");
+
+        return DeepLongMemory.builder()
+                .sessionId(sessionId)
+                .properties(customProperties)
+                .jdbcTemplate(jdbcTemplate)
+                .transactionTemplate(transactionTemplate)
+                .vectorStore(vectorStore)
+                .indexManager(indexManager)
+                .fileManager(fileManager)
+                .retriever(retriever)
+                .memoryExtractor(memoryExtractor)
+                .skipInitialization(skipInitialization)
+                .build();
+    }
 }

@@ -1,10 +1,11 @@
 package com.linkroa.deepdataagent.agent.infrastructure.client;
 
-import com.linkroa.deepdataagent.agent.application.service.ModelConfigApplicationService;
 import com.linkroa.deepdataagent.agent.controller.response.TestConnectionResult;
 import com.linkroa.deepdataagent.agent.exception.DataAnalysisException;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.LlmModelConfigEntity;
+import com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper.LlmModelConfigMapper;
 import com.linkroa.deepdataagent.datasource.infrastructure.util.LogMasker;
+import com.linkroa.deepdataagent.datasource.infrastructure.util.PasswordEncryptionUtil;
 import io.agentscope.core.model.ChatModelBase;
 import io.agentscope.core.model.ChatResponse;
 import io.agentscope.core.model.DashScopeChatModel;
@@ -34,23 +35,27 @@ public class LLMClient {
 
     private static final Logger log = LoggerFactory.getLogger(LLMClient.class);
 
-    private final ModelConfigApplicationService modelConfigService;
+    private final LlmModelConfigMapper configMapper;
+    private final PasswordEncryptionUtil encryptionUtil;
     private final Map<Long, ChatModelBase> chatModelCache = new ConcurrentHashMap<>();
 
-    public LLMClient(ModelConfigApplicationService modelConfigService) {
-        this.modelConfigService = modelConfigService;
+    public LLMClient(LlmModelConfigMapper configMapper,
+                     PasswordEncryptionUtil encryptionUtil) {
+        this.configMapper = configMapper;
+        this.encryptionUtil = encryptionUtil;
     }
 
     /**
      * 根据配置 ID 获取 ChatModel 实例（带缓存）
+     * <p>公开方法，供 Agent 构建和工具类使用。</p>
      */
-    private ChatModelBase getChatModel(Long modelConfigId) {
+    public ChatModelBase getChatModel(Long modelConfigId) {
         return chatModelCache.computeIfAbsent(modelConfigId, id -> {
-            LlmModelConfigEntity config = modelConfigService.getConfigById(id);
+            LlmModelConfigEntity config = configMapper.selectByIdAndNotDeleted(id);
             if (config == null) {
                 throw new DataAnalysisException("模型配置不存在: " + id);
             }
-            String apiKey = modelConfigService.decryptApiKey(config.getApiKey());
+            String apiKey = encryptionUtil.decrypt(config.getApiKey());
             return createChatModel(config, apiKey);
         });
     }
@@ -107,11 +112,11 @@ public class LLMClient {
     public TestConnectionResult testConnection(Long modelConfigId) {
         long startTime = System.currentTimeMillis();
         try {
-            LlmModelConfigEntity config = modelConfigService.getConfigById(modelConfigId);
+            LlmModelConfigEntity config = configMapper.selectByIdAndNotDeleted(modelConfigId);
             if (config == null) {
                 return new TestConnectionResult(false, "模型配置不存在", 0L);
             }
-            String apiKey = modelConfigService.decryptApiKey(config.getApiKey());
+            String apiKey = encryptionUtil.decrypt(config.getApiKey());
             ChatModelBase model = createTempChatModel(config, apiKey);
 
             List<Msg> messages = List.of(
@@ -166,12 +171,24 @@ public class LLMClient {
      */
     public String generateSQL(Long modelConfigId, String userQuestion, String schemaInfo, String sqlDialect) {
         String systemPrompt = """
-                你是一个 SQL 专家。根据用户问题和数据库 schema，生成对应的 SQL 查询。
-                要求：
-                1. 只生成 SELECT 语句，不允许其他操作
-                2. 直接输出 SQL，不要添加任何解释或 markdown 代码块标记
+                你是一个精通 %s 的 SQL 专家。根据用户问题和数据库 schema，生成对应的 SQL 查询。
+
+                ## 规则
+                1. 只生成 SELECT 语句，禁止 INSERT/UPDATE/DELETE/DROP/ALTER 等操作
+                2. 直接输出纯 SQL 语句，不要添加任何解释、注释或 markdown 代码块标记
                 3. 使用 %s 语法
-                """.formatted(sqlDialect);
+                4. 表名和字段名使用反引号包裹（MySQL）或双引号（ClickHouse）
+                5. 对于聚合查询，使用有意义的别名（AS）
+                6. 考虑 NULL 值处理，必要时使用 COALESCE 或 IFNULL
+                7. 如果涉及时间范围，使用 BETWEEN 或 >= <= 比较符
+
+                ## 示例
+                用户问题：查询每个部门的员工数量
+                输出：SELECT department, COUNT(*) AS employee_count FROM employees GROUP BY department ORDER BY employee_count DESC
+
+                用户问题：最近一个月的销售额趋势
+                输出：SELECT DATE(order_date) AS date, SUM(amount) AS total_sales FROM orders WHERE order_date >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH) GROUP BY DATE(order_date) ORDER BY date
+                """.formatted(sqlDialect, sqlDialect);
 
         String userPrompt = """
                 数据库 schema：
@@ -185,24 +202,65 @@ public class LLMClient {
     }
 
     /**
-     * 生成分析结论
+     * 生成分析报告
+     *
+     * @param modelConfigId 模型配置 ID
+     * @param userQuestion  用户问题
+     * @param sqlQuery      执行的 SQL 语句
+     * @param dataSummary   数据统计摘要
+     * @param chartSummary  图表描述或配置
      */
-    public String generateAnalysis(Long modelConfigId, String userQuestion, String queryResult, String chartSummary) {
+    public String generateAnalysis(Long modelConfigId, String userQuestion, String sqlQuery, String dataSummary, String chartSummary) {
         String systemPrompt = """
-                你是一个数据分析师。根据用户问题、查询结果和图表信息，生成分析结论。
-                要求：
-                1. 使用 Markdown 格式
-                2. 包含关键发现、趋势分析、建议
-                3. 语言简洁专业
-                4. 不超过 300 字
+                你是一个资深数据分析师，擅长从数据中提取洞察并生成结构化分析报告。
+
+                ## 报告结构要求
+                请生成一份完整的分析报告，必须包含以下章节：
+
+                ### 一、分析概述
+                - 用一句话总结分析的核心结论
+                - 说明分析的数据范围
+
+                ### 二、关键发现
+                - 使用 Markdown 表格呈现核心指标
+                - 对每个关键指标进行解读
+                - 使用**加粗**突出重要数据
+
+                ### 三、详细分析
+                - 趋势分析：数据随时间的变化规律
+                - 对比分析：不同维度的数据对比
+                - 异常识别：数据中的异常值或特殊现象
+                - 结合图表信息进行解读
+
+                ### 四、结论与建议
+                - 基于数据得出明确结论
+                - 给出 2-3 条可操作的建议
+                - 标注潜在风险或需关注的事项
+
+                ## 格式要求
+                1. 严格使用 Markdown 格式
+                2. 使用二级标题(##)分隔主要章节
+                3. 关键数据使用表格呈现
+                4. 数据精确到原始数据的精度，不要编造数据
+                5. 语言简洁专业，避免空话套话
+                6. 如果数据不足以支撑某章节，可简要说明或省略该章节
                 """;
 
         String userPrompt = """
-                用户问题：%s
-                查询结果（JSON）：%s
-                图表：%s
-                请生成分析结论：
-                """.formatted(userQuestion, queryResult, chartSummary);
+                ## 用户问题
+                %s
+
+                ## 执行的 SQL
+                %s
+
+                ## 数据统计摘要
+                %s
+
+                ## 可视化图表信息
+                %s
+
+                请根据以上信息生成完整的分析报告。
+                """.formatted(userQuestion, sqlQuery, dataSummary, chartSummary);
 
         return callLLM(modelConfigId, systemPrompt, userPrompt);
     }
@@ -226,6 +284,33 @@ public class LLMClient {
                 """.formatted(dataDescription, userQuestion);
 
         return callLLM(modelConfigId, systemPrompt, userPrompt);
+    }
+
+    /**
+     * 生成会话标题
+     * <p>调用 LLM 根据用户问题生成简洁的会话标题。如果 LLM 调用失败，返回 null，由调用方使用降级标题。</p>
+     *
+     * @param modelConfigId 模型配置 ID
+     * @param userQuestion  用户问题
+     * @return 生成的标题，失败时返回 null
+     */
+    public String generateTitle(Long modelConfigId, String userQuestion) {
+        String systemPrompt = """
+                你是一个标题生成专家。根据用户的问题，生成一个简洁的会话标题。
+                要求：
+                1. 标题不超过 15 个字
+                2. 使用中文
+                3. 只输出标题，不要添加任何解释或标记
+                """;
+
+        String userPrompt = "用户问题：%s\n请生成会话标题：".formatted(userQuestion);
+
+        try {
+            return callLLM(modelConfigId, systemPrompt, userPrompt);
+        } catch (Exception e) {
+            log.warn("生成标题失败，将使用降级标题: {}", LogMasker.mask(e.getMessage()));
+            return null;
+        }
     }
 
     private String callLLM(Long modelConfigId, String systemPrompt, String userPrompt) {

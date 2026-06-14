@@ -5,6 +5,8 @@ import lombok.Setter;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -23,10 +25,23 @@ public class MemoryProperties {
      * 长期记忆根目录。
      *
      * <p>Markdown 真相源、SQLite 索引库和后续向量索引都会放在该目录下。
-     * 默认值 {@code ./data/memory} 适合本地开发；生产环境建议配置到持久化磁盘目录。
+     * 默认值通过解析项目根目录构建，适合本地开发；生产环境建议通过环境变量 {@code APP_MEMORY_ROOT_PATH} 指定持久化目录。
      * 对应配置：{@code app.memory.root-path} / {@code APP_MEMORY_ROOT_PATH}。</p>
      */
-    private String rootPath = "./data/memory";
+    private String rootPath = resolveProjectBasePath() + "/data/memory";
+
+    /**
+     * 设置长期记忆根目录。
+     *
+     * <p>当配置值为空字符串时（如环境变量未设置），保留默认值，避免路径解析为当前工作目录。</p>
+     *
+     * @param rootPath 记忆根目录路径
+     */
+    public void setRootPath(String rootPath) {
+        if (rootPath != null && !rootPath.isBlank()) {
+            this.rootPath = rootPath;
+        }
+    }
 
     /**
      * Markdown 分块配置。
@@ -319,7 +334,7 @@ public class MemoryProperties {
          * 基于关键词匹配的降级提取器，适用于 LLM 不可用或成本敏感的场景。
          * 对应配置：{@code app.memory.extractor.type} / {@code APP_MEMORY_EXTRACTOR_TYPE}。</p>
          */
-        private String type = "llm";
+        private String type = "fallback";
 
         /**
          * LLM 提供商。
@@ -365,5 +380,32 @@ public class MemoryProperties {
          * {@code APP_MEMORY_EXTRACTOR_LLM_MAX_RETRIES}。</p>
          */
         private int llmMaxRetries = 1;
+    }
+
+    /**
+     * 解析项目根目录路径。
+     * <p>优先通过环境变量 APP_BASE_DIR 获取，否则从当前工作目录向上查找最顶层包含 pom.xml 的目录作为项目根目录。
+     * 之所以查找最顶层而非第一个，是因为 Maven 多模块项目中子模块目录也包含 pom.xml，
+     * 需要跳过子模块目录，定位到真正的项目根目录。</p>
+     */
+    private static String resolveProjectBasePath() {
+        String envPath = System.getenv("APP_BASE_DIR");
+        if (envPath != null && !envPath.isBlank()) {
+            return envPath;
+        }
+
+        // 从当前工作目录向上查找最顶层包含 pom.xml 的目录（即项目根目录）
+        Path currentDir = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+        Path searchDir = currentDir;
+        Path topmostProjectDir = null;
+        while (searchDir != null) {
+            if (Files.exists(searchDir.resolve("pom.xml"))) {
+                topmostProjectDir = searchDir;
+            }
+            searchDir = searchDir.getParent();
+        }
+
+        // 如果找到包含 pom.xml 的目录，返回最顶层那个；否则回退到当前工作目录
+        return topmostProjectDir != null ? topmostProjectDir.toString() : currentDir.toString();
     }
 }

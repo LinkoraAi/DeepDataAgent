@@ -1,5 +1,8 @@
 package com.linkroa.deepdataagent.datasource.application.command;
 
+import com.linkroa.deepdataagent.datasource.domain.model.PreOperationConfig;
+
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -22,6 +25,13 @@ public record ParseApiResponseCommand(
     String authPassword,
     Integer timeout,
     Integer retryCount,
-    String rootPath
+    String rootPath,
+    String paginationType,
+    String pageParamName,
+    String sizeParamName,
+    String totalCountJsonPath,
+    Integer pageSize,
+    Integer maxPages,
+    List<PreOperationConfig> preOperationConfigs
 ) {
 }

@@ -1,7 +1,8 @@
 package com.linkroa.deepdataagent.datasource.infrastructure.persistence;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.linkroa.deepdataagent.datasource.domain.model.*;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceStatus;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceType;
@@ -215,7 +216,7 @@ public final class DatasourcePersistenceMapper {
         }
         try {
             return OBJECT_MAPPER.writeValueAsString(value);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Failed to serialize datasource payload", e);
         }
     }
@@ -226,7 +227,7 @@ public final class DatasourcePersistenceMapper {
         }
         try {
             return OBJECT_MAPPER.readValue(json, type);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Failed to deserialize datasource payload", e);
         }
     }

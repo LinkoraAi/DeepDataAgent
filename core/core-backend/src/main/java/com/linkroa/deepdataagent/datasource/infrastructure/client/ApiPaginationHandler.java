@@ -1,7 +1,8 @@
 package com.linkroa.deepdataagent.datasource.infrastructure.client;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.PathNotFoundException;
 import com.linkroa.deepdataagent.datasource.domain.model.*;
@@ -39,7 +40,7 @@ public class ApiPaginationHandler {
     private static final long MAX_BACKOFF_MS = 30000;
 
     private final ApiExpressionEvaluator expressionEvaluator;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = JsonMapper.builder().build();
 
     public ApiPaginationHandler(ApiExpressionEvaluator expressionEvaluator) {
         this.expressionEvaluator = expressionEvaluator;

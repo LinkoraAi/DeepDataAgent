@@ -595,8 +595,11 @@ public class DatasourceApplicationService {
                 command.apiAuthType() != null ? ApiAuthType.valueOf(command.apiAuthType()) : ApiAuthType.NO_AUTH,
                 command.apiAuthUsername(), command.apiAuthPassword()
         );
+        BodyType bodyType = command.apiBodyType() != null && !command.apiBodyType().isBlank()
+                ? BodyType.valueOf(command.apiBodyType().toUpperCase()) : null;
         ApiRequestConfig requestConfig = new ApiRequestConfig(
-                null, null, null, null, command.apiJsonPath(),
+                command.apiHeaders(), command.apiParams(), command.apiBody(), bodyType,
+                command.apiJsonPath(),
                 command.apiTimeout() != null ? command.apiTimeout() : 180,
                 null, authConfig, null, null
         );
@@ -658,9 +661,13 @@ public class DatasourceApplicationService {
                 String jsonPathConfig = command.rootPath() != null ? command.rootPath() : baseConfig.jsonPathConfig();
                 BodyType bodyType = command.bodyType() != null ? BodyType.valueOf(command.bodyType().toUpperCase()) : baseConfig.bodyType();
                 ApiAuthConfig authConfig = baseConfig.authConfig();
+                ApiPaginationConfig paginationConfig = command.paginationType() != null
+                        ? buildPaginationConfig(command) : baseConfig.paginationConfig();
+                List<PreOperationConfig> preOperationConfigs = command.preOperationConfigs() != null
+                        ? command.preOperationConfigs() : baseConfig.preOperationConfigs();
                 ApiRequestConfig mergedConfig = new ApiRequestConfig(
                         headers, params, body, bodyType, jsonPathConfig, timeout,
-                        baseConfig.retryCount(), authConfig, baseConfig.paginationConfig(), baseConfig.preOperationConfigs()
+                        baseConfig.retryCount(), authConfig, paginationConfig, preOperationConfigs
                 );
                 return new ApiSchema(
                         baseSchema.id(), baseSchema.connectionId(), baseSchema.name(),
@@ -673,14 +680,26 @@ public class DatasourceApplicationService {
         int timeout = command.timeout() != null ? command.timeout() : 180;
         BodyType bodyType = command.bodyType() != null ? BodyType.valueOf(command.bodyType().toUpperCase()) : BodyType.JSON;
         ApiAuthConfig authConfig = buildAuthConfig(command);
+        ApiPaginationConfig paginationConfig = command.paginationType() != null
+                ? buildPaginationConfig(command) : null;
+        List<PreOperationConfig> preOperationConfigs = command.preOperationConfigs();
         ApiRequestConfig requestConfig = new ApiRequestConfig(
                 command.headers(), command.params(), command.body(), bodyType,
-                command.rootPath(), timeout, command.retryCount(), authConfig, null, null
+                command.rootPath(), timeout, command.retryCount(), authConfig,
+                paginationConfig, preOperationConfigs
         );
         return new ApiSchema(
                 null, command.connectionId(), "temp_parse", command.url(),
                 command.method() != null ? HttpMethod.valueOf(command.method()) : HttpMethod.GET,
                 requestConfig, null, null, null, null
+        );
+    }
+
+    private ApiPaginationConfig buildPaginationConfig(ParseApiResponseCommand command) {
+        ApiPaginationType paginationType = ApiPaginationType.valueOf(command.paginationType());
+        return new ApiPaginationConfig(
+                paginationType, command.pageParamName(), command.sizeParamName(),
+                command.totalCountJsonPath(), command.pageSize(), command.maxPages()
         );
     }
 

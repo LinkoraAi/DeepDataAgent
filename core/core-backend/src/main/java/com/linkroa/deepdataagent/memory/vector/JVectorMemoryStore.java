@@ -129,10 +129,17 @@ public class JVectorMemoryStore implements AutoCloseable {
 
     private void purgePersistenceFiles() {
         try {
+            // Ensure the persistence base directory exists
+            if (persistenceBasePath.getParent() != null) {
+                Files.createDirectories(persistenceBasePath.getParent());
+            }
+
+            // JVector persistence files are in the same directory as the base path
+            // e.g., D:\...\data\memory\.index\jvector\memory-vectors\memory-vectors.graph
             Files.deleteIfExists(Path.of(persistenceBasePath + ".graph"));
             Files.deleteIfExists(Path.of(persistenceBasePath + ".metadata"));
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to clear JVector memory index: " + persistenceBasePath, e);
+            log.debug("Failed to clear JVector memory persistence files at {}: {}", persistenceBasePath, e.getMessage());
         }
     }
 

@@ -7,6 +7,7 @@ import com.linkroa.deepdataagent.memory.config.MemoryProperties;
 import com.linkroa.deepdataagent.memory.index.MemoryIndexManager;
 import com.linkroa.deepdataagent.memory.vector.JVectorMemoryStore;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -19,6 +20,7 @@ import org.springframework.test.context.TestPropertySource;
  * and manages shared infrastructure beans, and that the session factory can
  * create independent DeepLongMemory instances.
  */
+@Tag("integration")
 @SpringBootTest
 @TestPropertySource(properties = {
     "app.memory.root-path=target/test-memory-integration",

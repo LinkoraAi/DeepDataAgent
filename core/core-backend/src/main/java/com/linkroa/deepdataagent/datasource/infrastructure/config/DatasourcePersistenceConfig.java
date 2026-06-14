@@ -48,6 +48,7 @@ public class DatasourcePersistenceConfig {
     }
 
     @Bean
+    @Primary
     public PlatformTransactionManager transactionManager(DataSource dataSource) {
         return new DataSourceTransactionManager(dataSource);
     }

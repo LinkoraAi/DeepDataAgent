@@ -67,8 +67,9 @@ class DatasourceCommandAssemblerTest {
     void should_createTestConnectionCommandForApi_when_toTestCommand_given_apiRequest() {
         ApiAuthConfigRequest authConfig = new ApiAuthConfigRequest("BASIC_AUTH", "user1", "pass1");
         ApiSchemaRequest apiSchema = new ApiSchemaRequest(
-                "schema1", "http://api.test.com", "GET", null, null, null,
-                null, "$.data", 30, null, authConfig, null, null, null
+                "schema1", "http://api.test.com", "POST",
+                Map.of("Accept", "application/json"), Map.of("key", "val"),
+                "{\"test\":1}", "JSON", "$.data", 30, null, authConfig, null, null, null
         );
         TestConnectionRequest request = new TestConnectionRequest(
                 2L, "test-api", "API", null, "test api description", null, apiSchema
@@ -79,7 +80,11 @@ class DatasourceCommandAssemblerTest {
         assertEquals(2L, command.id());
         assertEquals("API", command.type());
         assertEquals("http://api.test.com", command.apiUrl());
-        assertEquals("GET", command.apiMethod());
+        assertEquals("POST", command.apiMethod());
+        assertEquals(Map.of("Accept", "application/json"), command.apiHeaders());
+        assertEquals(Map.of("key", "val"), command.apiParams());
+        assertEquals("{\"test\":1}", command.apiBody());
+        assertEquals("JSON", command.apiBodyType());
         assertEquals("BASIC_AUTH", command.apiAuthType());
         assertEquals("user1", command.apiAuthUsername());
         assertEquals(30, command.apiTimeout());

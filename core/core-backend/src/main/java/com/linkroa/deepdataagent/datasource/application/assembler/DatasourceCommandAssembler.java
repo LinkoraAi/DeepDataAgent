@@ -19,6 +19,7 @@ import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceType;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.HttpMethod;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 数据源命令工厂
@@ -199,6 +200,10 @@ public final class DatasourceCommandAssembler {
 
         String apiUrl = request.apiSchema() != null ? request.apiSchema().url() : null;
         String apiMethod = request.apiSchema() != null ? request.apiSchema().method() : null;
+        Map<String, String> apiHeaders = request.apiSchema() != null ? request.apiSchema().headers() : null;
+        Map<String, String> apiParams = request.apiSchema() != null ? request.apiSchema().params() : null;
+        String apiBody = request.apiSchema() != null ? request.apiSchema().body() : null;
+        String apiBodyType = request.apiSchema() != null ? request.apiSchema().bodyType() : null;
         Integer apiTimeout = request.apiSchema() != null ? request.apiSchema().timeout() : null;
         String apiJsonPath = request.apiSchema() != null ? request.apiSchema().jsonPathConfig() : null;
 
@@ -227,6 +232,10 @@ public final class DatasourceCommandAssembler {
                 password,
                 apiUrl,
                 apiMethod,
+                apiHeaders,
+                apiParams,
+                apiBody,
+                apiBodyType,
                 apiAuthType,
                 apiAuthUsername,
                 apiAuthPassword,
@@ -277,7 +286,14 @@ public final class DatasourceCommandAssembler {
                 request.authConfig() != null ? request.authConfig().password() : null,
                 request.timeout(),
                 request.retryCount(),
-                request.rootPath()
+                request.rootPath(),
+                request.paginationConfig() != null ? request.paginationConfig().paginationType() : null,
+                request.paginationConfig() != null ? request.paginationConfig().pageParamName() : null,
+                request.paginationConfig() != null ? request.paginationConfig().sizeParamName() : null,
+                request.paginationConfig() != null ? request.paginationConfig().totalCountJsonPath() : null,
+                request.paginationConfig() != null ? request.paginationConfig().pageSize() : null,
+                request.paginationConfig() != null ? request.paginationConfig().maxPages() : null,
+                toPreOperationConfigs(request.preOperationConfigs())
         );
     }
 }
