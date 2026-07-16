@@ -76,3 +76,9 @@ app:
   session:
     max-active-sessions: ${APP_SESSION_MAX_ACTIVE:100}
     context-load-size: ${APP_SESSION_CONTEXT_LOAD_SIZE:5}
+  web-search:
+    api-key: ${APP_WEB_SEARCH_API_KEY:}
+    endpoint: ${APP_WEB_SEARCH_ENDPOINT:https://api.tavily.com/search}
+    max-results: ${APP_WEB_SEARCH_MAX_RESULTS:5}
+    timeout-seconds: ${APP_WEB_SEARCH_TIMEOUT:10}
+    enabled: ${APP_WEB_SEARCH_ENABLED:true}

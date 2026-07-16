@@ -14,5 +14,6 @@ public record DataAnalysisRequest(
     @NotBlank(message = "数据源 ID 不能为空")
     String connectionId,
     @NotBlank(message = "用户问题不能为空")
-    String userQuestion
+    String userQuestion,
+    boolean enableWebSearch
 ) {}

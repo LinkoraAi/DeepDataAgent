@@ -12,6 +12,12 @@ public final class DataAnalysisCommandAssembler {
     }
 
     public static DataAnalysisCommand toCommand(DataAnalysisRequest request) {
-        return new DataAnalysisCommand(request.sessionId(), request.modelConfigId(), request.connectionId(), request.userQuestion());
+        return new DataAnalysisCommand(
+            request.sessionId(),
+            request.modelConfigId(),
+            request.connectionId(),
+            request.userQuestion(),
+            request.enableWebSearch()
+        );
     }
 }

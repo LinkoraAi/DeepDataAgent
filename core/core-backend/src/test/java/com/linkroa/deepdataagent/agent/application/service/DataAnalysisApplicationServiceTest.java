@@ -21,6 +21,7 @@ import com.linkroa.deepdataagent.agent.infrastructure.tool.ChartGeneratorTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.SchemaRetrieverTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.SqlExecutorTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.TextToSqlTool;
+import com.linkroa.deepdataagent.agent.infrastructure.tool.WebSearchTool;
 import io.agentscope.core.memory.InMemoryMemory;
 import io.agentscope.core.model.ChatModelBase;
 import io.agentscope.core.ReActAgent;
@@ -93,6 +94,9 @@ class DataAnalysisApplicationServiceTest {
     private AnalysisGeneratorTool analysisGeneratorTool;
 
     @Mock
+    private WebSearchTool webSearchTool;
+
+    @Mock
     private ChatModelBase chatModel;
 
     @Mock
@@ -116,7 +120,8 @@ class DataAnalysisApplicationServiceTest {
                 sqlExecutorTool,
                 apiDataFetcherTool,
                 chartGeneratorTool,
-                analysisGeneratorTool
+                analysisGeneratorTool,
+                webSearchTool
         );
     }
 
@@ -470,10 +475,110 @@ class DataAnalysisApplicationServiceTest {
         assertTrue(exception.getMessage().contains("数据源未启用"));
     }
 
+    // ==================== buildAgent (enableWebSearch) ====================
+
+    @Test
+    void should_registerWebSearchTool_when_buildAgent_given_enableWebSearchTrue() throws InterruptedException {
+        // given
+        DataAnalysisCommand command = createCommandWithWebSearch("session-web-search", true);
+        AgentSessionEntity activeSession = createSessionEntity("session-web-search", 1L, 2L, "active", 0);
+        DatasourceInfo datasourceInfo = createDatasourceInfo(1L);
+
+        when(sessionRepository.findById("session-web-search")).thenReturn(Optional.of(activeSession));
+        when(datasourceGateway.findDatasource(1L)).thenReturn(Optional.of(datasourceInfo));
+        when(sessionProperties.getContextLoadSize()).thenReturn(5);
+        when(sessionRepository.findRecentMessages("session-web-search", 5)).thenReturn(List.of());
+
+        InMemoryMemory memory = new InMemoryMemory();
+        when(mockAgent.getMemory()).thenReturn(memory);
+        when(mockAgent.call(any(List.class))).thenReturn(reactor.core.publisher.Mono.just(
+                Msg.builder().role(io.agentscope.core.message.MsgRole.ASSISTANT).textContent("测试回答").build()
+        ));
+        when(sessionManager.getOrCreateAgent(anyString(), any(), anyString(), any(), any())).thenReturn(mockAgent);
+        when(sessionManager.getOrCreateMemory("session-web-search")).thenReturn(null);
+
+        AtomicBoolean completed = new AtomicBoolean(false);
+        CountDownLatch latch = new CountDownLatch(1);
+
+        // when
+        service.executeStream(command)
+                .doOnComplete(() -> {
+                    completed.set(true);
+                    latch.countDown();
+                })
+                .onErrorResume(e -> {
+                    completed.set(true);
+                    latch.countDown();
+                    return null;
+                })
+                .subscribe();
+
+        latch.await(3, TimeUnit.SECONDS);
+
+        // then
+        assertTrue(completed.get());
+        // 验证 Toolkit 注册了 6 个工具（5 个基础工具 + webSearchTool）
+        verify(sessionManager).getOrCreateAgent(eq("session-web-search"), any(), anyString(), argThat(toolkit -> {
+            // Toolkit 应该有 6 个工具：schemaRetriever, textToSql, sqlExecutor, chartGenerator, analysisGenerator, webSearch
+            return toolkit.getToolNames() != null && toolkit.getToolNames().size() == 6;
+        }), any());
+    }
+
+    @Test
+    void should_notRegisterWebSearchTool_when_buildAgent_given_enableWebSearchFalse() throws InterruptedException {
+        // given
+        DataAnalysisCommand command = createCommandWithWebSearch("session-no-web-search", false);
+        AgentSessionEntity activeSession = createSessionEntity("session-no-web-search", 1L, 2L, "active", 0);
+        DatasourceInfo datasourceInfo = createDatasourceInfo(1L);
+
+        when(sessionRepository.findById("session-no-web-search")).thenReturn(Optional.of(activeSession));
+        when(datasourceGateway.findDatasource(1L)).thenReturn(Optional.of(datasourceInfo));
+        when(sessionProperties.getContextLoadSize()).thenReturn(5);
+        when(sessionRepository.findRecentMessages("session-no-web-search", 5)).thenReturn(List.of());
+
+        InMemoryMemory memory = new InMemoryMemory();
+        when(mockAgent.getMemory()).thenReturn(memory);
+        when(mockAgent.call(any(List.class))).thenReturn(reactor.core.publisher.Mono.just(
+                Msg.builder().role(io.agentscope.core.message.MsgRole.ASSISTANT).textContent("测试回答").build()
+        ));
+        when(sessionManager.getOrCreateAgent(anyString(), any(), anyString(), any(), any())).thenReturn(mockAgent);
+        when(sessionManager.getOrCreateMemory("session-no-web-search")).thenReturn(null);
+
+        AtomicBoolean completed = new AtomicBoolean(false);
+        CountDownLatch latch = new CountDownLatch(1);
+
+        // when
+        service.executeStream(command)
+                .doOnComplete(() -> {
+                    completed.set(true);
+                    latch.countDown();
+                })
+                .onErrorResume(e -> {
+                    completed.set(true);
+                    latch.countDown();
+                    return null;
+                })
+                .subscribe();
+
+        latch.await(3, TimeUnit.SECONDS);
+
+        // then
+        assertTrue(completed.get());
+        // 验证 Toolkit 注册了 5 个工具（不包括 webSearchTool）
+        verify(sessionManager).getOrCreateAgent(eq("session-no-web-search"), any(), anyString(), argThat(toolkit -> {
+            // Toolkit 应该有 5 个工具：schemaRetriever, textToSql, sqlExecutor, chartGenerator, analysisGenerator
+            return toolkit.getToolNames() != null && toolkit.getToolNames().size() == 5;
+        }), any());
+    }
+
     // ==================== 辅助方法 ====================
 
     private DataAnalysisCommand createCommand(String sessionId) {
-        return new DataAnalysisCommand(sessionId, 2L, "1", "今年的销售趋势如何？");
+        return new DataAnalysisCommand(sessionId, 2L, "1", "今年的销售趋势如何？", false);
+    }
+
+    private DataAnalysisCommand createCommandWithWebSearch(String sessionId, boolean enableWebSearch) {
+        return new DataAnalysisCommand(sessionId, 2L, "1", "今年的销售趋势如何？", enableWebSearch);
     }
 
     private DatasourceInfo createDatasourceInfo(Long id) {

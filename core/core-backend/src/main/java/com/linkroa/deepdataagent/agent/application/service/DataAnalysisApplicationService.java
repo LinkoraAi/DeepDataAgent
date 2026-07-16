@@ -27,8 +27,11 @@ import com.linkroa.deepdataagent.agent.infrastructure.tool.ChartGeneratorTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.SchemaRetrieverTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.SqlExecutorTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.TextToSqlTool;
+import com.linkroa.deepdataagent.agent.infrastructure.tool.WebSearchTool;
+import com.linkroa.deepdataagent.agent.infrastructure.hook.SearchResultsHook;
 import com.linkroa.deepdataagent.memory.DeepLongMemory;
 import io.agentscope.core.ReActAgent;
+import io.agentscope.core.hook.Hook;
 import io.agentscope.core.memory.InMemoryMemory;
 import io.agentscope.core.memory.Memory;
 import io.agentscope.core.message.Msg;
@@ -80,12 +83,33 @@ public class DataAnalysisApplicationService {
                - 报告应包含：分析概述、关键发现、详细分析、结论建议
                - 传入用户问题、SQL、数据摘要、图表信息
 
+            ## 联网搜索使用指南
+            ### 何时使用 web_search
+            - 用户问题涉及时间敏感性信息（如"最新政策"、"2025年数据"、"近期趋势"）
+            - 用户问题涉及数据库无法回答的外部知识（如"行业趋势"、"竞品分析"、"市场规模"）
+            - 用户明确要求搜索互联网或引用外部来源
+            - 搜索关键词应简洁明确，避免过长句子
+
+            ### 何时不使用 web_search
+            - 用户问题仅涉及数据库内部数据（如"上个月销售额"、"用户增长率"、"各区域对比"）
+            - 数据库已有足够信息回答用户问题
+
+            ### 搜索时机与综合分析
+            - 当问题需要结合数据库数据和外部知识时（如"对比我司销售额与行业平均"），先调用数据库查询工具获取内部数据，再调用 web_search 获取外部知识，最后在报告中综合分析
+            - 在最终报告中引用搜索到的信息来源（URL）
+
+            ### 重要约束
+            - 仅当用户在前端界面明确启用"联网搜索"选项时，才可以使用 web_search 工具
+            - 如果用户未启用联网搜索，即使问题需要外部知识，也不得调用 web_search 工具
+            - 工具列表中是否包含 web_search 工具由系统根据用户选择动态决定，请根据实际可用工具进行判断
+
             ## 重要规则
             - 工具应按顺序调用，但可根据需要调整
             - SQL 执行失败时，先分析错误再修正，不要盲目重试
             - 生成分析报告前，确保已完成数据查询和图表生成
             - 使用中文回复用户
             - 最终输出应是一份结构化的 Markdown 分析报告
+            - **联网搜索工具使用约束**：web_search 工具仅在用户明确启用"联网搜索"选项时才会被注册到可用工具集中。如果当前可用工具列表中没有 web_search 工具，说明用户未启用联网搜索功能，此时不得尝试调用该工具。请根据实际可用的工具列表来决定是否使用 web_search
             """;
 
     private static final String API_SYS_PROMPT = """
@@ -106,11 +130,32 @@ public class DataAnalysisApplicationService {
                - 报告应包含：分析概述、关键发现、详细分析、结论建议
                - 传入用户问题、数据摘要、图表信息
 
+            ## 联网搜索使用指南
+            ### 何时使用 web_search
+            - 用户问题涉及时间敏感性信息（如"最新政策"、"2025年数据"、"近期趋势"）
+            - 用户问题涉及 API 数据无法回答的外部知识（如"行业趋势"、"竞品分析"、"市场规模"）
+            - 用户明确要求搜索互联网或引用外部来源
+            - 搜索关键词应简洁明确，避免过长句子
+
+            ### 何时不使用 web_search
+            - 用户问题仅涉及 API 内部数据（如"接口调用量"、"响应时间统计"）
+            - API 数据已有足够信息回答用户问题
+
+            ### 搜索时机与综合分析
+            - 当问题需要结合 API 数据和外部知识时（如"对比我司 API 调用量与行业平均"），先调用 API 数据获取工具获取内部数据，再调用 web_search 获取外部知识，最后在报告中综合分析
+            - 在最终报告中引用搜索到的信息来源（URL）
+
+            ### 重要约束
+            - 仅当用户在前端界面明确启用"联网搜索"选项时，才可以使用 web_search 工具
+            - 如果用户未启用联网搜索，即使问题需要外部知识，也不得调用 web_search 工具
+            - 工具列表中是否包含 web_search 工具由系统根据用户选择动态决定，请根据实际可用工具进行判断
+
             ## 重要规则
             - API 数据源不支持 SQL，请直接使用 execute_api_query 获取数据
             - 生成分析报告前，确保已完成数据获取和图表生成
             - 使用中文回复用户
             - 最终输出应是一份结构化的 Markdown 分析报告
+            - **联网搜索工具使用约束**：web_search 工具仅在用户明确启用"联网搜索"选项时才会被注册到可用工具集中。如果当前可用工具列表中没有 web_search 工具，说明用户未启用联网搜索功能，此时不得尝试调用该工具。请根据实际可用的工具列表来决定是否使用 web_search
             """;
 
     private final DataAnalysisDomainService domainService;
@@ -127,6 +172,7 @@ public class DataAnalysisApplicationService {
     private final ApiDataFetcherTool apiDataFetcherTool;
     private final ChartGeneratorTool chartGeneratorTool;
     private final AnalysisGeneratorTool analysisGeneratorTool;
+    private final WebSearchTool webSearchTool;
 
     public DataAnalysisApplicationService(
             DataAnalysisDomainService domainService,
@@ -142,7 +188,8 @@ public class DataAnalysisApplicationService {
             SqlExecutorTool sqlExecutorTool,
             ApiDataFetcherTool apiDataFetcherTool,
             ChartGeneratorTool chartGeneratorTool,
-            AnalysisGeneratorTool analysisGeneratorTool) {
+            AnalysisGeneratorTool analysisGeneratorTool,
+            WebSearchTool webSearchTool) {
         this.domainService = domainService;
         this.datasourceGateway = datasourceGateway;
         this.queryExecutors = queryExecutors;
@@ -157,6 +204,7 @@ public class DataAnalysisApplicationService {
         this.apiDataFetcherTool = apiDataFetcherTool;
         this.chartGeneratorTool = chartGeneratorTool;
         this.analysisGeneratorTool = analysisGeneratorTool;
+        this.webSearchTool = webSearchTool;
     }
 
     /**
@@ -168,9 +216,11 @@ public class DataAnalysisApplicationService {
      * @param modelConfigId 模型配置 ID
      * @param userQuestion 用户问题，用于长期记忆检索
      * @param category 数据源类型
+     * @param enableWebSearch 是否启用网络搜索工具
+     * @param hooks Hook 列表，用于拦截 Agent 事件
      * @return ReActAgent 实例
      */
-    private ReActAgent buildAgent(String sessionId, Long modelConfigId, String userQuestion, DatasourceCategory category) {
+    private ReActAgent buildAgent(String sessionId, Long modelConfigId, String userQuestion, DatasourceCategory category, boolean enableWebSearch, List<Hook> hooks) {
         ChatModelBase chatModel = llmClient.getChatModel(modelConfigId);
 
         Toolkit toolkit = new Toolkit();
@@ -185,9 +235,14 @@ public class DataAnalysisApplicationService {
 
         toolkit.registerTool(chartGeneratorTool);
         toolkit.registerTool(analysisGeneratorTool);
+        
+        // 条件化注册网络搜索工具
+        if (enableWebSearch) {
+            toolkit.registerTool(webSearchTool);
+        }
 
         String prompt = resolvePrompt(category);
-        ReActAgent agent = sessionManager.getOrCreateAgent(sessionId, chatModel, prompt, toolkit, List.of());
+        ReActAgent agent = sessionManager.getOrCreateAgent(sessionId, chatModel, prompt, toolkit, hooks);
 
         // 如果 Agent 是从缓存中获取的，短期记忆可能已有消息，不需要恢复
         // 如果是新创建的 Agent，短期记忆为空，需要注入历史上下文
@@ -312,7 +367,11 @@ public class DataAnalysisApplicationService {
 
                 // 4. 构建 Agent 并执行（支持上下文恢复）
                 DatasourceCategory category = datasource.category();
-                ReActAgent agent = buildAgent(sessionId, command.modelConfigId(), command.userQuestion(), category);
+                List<Hook> hooks = new java.util.ArrayList<>();
+                if (command.enableWebSearch()) {
+                    hooks.add(new SearchResultsHook());
+                }
+                ReActAgent agent = buildAgent(sessionId, command.modelConfigId(), command.userQuestion(), category, command.enableWebSearch(), hooks);
 
                 Msg userMsg = Msg.builder()
                         .role(MsgRole.USER)

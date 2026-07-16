@@ -13,7 +13,19 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:18080',
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/agent/sessions': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/agent/data-analysis': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/datasource': {
+        target: 'http://localhost:8080',
         changeOrigin: true,
       },
     },

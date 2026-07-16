@@ -70,28 +70,52 @@ public class AgentSessionManager {
             throw new IllegalStateException("活跃会话数已达上限: " + sessionProperties.getMaxActiveSessions());
         }
 
-        return agentCache.computeIfAbsent(sessionId, id -> {
-            Memory shortTermMemory = new InMemoryMemory();
-            // 新会话需要初始化，首次创建时 skipInitialization=false
-            DeepLongMemory longTermMemory = deepLongMemorySessionFactory.create(sessionId, false);
-            memoryCache.put(sessionId, longTermMemory);
+        // 当传入非空 hooks 时，创建临时 Agent（不缓存），用于单次请求的特定 hooks
+        if (hooks != null && !hooks.isEmpty()) {
+            return createAgent(sessionId, chatModel, sysPrompt, toolkit, hooks);
+        }
 
-            ReActAgent agent = ReActAgent.builder()
-                    .name("DeepDataAnalyst")
-                    .description("数据分析专家 Agent，能够通过工具调用完成 SQL 生成、执行和数据分析")
-                    .sysPrompt(sysPrompt)
-                    .model(chatModel)
-                    .toolkit(toolkit)
-                    .memory(shortTermMemory)
-                    .longTermMemory(longTermMemory)
-                    .longTermMemoryMode(LongTermMemoryMode.STATIC_CONTROL)
-                    .maxIters(10)
-                    .hooks(hooks)
-                    .build();
+        return agentCache.computeIfAbsent(sessionId, id ->
+                createAgent(sessionId, chatModel, sysPrompt, toolkit, List.of())
+        );
+    }
 
-            log.info("AgentSessionManager: created new agent for session={}", sessionId);
-            return agent;
-        });
+    /**
+     * 创建 ReActAgent 实例
+     *
+     * @param sessionId 会话 ID
+     * @param chatModel 聊天模型
+     * @param sysPrompt 系统提示词
+     * @param toolkit 工具集
+     * @param hooks Hook 列表
+     * @return ReActAgent 实例
+     */
+    private ReActAgent createAgent(
+            String sessionId,
+            ChatModelBase chatModel,
+            String sysPrompt,
+            Toolkit toolkit,
+            List<io.agentscope.core.hook.Hook> hooks
+    ) {
+        Memory shortTermMemory = new InMemoryMemory();
+        DeepLongMemory longTermMemory = deepLongMemorySessionFactory.create(sessionId, false);
+        memoryCache.put(sessionId, longTermMemory);
+
+        ReActAgent agent = ReActAgent.builder()
+                .name("DeepDataAnalyst")
+                .description("数据分析专家 Agent，能够通过工具调用完成 SQL 生成、执行和数据分析")
+                .sysPrompt(sysPrompt)
+                .model(chatModel)
+                .toolkit(toolkit)
+                .memory(shortTermMemory)
+                .longTermMemory(longTermMemory)
+                .longTermMemoryMode(LongTermMemoryMode.STATIC_CONTROL)
+                .maxIters(10)
+                .hooks(hooks)
+                .build();
+
+        log.info("AgentSessionManager: created new agent for session={}", sessionId);
+        return agent;
     }
 
     /**
