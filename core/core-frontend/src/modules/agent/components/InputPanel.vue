@@ -5,6 +5,7 @@
       <t-textarea
         ref="textareaRef"
         v-model="question"
+        name="question"
         class="input-panel__textarea"
         :placeholder="inputPlaceholder"
         :disabled="!configReady || isAnalyzing"

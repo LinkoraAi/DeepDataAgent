@@ -1,117 +1,74 @@
 -- ===========================================================
 -- Agent 模块数据库架构
--- ===========================================================
--- 本文件包含 Agent 模块所需的所有数据库表结构定义，
--- 包括会话管理、消息历史和模型配置等。
 -- 数据库: SQLite
 -- ===========================================================
 
-
 -- ===========================================================
--- 第一部分：模型配置相关表
+-- 第一部分：模型配置表
 -- ===========================================================
 
--- -----------------------------------------------------------
--- 1. 预置模型模板表
---    系统内置的模型模板，用户添加模型时从中选择
---    模板不可编辑、不可删除
--- -----------------------------------------------------------
-CREATE TABLE IF NOT EXISTS llm_model_template (
-    id              INTEGER       PRIMARY KEY AUTOINCREMENT,
-    provider        TEXT          NOT NULL,             -- 提供商: dashscope, deepseek, openai
-    model_name      TEXT          NOT NULL,             -- 模型名称: qwen-plus, deepseek-chat
-    display_name    TEXT          NOT NULL,             -- 显示名称: 通义千问 Plus
-    base_url        TEXT,                               -- API 基础地址（OpenAI 兼容时必填）
-    description     TEXT,                               -- 模板描述
-    sort_order      INTEGER       NOT NULL DEFAULT 0,   -- 排序权重
-    is_enabled      INTEGER       NOT NULL DEFAULT 1,   -- 是否启用: 0-禁用, 1-启用
-    created_at      TEXT          NOT NULL DEFAULT (datetime('now'))
+-- 模型信息表（AgentModelInfo）：存储可用的 LLM 模型配置（OpenAI/DashScope/DeepSeek 等）
+CREATE TABLE IF NOT EXISTS agent_model_info (
+    id                    INTEGER       PRIMARY KEY AUTOINCREMENT,          -- 主键，自增
+    provider_display_name TEXT          NOT NULL,                           -- 提供商展示名称（如 OpenAI）
+    provider_name         TEXT          NOT NULL,                           -- 提供商标识（如 openai）
+    model_id              TEXT          NOT NULL,                           -- 模型 ID（如 gpt-4o）
+    api_url               TEXT          NOT NULL,                           -- API 地址
+    api_key               TEXT          NOT NULL,                           -- API 密钥（加密存储）
+    is_default            INTEGER       NOT NULL DEFAULT 0,                 -- 是否默认模型（1=是，0=否）
+    is_enabled            INTEGER       NOT NULL DEFAULT 1,                 -- 是否启用（1=启用，0=停用）
+    sort_order            INTEGER       NOT NULL DEFAULT 0,                 -- 排序权重
+    created_time          TEXT          NOT NULL DEFAULT (datetime('now')), -- 创建时间
+    updated_time          TEXT          NOT NULL DEFAULT (datetime('now')), -- 更新时间
+    is_deleted            INTEGER       NOT NULL DEFAULT 0                  -- 逻辑删除标记（1=已删除，0=未删除）
 );
 
--- 唯一约束：提供商 + 模型名称
-CREATE UNIQUE INDEX IF NOT EXISTS uk_provider_model ON llm_model_template (provider, model_name) WHERE is_enabled = 1;
-
--- 初始化预置模板数据
-INSERT INTO llm_model_template (provider, model_name, display_name, base_url, description, sort_order) VALUES
-    ('dashscope', 'qwen-turbo', '通义千问 Turbo', 'https://dashscope.aliyuncs.com/compatible-mode/v1', '快速响应，适合简单查询', 1),
-    ('dashscope', 'qwen-plus', '通义千问 Plus', 'https://dashscope.aliyuncs.com/compatible-mode/v1', '平衡性能和质量，推荐日常使用', 2),
-    ('dashscope', 'qwen-max', '通义千问 Max', 'https://dashscope.aliyuncs.com/compatible-mode/v1', '高质量，适合复杂分析', 3),
-    ('deepseek', 'deepseek-chat', 'DeepSeek V3', 'https://api.deepseek.com/v1', '高性价比，支持多种场景', 4),
-    ('openai', NULL, 'OpenAI 兼容（自定义）', NULL, '支持 SiliconFlow、Ollama 等兼容 OpenAI 格式的 API', 5);
-
--- -----------------------------------------------------------
--- 2. 用户模型配置表
---    用户自行配置的模型实例，关联预置模板
---    每个用户的配置彼此隔离
--- -----------------------------------------------------------
-CREATE TABLE IF NOT EXISTS llm_model_config (
-    id                  INTEGER       PRIMARY KEY AUTOINCREMENT,
-    name                TEXT          NOT NULL,             -- 用户自定义配置名称
-    template_id         INTEGER       NOT NULL,             -- 关联的预置模板 ID
-    provider            TEXT          NOT NULL,             -- 提供商（从模板冗余，便于查询）
-    base_url            TEXT,                               -- API 基础地址（从模板冗余）
-    api_key             TEXT          NOT NULL,             -- API Key（AES 加密存储）
-    model_name          TEXT          NOT NULL,             -- 模型名称（从模板冗余）
-    temperature         REAL          NOT NULL DEFAULT 0.1, -- 温度参数 (0~1)
-    is_default          INTEGER       NOT NULL DEFAULT 0,   -- 是否默认: 0-否, 1-是
-    description         TEXT,                               -- 用户备注
-    created_at          TEXT          NOT NULL DEFAULT (datetime('now')),
-    updated_at          TEXT          NOT NULL DEFAULT (datetime('now')),
-    is_deleted          INTEGER       NOT NULL DEFAULT 0    -- 逻辑删除: 0-正常, 1-已删除
-);
-
--- 唯一约束：用户配置名称（当前用户维度）
--- 注：MVP 阶段未实现用户系统，user_id 预留为空字符串
-CREATE UNIQUE INDEX IF NOT EXISTS uk_name ON llm_model_config (name) WHERE is_deleted = 0;
-
--- 索引：查询默认模型
-CREATE INDEX IF NOT EXISTS idx_is_default ON llm_model_config (is_default) WHERE is_deleted = 0 AND is_default = 1;
-
--- 索引：按模板查询
-CREATE INDEX IF NOT EXISTS idx_template_id ON llm_model_config (template_id) WHERE is_deleted = 0;
+CREATE UNIQUE INDEX IF NOT EXISTS uk_provider_model ON agent_model_info(provider_name, model_id) WHERE is_deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_is_default ON agent_model_info(is_default) WHERE is_deleted = 0 AND is_default = 1;
+CREATE INDEX IF NOT EXISTS idx_is_enabled ON agent_model_info(is_enabled) WHERE is_deleted = 0;
 
 
 -- ===========================================================
--- 第二部分：会话管理相关表
+-- 第二部分：会话管理表
 -- ===========================================================
 
--- -----------------------------------------------------------
--- 1. Agent 会话表
---    管理会话的元数据和生命周期
--- -----------------------------------------------------------
+-- 会话表（AgentSession）：存储一次用户会话的上下文信息
 CREATE TABLE IF NOT EXISTS agent_session (
-    id                TEXT          PRIMARY KEY,    -- 会话ID: session-{uuid}
-    title             TEXT          NOT NULL DEFAULT '新对话',  -- 会话标题
-    datasource_id     INTEGER       NOT NULL,       -- 关联的数据源ID
-    model_config_id   INTEGER       NOT NULL,       -- 关联的模型配置ID
-    status            TEXT          NOT NULL DEFAULT 'active',  -- 状态: active/closed/expired
-    message_count     INTEGER       NOT NULL DEFAULT 0,         -- 对话轮次计数
-    last_message_at   TEXT,                         -- 最后一条消息时间 ISO-8601
-    created_at        TEXT          NOT NULL DEFAULT (datetime('now')),
-    updated_at        TEXT          NOT NULL DEFAULT (datetime('now')),
-    closed_at         TEXT,                         -- 关闭时间
-    is_deleted        INTEGER       NOT NULL DEFAULT 0
+    id                TEXT          PRIMARY KEY,                             -- 主键（UUID）
+    title             TEXT          NOT NULL DEFAULT '新对话',               -- 会话标题
+    user_id           INTEGER,                                               -- 用户 ID（预留，暂未启用）
+    datasource_id     INTEGER       NOT NULL,                                -- 关联的数据源 ID
+    model_config_id   INTEGER       NOT NULL,                                -- 关联的模型配置 ID
+    status            TEXT          NOT NULL DEFAULT 'ACTIVE',               -- 会话状态（ACTIVE=活跃）
+    last_message_time TEXT,                                                  -- 最后一条消息时间
+    created_time      TEXT          NOT NULL DEFAULT (datetime('now')),      -- 创建时间
+    updated_time      TEXT          NOT NULL DEFAULT (datetime('now')),      -- 更新时间
+    is_deleted        INTEGER       NOT NULL DEFAULT 0                       -- 逻辑删除标记（1=已删除，0=未删除）
 );
 
+CREATE INDEX IF NOT EXISTS idx_session_user ON agent_session(user_id) WHERE is_deleted = 0;
 CREATE INDEX IF NOT EXISTS idx_session_status ON agent_session(status) WHERE is_deleted = 0;
 CREATE INDEX IF NOT EXISTS idx_session_datasource ON agent_session(datasource_id) WHERE is_deleted = 0;
-CREATE INDEX IF NOT EXISTS idx_session_last_msg ON agent_session(last_message_at) WHERE is_deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_session_last_msg ON agent_session(last_message_time) WHERE is_deleted = 0;
 
--- -----------------------------------------------------------
--- 2. 会话消息历史表
---    持久化完整的对话历史（用户消息 + Agent回复 + 工具调用）
--- -----------------------------------------------------------
-CREATE TABLE IF NOT EXISTS conversation_msg (
-    id                INTEGER       PRIMARY KEY AUTOINCREMENT,
-    session_id        TEXT          NOT NULL,       -- 关联的会话ID
-    role              TEXT          NOT NULL,       -- 角色: user/assistant/system/tool
-    content           TEXT          NOT NULL,       -- 消息内容
-    tool_calls        TEXT,                         -- 工具调用记录 (JSON格式，仅assistant)
-    tool_result       TEXT,                         -- 工具执行结果 (JSON格式，仅tool)
-    metadata          TEXT,                         -- 扩展元数据 (JSON: 耗时、token数等)
-    created_at        TEXT          NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (session_id) REFERENCES agent_session(id)
+
+-- ===========================================================
+-- 第三部分：对话轮次表
+-- ===========================================================
+
+-- 对话轮次表（Dialogue）：一轮完整对话（用户提问 + Agent 全量回复）
+-- 消息以 JSON 数组存储于 messages 字段，不再单独建消息表
+CREATE TABLE IF NOT EXISTS dialogue (
+    id              INTEGER       PRIMARY KEY AUTOINCREMENT,          -- 主键，自增
+    session_id      TEXT          NOT NULL,                           -- 所属会话 ID（关联 agent_session.id）
+    user_question   TEXT          NOT NULL,                           -- 用户问题
+    messages        TEXT,                                             -- 消息列表（DialogueMessage JSON 数组：角色/类型/内容/状态/时间戳）
+    status          TEXT          NOT NULL DEFAULT 'PENDING',         -- 对话状态（PENDING/RUNNING/COMPLETED/FAILED/CANCELLED/INTERRUPTED/DELETED）
+    metadata        TEXT,                                             -- LLM 调用统计信息（预留：调用次数/token 用量/耗时），不存业务数据
+    start_time      TEXT          NOT NULL DEFAULT (datetime('now')), -- 对话开始时间
+    end_time        TEXT,                                             -- 对话结束时间
+    is_deleted      INTEGER       NOT NULL DEFAULT 0                  -- 逻辑删除标记（1=已删除，0=未删除）
 );
 
-CREATE INDEX IF NOT EXISTS idx_msg_session ON conversation_msg(session_id);
-CREATE INDEX IF NOT EXISTS idx_msg_session_order ON conversation_msg(session_id, id);
+CREATE INDEX IF NOT EXISTS idx_dialogue_session ON dialogue(session_id) WHERE is_deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_dialogue_status ON dialogue(status) WHERE is_deleted = 0;

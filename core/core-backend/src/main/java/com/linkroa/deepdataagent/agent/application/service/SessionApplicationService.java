@@ -1,67 +1,82 @@
 package com.linkroa.deepdataagent.agent.application.service;
 
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceGateway;
-import com.linkroa.deepdataagent.agent.controller.response.MessageResponse;
-import com.linkroa.deepdataagent.agent.controller.response.SessionListItem;
-import com.linkroa.deepdataagent.agent.controller.response.SessionResponse;
-import com.linkroa.deepdataagent.agent.domain.repository.SessionRepository;
+import com.linkroa.deepdataagent.agent.application.assembler.MessageDTOAssembler;
+import com.linkroa.deepdataagent.agent.application.assembler.SessionDTOAssembler;
+import com.linkroa.deepdataagent.agent.application.assembler.SessionListItemDTOAssembler;
+import com.linkroa.deepdataagent.agent.application.dto.MessageDTO;
+import com.linkroa.deepdataagent.agent.application.dto.SessionDTO;
+import com.linkroa.deepdataagent.agent.application.dto.SessionListItemDTO;
+import com.linkroa.deepdataagent.agent.domain.model.AgentSession;
+import com.linkroa.deepdataagent.agent.domain.model.Dialogue;
+import com.linkroa.deepdataagent.agent.domain.model.DialogueMessage;
+import com.linkroa.deepdataagent.agent.domain.repository.AgentModelInfoRepository;
+import com.linkroa.deepdataagent.agent.domain.repository.AgentSessionRepository;
+import com.linkroa.deepdataagent.agent.domain.repository.DialogueRepository;
+import com.linkroa.deepdataagent.agent.domain.valueobject.MessageRole;
+import com.linkroa.deepdataagent.agent.domain.valueobject.SessionStatus;
+import com.linkroa.deepdataagent.agent.infrastructure.agent.HarnessAgentFactory;
 import com.linkroa.deepdataagent.agent.infrastructure.config.SessionProperties;
-import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.AgentSessionEntity;
-import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.ConversationMsgEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * 会话应用服务
- * <p>负责会话生命周期的编排：创建、查询、关闭及消息获取。</p>
+ * <p>负责会话生命周期的编排：创建、查询、关闭。
+ * 返回应用层 DTO，由控制器层转换为响应对象。</p>
  */
 @Service
 public class SessionApplicationService {
 
     private static final Logger log = LoggerFactory.getLogger(SessionApplicationService.class);
-    private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final String DEFAULT_TITLE = "新对话";
+    /** 消息分页默认轮次数 */
+    private static final int DEFAULT_ROUND_LIMIT = 5;
 
-    private final SessionRepository sessionRepository;
+    private final AgentSessionRepository sessionRepository;
+    private final AgentModelInfoRepository modelInfoRepository;
+    private final DialogueRepository dialogueRepository;
     private final SessionProperties sessionProperties;
     private final DatasourceGateway datasourceGateway;
-    private final ModelConfigApplicationService modelConfigApplicationService;
-    private final AgentSessionManager agentSessionManager;
+    private final HarnessAgentFactory agentFactory;
 
-    public SessionApplicationService(SessionRepository sessionRepository,
+    public SessionApplicationService(AgentSessionRepository sessionRepository,
+                                     AgentModelInfoRepository modelInfoRepository,
+                                     DialogueRepository dialogueRepository,
                                      SessionProperties sessionProperties,
                                      DatasourceGateway datasourceGateway,
-                                     ModelConfigApplicationService modelConfigApplicationService,
-                                     AgentSessionManager agentSessionManager) {
+                                     HarnessAgentFactory agentFactory) {
         this.sessionRepository = sessionRepository;
+        this.modelInfoRepository = modelInfoRepository;
+        this.dialogueRepository = dialogueRepository;
         this.sessionProperties = sessionProperties;
         this.datasourceGateway = datasourceGateway;
-        this.modelConfigApplicationService = modelConfigApplicationService;
-        this.agentSessionManager = agentSessionManager;
+        this.agentFactory = agentFactory;
     }
 
     /**
      * 创建新会话
      *
+     * @param userId         用户 ID
      * @param datasourceId   数据源 ID
      * @param modelConfigId  模型配置 ID
-     * @return 会话响应
+     * @param userQuestion   用户问题（用于生成即时标题）
+     * @return 会话 DTO
      */
-    public SessionResponse createSession(Long datasourceId, Long modelConfigId) {
+    public SessionDTO createSession(Long userId, Long datasourceId, Long modelConfigId, String userQuestion) {
         // 校验数据源是否存在
         datasourceGateway.findDatasource(datasourceId)
                 .orElseThrow(() -> new IllegalArgumentException("数据源不存在: " + datasourceId));
 
-        // 校验模型配置是否存在
-        if (modelConfigApplicationService.getConfigById(modelConfigId) == null) {
-            throw new IllegalArgumentException("模型配置不存在: " + modelConfigId);
-        }
+        // 校验模型配置是否存在且可用
+        modelInfoRepository.findById(modelConfigId)
+                .orElseThrow(() -> new IllegalArgumentException("模型配置不存在: " + modelConfigId));
 
         // 检查活跃会话数是否达到上限
         int activeCount = sessionRepository.countActiveSessions();
@@ -69,50 +84,48 @@ public class SessionApplicationService {
             throw new IllegalStateException("活跃会话数已达上限: " + sessionProperties.getMaxActiveSessions());
         }
 
-        // 生成会话 ID 并创建实体
         String sessionId = "session-" + UUID.randomUUID().toString();
-        String now = LocalDateTime.now().format(FORMATTER);
+        String title = generateInstantTitle(userQuestion);
 
-        AgentSessionEntity entity = AgentSessionEntity.builder()
-                .id(sessionId)
-                .title(DEFAULT_TITLE)
-                .datasourceId(datasourceId)
-                .modelConfigId(modelConfigId)
-                .status("active")
-                .messageCount(0)
-                .createdAt(now)
-                .updatedAt(now)
-                .isDeleted(0)
-                .build();
+        AgentSession session = new AgentSession(sessionId, title, userId, datasourceId,
+                modelConfigId, SessionStatus.ACTIVE);
 
-        sessionRepository.save(entity);
+        sessionRepository.save(session);
         log.info("SessionApplicationService: created session={}, datasourceId={}, modelConfigId={}",
                 sessionId, datasourceId, modelConfigId);
 
-        return toSessionResponse(entity);
-    }
-
-    /**
-     * 获取所有活跃会话列表
-     *
-     * @return 会话列表项
-     */
-    public List<SessionListItem> listSessions() {
-        return sessionRepository.findActiveSessions().stream()
-                .map(this::toSessionListItem)
-                .toList();
+        return SessionDTOAssembler.toDTO(session);
     }
 
     /**
      * 获取单个会话详情
      *
      * @param sessionId 会话 ID
-     * @return 会话响应
+     * @return 会话 DTO
      */
-    public SessionResponse getSession(String sessionId) {
-        AgentSessionEntity entity = sessionRepository.findById(sessionId)
+    public SessionDTO getSession(String sessionId) {
+        AgentSession session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("会话不存在: " + sessionId));
-        return toSessionResponse(entity);
+        return SessionDTOAssembler.toDTO(session);
+    }
+
+    /**
+     * 获取会话列表
+     *
+     * @param limit  每页数量
+     * @param offset 偏移量
+     * @return 会话列表项 DTO 列表
+     */
+    public List<SessionListItemDTO> listSessions(Integer limit, Integer offset) {
+        List<AgentSession> sessions;
+        if (limit != null && offset != null) {
+            sessions = sessionRepository.findActiveSessionsPaged(limit, offset);
+        } else {
+            sessions = sessionRepository.findActiveSessions();
+        }
+        return sessions.stream()
+                .map(SessionListItemDTOAssembler::toDTO)
+                .collect(Collectors.toList());
     }
 
     /**
@@ -121,76 +134,96 @@ public class SessionApplicationService {
      * @param sessionId 会话 ID
      */
     public void closeSession(String sessionId) {
-        AgentSessionEntity entity = sessionRepository.findById(sessionId)
+        AgentSession session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("会话不存在: " + sessionId));
 
-        if ("closed".equals(entity.getStatus())) {
+        if (session.isClosed()) {
             throw new IllegalStateException("会话已关闭");
         }
 
-        sessionRepository.closeSession(sessionId);
-        agentSessionManager.evictSession(sessionId);
+        session.close();
+        sessionRepository.updateStatus(sessionId, session.getStatus());
+        agentFactory.evictSession(sessionId);
         log.info("SessionApplicationService: closed session={}", sessionId);
     }
 
     /**
      * 获取会话消息列表
+     * <p>以对话轮次为分页单元游标加载：不传 beforeDialogueId 时返回最新 limit 轮，
+     * 传入时返回 id 更小的更早 limit 轮；每轮消息全量返回，保证轮次完整。
+     * 输出按 (dialogueId ASC, sequenceNumber ASC) 升序排列。</p>
      *
-     * @param sessionId 会话 ID
-     * @param limit     每页数量
-     * @param offset    偏移量
-     * @return 消息响应列表
+     * @param sessionId        会话 ID
+     * @param limit            轮次数（可选，默认 5）
+     * @param beforeDialogueId 轮次游标（可选，null 表示取最新）
+     * @return 消息 DTO 列表（升序）
      */
-    public List<MessageResponse> getMessages(String sessionId, int limit, int offset) {
-        // 校验会话是否存在
+    public List<MessageDTO> getMessages(String sessionId, Integer limit, Long beforeDialogueId) {
+        // 验证会话是否存在
         sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("会话不存在: " + sessionId));
 
-        List<ConversationMsgEntity> messages = sessionRepository.findMessagesBySessionId(sessionId, limit, offset);
-        return messages.stream()
-                .map(this::toMessageResponse)
+        // 按轮次游标分页加载（每轮消息全量，保证轮次完整），limit 为空时默认 5 轮
+        int roundLimit = (limit != null && limit > 0) ? limit : DEFAULT_ROUND_LIMIT;
+        List<Dialogue> dialogues = dialogueRepository.findRoundsBySessionId(sessionId, beforeDialogueId, roundLimit);
+
+        // 收集所有消息及其所属对话 ID
+        List<MessageWithDialogue> allMessages = new ArrayList<>();
+        for (Dialogue d : dialogues) {
+            Long dialogueId = d.getId();
+            List<DialogueMessage> messages = d.getMessages();
+            // 兜底：若持久化消息缺少用户消息（历史脏数据），依据对话的 user_question 重建首条用户消息，
+            // 确保前端能以"用户消息"为锚点渲染对话详情
+            if (messages.stream().noneMatch(m -> MessageRole.USER.equals(m.getRole()))) {
+                messages = new ArrayList<>(messages);
+                messages.add(0, DialogueMessage.userMessage(1L, d.getUserQuestion()));
+            }
+            messages.stream()
+                    .map(msg -> new MessageWithDialogue(dialogueId, msg))
+                    .forEach(allMessages::add);
+        }
+        // 先按 dialogueId 排序（auto-increment 主键反映创建顺序），再按 sequenceNumber 排序
+        // 确保多轮对话中"用户提问→Agent回复"的配对顺序正确，
+        // 而非所有对话的 seq=1 排在一起、seq=2 排在一起
+        allMessages.sort((a, b) -> {
+            int cmp = a.dialogueId().compareTo(b.dialogueId());
+            if (cmp != 0) {
+                return cmp;
+            }
+            Long seqA = a.message().getSequenceNumber() != null ? a.message().getSequenceNumber() : 0L;
+            Long seqB = b.message().getSequenceNumber() != null ? b.message().getSequenceNumber() : 0L;
+            return seqA.compareTo(seqB);
+        });
+
+        // 转换
+        return allMessages.stream()
+                .map(mwd -> MessageDTOAssembler.toDTO(mwd.message(), sessionId, mwd.dialogueId()))
                 .toList();
     }
 
-    // ==================== 转换方法 ====================
-
-    private SessionResponse toSessionResponse(AgentSessionEntity entity) {
-        return new SessionResponse(
-                entity.getId(),
-                entity.getTitle(),
-                entity.getDatasourceId(),
-                entity.getModelConfigId(),
-                entity.getStatus(),
-                entity.getMessageCount(),
-                entity.getLastMessageAt(),
-                entity.getCreatedAt(),
-                entity.getClosedAt()
-        );
+    /**
+     * 消息与对话 ID 的关联记录
+     *
+     * @param dialogueId 对话轮次 ID
+     * @param message    对话消息
+     */
+    private record MessageWithDialogue(Long dialogueId, DialogueMessage message) {
     }
 
-    private SessionListItem toSessionListItem(AgentSessionEntity entity) {
-        return new SessionListItem(
-                entity.getId(),
-                entity.getTitle(),
-                entity.getDatasourceId(),
-                entity.getModelConfigId(),
-                entity.getStatus(),
-                entity.getMessageCount(),
-                entity.getLastMessageAt(),
-                entity.getCreatedAt()
-        );
-    }
-
-    private MessageResponse toMessageResponse(ConversationMsgEntity entity) {
-        return new MessageResponse(
-                entity.getId(),
-                entity.getSessionId(),
-                entity.getRole(),
-                entity.getContent(),
-                entity.getToolCalls(),
-                entity.getToolResult(),
-                entity.getMetadata(),
-                entity.getCreatedAt()
-        );
+    /**
+     * 根据用户问题生成即时降级标题
+     *
+     * @param userQuestion 用户问题
+     * @return 标题
+     */
+    private String generateInstantTitle(String userQuestion) {
+        if (userQuestion == null || userQuestion.isBlank()) {
+            return DEFAULT_TITLE;
+        }
+        String trimmed = userQuestion.trim();
+        if (trimmed.length() <= 15) {
+            return trimmed;
+        }
+        return trimmed.substring(0, 15) + "...";
     }
 }

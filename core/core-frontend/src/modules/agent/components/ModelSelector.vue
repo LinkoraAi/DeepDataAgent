@@ -17,8 +17,8 @@
               @click="handleSelect(model.id)"
             >
               <div class="model-selector__option-info">
-                <span class="model-selector__option-name">{{ model.name }}</span>
-                <span class="model-selector__option-provider">{{ model.provider }}</span>
+                <span class="model-selector__option-name">{{ model.modelKey }}</span>
+                <span class="model-selector__option-provider">{{ model.providerKey }}</span>
               </div>
               <t-icon v-if="model.isDefault" name="star-filled" size="14px" class="model-selector__option-default" />
               <t-icon v-if="model.id === modelStore.selectedConfigId" name="check" size="16px" class="model-selector__option-check" />
@@ -54,7 +54,7 @@ const displayName = computed(() => {
   if (!currentModel.value) {
     return '选择模型';
   }
-  return currentModel.value.name;
+  return `${currentModel.value.providerKey}/${currentModel.value.modelKey}`;
 });
 
 /** 选择模型 */

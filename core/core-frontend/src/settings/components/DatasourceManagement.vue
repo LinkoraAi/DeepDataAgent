@@ -15,7 +15,7 @@
         <t-select v-model="filterType" placeholder="全部类型" @change="handleFilterChange">
           <t-option value="" label="全部类型" />
           <t-option value="MYSQL" label="MySQL" />
-          <t-option value="POSTGRESQL" label="PostgreSQL" />
+          <t-option value="CLICKHOUSE" label="ClickHouse" />
           <t-option value="API" label="API" />
         </t-select>
         <t-select v-model="filterStatus" placeholder="全部状态" @change="handleFilterChange">
@@ -76,6 +76,9 @@
             >
               测试连接
             </t-button>
+            <t-button theme="default" variant="outline" size="small" @click="handleBrowse(datasource)">
+              浏览数据
+            </t-button>
             <t-button theme="default" variant="outline" size="small" @click="handleEdit(datasource)">
               编辑
             </t-button>
@@ -110,6 +113,13 @@
       :edit-datasource="editingDatasource"
       @success="handleRefresh"
     />
+
+    <DatasourceBrowseDrawer
+      v-model:visible="browseVisible"
+      :datasource-id="browsingDatasource?.id"
+      :datasource-name="browsingDatasource?.name"
+      :datasource-type="browsingDatasource?.type"
+    />
   </div>
 </template>
 
@@ -119,6 +129,7 @@ import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import type { DatasourceConnection } from '@/modules/agent/types';
 import { useDatasourceStore } from '@/modules/agent/stores/datasource';
 import DatasourceFormDialog from './DatasourceFormDialog.vue';
+import DatasourceBrowseDrawer from './DatasourceBrowseDrawer.vue';
 
 const datasourceStore = useDatasourceStore();
 
@@ -128,6 +139,8 @@ const filterStatus = ref('');
 const dialogVisible = ref(false);
 const editingDatasource = ref<DatasourceConnection | null>(null);
 const testingId = ref<number | null>(null);
+const browseVisible = ref(false);
+const browsingDatasource = ref<DatasourceConnection | null>(null);
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -162,6 +175,12 @@ function handleEdit(datasource: DatasourceConnection) {
   dialogVisible.value = true;
 }
 
+/** 打开数据浏览 Drawer */
+function handleBrowse(datasource: DatasourceConnection) {
+  browsingDatasource.value = datasource;
+  browseVisible.value = true;
+}
+
 async function handleTestConnection(datasource: DatasourceConnection) {
   testingId.value = datasource.id;
   try {
@@ -170,6 +189,7 @@ async function handleTestConnection(datasource: DatasourceConnection) {
       id: datasource.id,
       name: datasource.name,
       type: datasource.type,
+      subType: datasource.subType,
     });
     MessagePlugin.success('连接测试成功');
   } catch (err: any) {
@@ -183,6 +203,7 @@ async function handleTestConnection(datasource: DatasourceConnection) {
 async function handleEnable(datasource: DatasourceConnection) {
   try {
     await datasourceStore.enableDatasource(datasource.id);
+    await loadDatasources();
     MessagePlugin.success('启用成功');
   } catch (err: any) {
     console.error('Enable failed:', err);
@@ -193,6 +214,7 @@ async function handleEnable(datasource: DatasourceConnection) {
 async function handleDisable(datasource: DatasourceConnection) {
   try {
     await datasourceStore.disableDatasource(datasource.id);
+    await loadDatasources();
     MessagePlugin.success('禁用成功');
   } catch (err: any) {
     console.error('Disable failed:', err);
@@ -209,6 +231,7 @@ function handleDelete(datasource: DatasourceConnection) {
     onConfirm: async () => {
       try {
         await datasourceStore.deleteDatasource(datasource.id);
+        await loadDatasources();
         MessagePlugin.success('删除成功');
         dialog.destroy();
       } catch (err: any) {
@@ -229,7 +252,7 @@ function handleRefresh() {
 function getTypeIcon(type: string): string {
   const icons: Record<string, string> = {
     MYSQL: 'M',
-    POSTGRESQL: 'P',
+    CLICKHOUSE: 'C',
     API: 'A',
   };
   return icons[type] || '?';
@@ -238,7 +261,7 @@ function getTypeIcon(type: string): string {
 function getTypeClass(type: string): string {
   const classes: Record<string, string> = {
     MYSQL: 'mysql',
-    POSTGRESQL: 'postgresql',
+    CLICKHOUSE: 'clickhouse',
     API: 'api',
   };
   return classes[type] || '';
@@ -327,9 +350,9 @@ onMounted(() => {
       color: #0052d9;
     }
 
-    &.postgresql {
-      background: rgba(16, 185, 129, 0.08);
-      color: #10b981;
+    &.clickhouse {
+      background: rgba(255, 153, 0, 0.08);
+      color: #ff9900;
     }
 
     &.api {

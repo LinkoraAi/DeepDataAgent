@@ -1,14 +1,14 @@
 <template>
   <div class="base-card">
-    <div class="base-card__header" @click="toggleCollapse">
+    <div class="base-card__header" :class="{ 'base-card__header--clickable': collapsible }" @click="collapsible && toggleCollapse()">
       <div class="base-card__title-section">
         <span class="base-card__icon">{{ icon }}</span>
         <span class="base-card__title">{{ title }}</span>
         <span v-if="status" class="base-card__status">{{ status }}</span>
       </div>
-      <t-icon :name="isExpanded ? 'chevron-up' : 'chevron-down'" class="base-card__arrow" />
+      <t-icon v-if="collapsible" :name="isExpanded ? 'chevron-up' : 'chevron-down'" class="base-card__arrow" />
     </div>
-    <div v-show="isExpanded" class="base-card__content">
+    <div v-show="!collapsible || isExpanded" class="base-card__content">
       <slot></slot>
     </div>
   </div>
@@ -22,11 +22,14 @@ interface Props {
   icon?: string;
   status?: string;
   defaultExpanded?: boolean;
+  /** 是否可折叠，false 时始终展开且不可折叠 */
+  collapsible?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   icon: '📊',
   defaultExpanded: true,
+  collapsible: true,
 });
 
 const isExpanded = ref(props.defaultExpanded);

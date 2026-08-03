@@ -2,7 +2,6 @@ package com.linkroa.deepdataagent.agent.infrastructure.adapter;
 
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceCategory;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceInfo;
-import com.linkroa.deepdataagent.agent.exception.DataAnalysisException;
 import com.linkroa.deepdataagent.datasource.domain.model.ApiField;
 import com.linkroa.deepdataagent.datasource.domain.model.ApiSchema;
 import com.linkroa.deepdataagent.datasource.domain.model.DatasourceConnection;
@@ -14,6 +13,7 @@ import com.linkroa.deepdataagent.datasource.domain.repository.ApiSchemaRepositor
 import com.linkroa.deepdataagent.datasource.domain.repository.DatasourceConnectionRepository;
 import com.linkroa.deepdataagent.datasource.domain.strategy.DatasourceConnectionStrategyFactory;
 import com.linkroa.deepdataagent.datasource.infrastructure.client.ApiPaginationHandler;
+import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -97,7 +97,7 @@ class DatasourceGatewayAdapterTest {
         when(apiSchemaRepository.findByConnectionId(connectionId)).thenReturn(List.of());
 
         // when & then
-        DataAnalysisException exception = assertThrows(DataAnalysisException.class,
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
                 () -> adapter.extractSchema(connectionId));
         assertTrue(exception.getMessage().contains("API 数据源未配置任何 Schema"));
     }
@@ -150,7 +150,7 @@ class DatasourceGatewayAdapterTest {
         when(repository.findById(connectionId)).thenReturn(Optional.empty());
 
         // when & then
-        DataAnalysisException exception = assertThrows(DataAnalysisException.class,
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
                 () -> adapter.extractSchema(connectionId));
         assertTrue(exception.getMessage().contains("数据源不存在"));
     }
@@ -190,7 +190,7 @@ class DatasourceGatewayAdapterTest {
         when(apiSchemaRepository.findByConnectionIdAndName(datasourceId, apiSchemaName)).thenReturn(Optional.empty());
 
         // when & then
-        DataAnalysisException exception = assertThrows(DataAnalysisException.class,
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
                 () -> adapter.executeApiQuery(datasourceId, apiSchemaName, 100));
         assertTrue(exception.getMessage().contains("API Schema 不存在"));
         verify(paginationHandler, never()).fetchAllPages(any(), any(), anyInt());

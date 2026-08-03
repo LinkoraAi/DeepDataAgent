@@ -3,12 +3,11 @@ package com.linkroa.deepdataagent.agent.domain.service;
 import com.linkroa.deepdataagent.agent.domain.model.ChartConfig;
 import com.linkroa.deepdataagent.agent.domain.model.DataAnalysisQuery;
 import com.linkroa.deepdataagent.agent.domain.model.DataAnalysisResult;
+import com.linkroa.deepdataagent.agent.domain.service.port.ChartConfigGenerator;
+import com.linkroa.deepdataagent.agent.domain.service.port.LLMGenerationPort;
 import com.linkroa.deepdataagent.agent.domain.support.DataSummaryBuilder;
-import com.linkroa.deepdataagent.agent.infrastructure.adapter.EChartsConfigGenerator;
-import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
 import org.springframework.util.ObjectUtils;
 
 import java.util.List;
@@ -16,9 +15,10 @@ import java.util.Map;
 
 /**
  * 数据分析领域服务
- * <p>编排核心流程：Text-to-SQL → 图表生成 → 分析报告。</p>
+ * <p>编排核心流程：Text-to-SQL → 图表生成 → 分析报告。
+ * 依赖领域层端口接口 {@link ChartConfigGenerator} 与 {@link LLMGenerationPort}，实现与具体实现的解耦。
+ * 该领域服务由基础设施层 {@code DomainServiceConfig} 通过 {@code @Bean} 装配。</p>
  */
-@Service
 public class DataAnalysisDomainService {
 
     private static final Logger log = LoggerFactory.getLogger(DataAnalysisDomainService.class);
@@ -28,18 +28,18 @@ public class DataAnalysisDomainService {
             + "2) 检查数据源中是否存在目标数据；3) 确认自然语言问题是否准确表达了查询意图。";
 
     private final TextToSqlService textToSqlService;
-    private final EChartsConfigGenerator chartGenerator;
-    private final LLMClient llmClient;
+    private final ChartConfigGenerator chartGenerator;
+    private final LLMGenerationPort llmGenerationPort;
     private final DataSummaryBuilder dataSummaryBuilder;
 
     public DataAnalysisDomainService(
             TextToSqlService textToSqlService,
-            EChartsConfigGenerator chartGenerator,
-            LLMClient llmClient,
+            ChartConfigGenerator chartGenerator,
+            LLMGenerationPort llmGenerationPort,
             DataSummaryBuilder dataSummaryBuilder) {
         this.textToSqlService = textToSqlService;
         this.chartGenerator = chartGenerator;
-        this.llmClient = llmClient;
+        this.llmGenerationPort = llmGenerationPort;
         this.dataSummaryBuilder = dataSummaryBuilder;
     }
 
@@ -82,10 +82,10 @@ public class DataAnalysisDomainService {
 
         try {
             String dataSummary = dataSummaryBuilder.build(data);
-            return llmClient.generateAnalysis(modelConfigId, question, sql, dataSummary, chart.description());
+            return llmGenerationPort.generateAnalysis(modelConfigId, question, sql, dataSummary, chart.description());
         } catch (Exception e) {
             log.warn("分析报告生成失败: {}", e.getMessage());
-            return "分析报告生成失败";
+            throw new RuntimeException("分析报告生成失败", e);
         }
     }
 }

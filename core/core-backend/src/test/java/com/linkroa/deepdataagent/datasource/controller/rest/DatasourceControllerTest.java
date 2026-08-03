@@ -177,7 +177,7 @@ class DatasourceControllerTest {
     @Test
     void should_returnSuccessMessage_when_update_given_validRequest() {
         UpdateDatasourceRequest request = new UpdateDatasourceRequest(
-                1L, "updated-ds", "updated"
+                1L, "updated-ds", "updated", null
         );
 
         ApiResponse<String> response = controller.update(request);

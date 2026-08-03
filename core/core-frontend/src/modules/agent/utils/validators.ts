@@ -71,3 +71,42 @@ export function validateAnalysisInput(
 
   return { valid: true };
 }
+
+/**
+ * 判断图表配置是否具有直观价值
+ * <p>避免展示无意义的图表，如数据量过少/过多、单一值、线性增长或表格类配置。</p>
+ */
+export function hasChartValue(chartConfig: any, chartType?: string | null): boolean {
+  if (!chartConfig) return false;
+
+  let config: any;
+  if (typeof chartConfig === 'string') {
+    try {
+      config = JSON.parse(chartConfig);
+    } catch {
+      return false;
+    }
+  } else {
+    config = chartConfig;
+  }
+
+  const rawType = (chartType || config.series?.[0]?.type || '').toLowerCase();
+  if (rawType === 'table') return false;
+
+  const dataCount = config.series?.[0]?.data?.length || 0;
+  if (dataCount < 2 || dataCount > 20) return false;
+
+  const values = (config.series?.[0]?.data || []).map((item: any) => item.value ?? item);
+  if (values.length === 0) return false;
+
+  const allSame = values.every((v: number) => v === values[0]);
+  if (allSame) return false;
+
+  if (values.length >= 3) {
+    const diff1 = values[1] - values[0];
+    const isLinear = values.every((v: number, i: number) => i === 0 || v === values[i - 1] + diff1);
+    if (isLinear) return false;
+  }
+
+  return true;
+}

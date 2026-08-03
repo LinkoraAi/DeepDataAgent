@@ -8,7 +8,6 @@ public record TestConnectionRequest(
     String name,
     @NotBlank(message = "数据源类型不能为空")
     String type,
-    @NotBlank(message = "数据源子类型不能为空")
     String subType,
 
     String description,

@@ -34,8 +34,13 @@ export function useAnalysisProgress() {
     if (s.analysisReport) return 'generating_report';
     if (s.chartConfig || s.queryData.length > 0) return 'generating_chart';
     if (s.currentSQL) return 'executing_sql';
-    if (s.toolCalls.length > 0) return 'executing_tools';
-    if (s.thinkingSteps.length > 0) return 'thinking';
+    // 基于 ReAct 轮次判定阶段
+    const hasRunningTools = s.rounds.some(r => r.toolCalls.some(t => t.status === 'running'));
+    const hasAnyToolCalls = s.rounds.some(r => r.toolCalls.length > 0);
+    const hasThinking = s.rounds.some(r => r.thinking.isStreaming || r.thinking.content);
+    if (hasRunningTools) return 'executing_tools';
+    if (hasAnyToolCalls) return 'executing_tools';
+    if (hasThinking) return 'thinking';
     return 'connecting';
   });
 

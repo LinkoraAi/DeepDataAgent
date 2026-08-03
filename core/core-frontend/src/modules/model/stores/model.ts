@@ -1,49 +1,55 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { ModelTemplate, ModelConfig } from '../types';
+import type { ModelProvider, ModelConfig } from '../types';
 import * as modelApi from '@/shared/api/modelApi';
 
 export const useModelStore = defineStore('model', () => {
-  const templates = ref<ModelTemplate[]>([]);
+  /** 服务商列表 */
+  const providers = ref<ModelProvider[]>([]);
+  /** 用户配置列表 */
   const configs = ref<ModelConfig[]>([]);
+  /** 加载状态 */
   const loading = ref(false);
+  /** 当前选中的配置 ID */
   const selectedConfigId = ref<number | null>(null);
 
+  /** 默认模型 */
   const defaultModel = computed(() => {
     return configs.value.find(c => c.isDefault) || null;
   });
 
+  /** 当前选中的模型 */
   const selectedModel = computed(() => {
     if (!selectedConfigId.value) return null;
     return configs.value.find(c => c.id === selectedConfigId.value) || null;
   });
 
   /**
-   * Set selected model config
+   * 设置当前选中的配置
    */
   function setSelectedConfig(id: number) {
     selectedConfigId.value = id;
   }
 
   /**
-   * Load templates
+   * 加载服务商列表
    */
-  async function loadTemplates() {
+  async function loadProviders() {
     try {
-      templates.value = await modelApi.listTemplates();
+      providers.value = await modelApi.fetchProviders();
     } catch (err) {
-      console.error('Failed to load templates:', err);
+      console.error('Failed to load providers:', err);
     }
   }
 
   /**
-   * Load configs
+   * 加载配置列表
    */
   async function loadConfigs() {
     loading.value = true;
     try {
       configs.value = await modelApi.listConfigs();
-      // Auto-select default model if none selected
+      // 自动选择默认模型
       if (!selectedConfigId.value && configs.value.length > 0) {
         const defaultConfig = configs.value.find(c => c.isDefault);
         if (defaultConfig) {
@@ -60,21 +66,21 @@ export const useModelStore = defineStore('model', () => {
   }
 
   /**
-   * Load all (templates + configs)
+   * 加载所有数据（服务商 + 配置）
    */
   async function loadAll() {
-    await Promise.all([loadTemplates(), loadConfigs()]);
+    await Promise.all([loadProviders(), loadConfigs()]);
   }
 
   return {
-    templates,
+    providers,
     configs,
     loading,
     defaultModel,
     selectedConfigId,
     selectedModel,
     setSelectedConfig,
-    loadTemplates,
+    loadProviders,
     loadConfigs,
     loadAll,
   };

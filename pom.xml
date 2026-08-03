@@ -30,7 +30,7 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.compiler.release>${java.version}</maven.compiler.release>
 
-        <agentscope.version>1.0.11</agentscope.version>
+        <agentscope.version>2.0.0</agentscope.version>
         <langchain4j.jvector.version>1.13.0-beta23</langchain4j.jvector.version>
         <opensandbox.version>1.0.4</opensandbox.version>
         <sqlite.version>3.50.3.0</sqlite.version>

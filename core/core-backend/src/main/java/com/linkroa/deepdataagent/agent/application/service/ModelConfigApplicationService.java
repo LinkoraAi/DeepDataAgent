@@ -1,97 +1,153 @@
 package com.linkroa.deepdataagent.agent.application.service;
 
-import com.linkroa.deepdataagent.agent.controller.request.AddModelConfigRequest;
-import com.linkroa.deepdataagent.agent.controller.request.UpdateModelConfigRequest;
-import com.linkroa.deepdataagent.agent.controller.response.TestConnectionResult;
+import com.linkroa.deepdataagent.agent.application.assembler.ModelConfigDTOAssembler;
+import com.linkroa.deepdataagent.agent.application.command.AddModelConfigCommand;
+import com.linkroa.deepdataagent.agent.application.command.UpdateModelConfigCommand;
+import com.linkroa.deepdataagent.agent.application.dto.ModelConfigDTO;
+import com.linkroa.deepdataagent.agent.application.dto.ModelInfoDTO;
+import com.linkroa.deepdataagent.agent.application.dto.ModelProviderDTO;
+import com.linkroa.deepdataagent.agent.domain.model.AgentModelInfo;
+import com.linkroa.deepdataagent.agent.domain.model.TestConnectionResult;
+import com.linkroa.deepdataagent.agent.domain.repository.AgentModelInfoRepository;
 import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
-import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.LlmModelConfigEntity;
-import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.LlmModelTemplateEntity;
-import com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper.LlmModelConfigMapper;
-import com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper.LlmModelTemplateMapper;
-import com.linkroa.deepdataagent.datasource.infrastructure.util.PasswordEncryptionUtil;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 模型配置应用服务
+ * <p>基于新的 AgentModelInfo 聚合根管理模型配置。
+ * 接收应用层命令对象，返回应用层 DTO，由控制器层完成请求对象与命令对象、DTO 与响应对象的转换。</p>
  */
 @Service
 public class ModelConfigApplicationService {
 
-    private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-
-    private final LlmModelTemplateMapper templateMapper;
-    private final LlmModelConfigMapper configMapper;
-    private final PasswordEncryptionUtil encryptionUtil;
+    private final AgentModelInfoRepository modelInfoRepository;
     private final LLMClient llmClient;
     private final Map<Long, Long> lastTestTime = new ConcurrentHashMap<>();
     private static final long TEST_COOLDOWN_MS = 5000;
 
-    public ModelConfigApplicationService(LlmModelTemplateMapper templateMapper,
-                                         LlmModelConfigMapper configMapper,
-                                         PasswordEncryptionUtil encryptionUtil,
+    public ModelConfigApplicationService(AgentModelInfoRepository modelInfoRepository,
                                          LLMClient llmClient) {
-        this.templateMapper = templateMapper;
-        this.configMapper = configMapper;
-        this.encryptionUtil = encryptionUtil;
+        this.modelInfoRepository = modelInfoRepository;
         this.llmClient = llmClient;
     }
 
     /**
-     * 获取所有启用的预置模板
+     * 获取所有启用的模型配置
      */
-    public List<LlmModelTemplateEntity> listTemplates() {
-        return templateMapper.selectEnabledTemplates();
+    public List<AgentModelInfo> listAllEnabled() {
+        return modelInfoRepository.findAllEnabled();
     }
 
     /**
-     * 获取所有用户模型配置
+     * 获取默认模型
      */
-    public List<LlmModelConfigEntity> listConfigs() {
-        return configMapper.selectAllNotDeleted();
+    public AgentModelInfo getDefaultModel() {
+        return modelInfoRepository.findDefault()
+                .orElseThrow(() -> new DeepDataAgentException("未配置默认模型"));
+    }
+
+    /**
+     * 获取默认模型（不抛出异常，不存在时返回 null）
+     */
+    public AgentModelInfo getDefaultModelOrNull() {
+        return modelInfoRepository.findDefault().orElse(null);
+    }
+
+    /**
+     * 查询所有启用的服务商（去重）
+     *
+     * @return 服务商 DTO 列表
+     */
+    public List<ModelProviderDTO> listProviders() {
+        return modelInfoRepository.findDistinctProviders().stream()
+                .map(p -> new ModelProviderDTO(
+                        p.getId(), p.getProviderDisplayName(), p.getProviderName(), p.getApiUrl()))
+                .toList();
+    }
+
+    /**
+     * 根据服务商标识查询可用模型列表
+     *
+     * @param providerKey 服务商标识
+     * @return 模型 DTO 列表（仅可用模型）
+     */
+    public List<ModelInfoDTO> getModelsByProvider(String providerKey) {
+        return modelInfoRepository.findByProviderName(providerKey).stream()
+                .filter(AgentModelInfo::isAvailable)
+                .map(m -> new ModelInfoDTO(
+                        m.getId(), m.getModelId(), m.getProviderDisplayName() + " - " + m.getModelId()))
+                .toList();
+    }
+
+    /**
+     * 根据 ID 获取模型配置
+     */
+    public AgentModelInfo getModelById(Long id) {
+        return modelInfoRepository.findById(id)
+                .orElseThrow(() -> new DeepDataAgentException("模型配置不存在: " + id));
+    }
+
+    /**
+     * 获取所有启用的模型配置（返回 DTO）
+     */
+    public List<ModelConfigDTO> listConfigDTOs() {
+        return ModelConfigDTOAssembler.toDTOList(modelInfoRepository.findAllEnabled());
+    }
+
+    /**
+     * 根据 ID 获取模型配置（返回 DTO，默认脱敏）
+     */
+    public ModelConfigDTO getConfigDTO(Long id) {
+        return ModelConfigDTOAssembler.toDTO(getModelById(id));
+    }
+
+    /**
+     * 获取默认模型配置（返回 DTO，默认脱敏）
+     */
+    public ModelConfigDTO getDefaultConfigDTO() {
+        return ModelConfigDTOAssembler.toDTO(getDefaultModelOrNull());
+    }
+
+    /**
+     * 根据 ID 获取模型配置（返回 DTO，不脱敏 API Key，用于编辑）
+     */
+    public ModelConfigDTO getConfigForEditDTO(Long id) {
+        return ModelConfigDTOAssembler.toDTO(getModelById(id), false);
     }
 
     /**
      * 添加模型配置
      */
     @Transactional
-    public void addConfig(AddModelConfigRequest request) {
-        // 验证模板存在
-        LlmModelTemplateEntity template = templateMapper.selectById(request.templateId());
-        if (template == null) {
-            throw new DeepDataAgentException("模型模板不存在");
-        }
+    public void addConfig(AddModelConfigCommand command) {
+        AgentModelInfo info = new AgentModelInfo();
+        info.setProviderDisplayName(command.providerKey());
+        info.setProviderName(command.providerKey());
+        info.setModelId(command.modelKey());
+        info.setApiUrl(command.baseUrl());
+        info.setApiKey(command.apiKey());
+        info.setDefaultModel(Boolean.TRUE.equals(command.setDefault()) ? 1 : 0);
+        info.setEnabled(1);
+        info.setSortOrder(0);
 
-        String now = LocalDateTime.now().format(FORMATTER);
+        modelInfoRepository.save(info);
 
-        LlmModelConfigEntity entity = new LlmModelConfigEntity();
-        entity.setName(request.name());
-        entity.setTemplateId(request.templateId());
-        entity.setProvider(template.getProvider());
-        entity.setBaseUrl(template.getBaseUrl());
-        entity.setApiKey(encryptionUtil.encrypt(request.apiKey()));
-        entity.setModelName(template.getModelName());
-        entity.setTemperature(request.temperature() != null ? request.temperature() : 0.1);
-        entity.setIsDefault(Boolean.TRUE.equals(request.setDefault()) ? 1 : 0);
-        entity.setDescription(request.description());
-        entity.setCreatedAt(now);
-        entity.setUpdatedAt(now);
-        entity.setIsDeleted(0);
-
-        configMapper.insert(entity);
-
-        // 如果设为默认，取消其他默认
-        if (Boolean.TRUE.equals(request.setDefault())) {
-            configMapper.cancelDefaultForAll(now);
-            entity.setIsDefault(1);
-            configMapper.updateById(entity);
+        // 如果设为默认，清除其他默认
+        if (Boolean.TRUE.equals(command.setDefault())) {
+            modelInfoRepository.findAllEnabled().stream()
+                    .filter(m -> !m.getId().equals(info.getId()) && m.getDefaultModel() != null && m.getDefaultModel() == 1)
+                    .forEach(m -> {
+                        m.setDefaultModel(0);
+                        modelInfoRepository.update(m);
+                    });
         }
     }
 
@@ -99,60 +155,39 @@ public class ModelConfigApplicationService {
      * 更新模型配置
      */
     @Transactional
-    public void updateConfig(Long id, UpdateModelConfigRequest request) {
-        LlmModelConfigEntity entity = configMapper.selectByIdAndNotDeleted(id);
-        if (entity == null) {
-            throw new DeepDataAgentException("模型配置不存在");
+    public void updateConfig(Long id, UpdateModelConfigCommand command) {
+        AgentModelInfo info = getModelById(id);
+
+        if (command.baseUrl() != null) {
+            info.setApiUrl(command.baseUrl());
+        }
+        if (command.apiKey() != null && !command.apiKey().isBlank()) {
+            info.setApiKey(command.apiKey());
         }
 
-        String now = LocalDateTime.now().format(FORMATTER);
-
-        if (request.name() != null && !request.name().isBlank()) {
-            entity.setName(request.name());
-        }
-        if (request.apiKey() != null && !request.apiKey().isBlank()) {
-            entity.setApiKey(encryptionUtil.encrypt(request.apiKey()));
-        }
-        if (request.temperature() != null) {
-            entity.setTemperature(request.temperature());
-        }
-        if (request.description() != null) {
-            entity.setDescription(request.description());
-        }
-        entity.setUpdatedAt(now);
-
-        configMapper.updateById(entity);
-
-        // 清除 LLM 客户端缓存，使新配置立即生效
+        modelInfoRepository.update(info);
         llmClient.evictCache(id);
     }
 
     /**
-     * 删除模型配置
+     * 删除模型配置（软删除）
      */
     @Transactional
     public void deleteConfig(Long id) {
-        LlmModelConfigEntity entity = configMapper.selectByIdAndNotDeleted(id);
-        if (entity == null) {
-            throw new DeepDataAgentException("模型配置不存在");
+        AgentModelInfo info = getModelById(id);
+
+        modelInfoRepository.markDeleted(id);
+
+        // 如果删除的是默认模型，选择下一个作为默认
+        if (info.getDefaultModel() != null && info.getDefaultModel() == 1) {
+            modelInfoRepository.findAllEnabled().stream()
+                    .findFirst()
+                    .ifPresent(m -> {
+                        m.setDefaultModel(1);
+                        modelInfoRepository.update(m);
+                    });
         }
 
-        String now = LocalDateTime.now().format(FORMATTER);
-        entity.setIsDeleted(1);
-        entity.setUpdatedAt(now);
-        configMapper.updateById(entity);
-
-        // 如果删除的是默认模型，按模板优先级选择下一个作为默认
-        if (entity.getIsDefault() == 1) {
-            LlmModelConfigEntity newDefault = configMapper.selectNextDefaultModel();
-            if (newDefault != null) {
-                newDefault.setIsDefault(1);
-                newDefault.setUpdatedAt(now);
-                configMapper.updateById(newDefault);
-            }
-        }
-
-        // 清除 LLM 客户端缓存
         llmClient.evictCache(id);
     }
 
@@ -161,53 +196,25 @@ public class ModelConfigApplicationService {
      */
     @Transactional
     public void setDefaultModel(Long id) {
-        LlmModelConfigEntity entity = configMapper.selectByIdAndNotDeleted(id);
-        if (entity == null) {
-            throw new DeepDataAgentException("模型配置不存在");
-        }
+        AgentModelInfo info = getModelById(id);
 
-        String now = LocalDateTime.now().format(FORMATTER);
         // 取消所有默认
-        configMapper.cancelDefaultForAll(now);
-        // 设置新默认
-        entity.setIsDefault(1);
-        entity.setUpdatedAt(now);
-        configMapper.updateById(entity);
-    }
+        modelInfoRepository.findAllEnabled().stream()
+                .filter(m -> m.getDefaultModel() != null && m.getDefaultModel() == 1)
+                .forEach(m -> {
+                    m.setDefaultModel(0);
+                    modelInfoRepository.update(m);
+                });
 
-    /**
-     * 获取默认模型
-     */
-    public LlmModelConfigEntity getDefaultModel() {
-        return configMapper.selectDefaultModel();
-    }
-
-    /**
-     * 根据 ID 获取模型配置（含解密后的 API Key）
-     */
-    public LlmModelConfigEntity getConfigById(Long id) {
-        return configMapper.selectByIdAndNotDeleted(id);
-    }
-
-    /**
-     * 解密 API Key
-     */
-    public String decryptApiKey(String encryptedKey) {
-        return encryptionUtil.decrypt(encryptedKey);
+        info.setDefaultModel(1);
+        modelInfoRepository.update(info);
     }
 
     /**
      * 测试模型连接（带频率限制）
-     * <p>5 秒内只能测试一次成功连接，防止频繁请求 LLM 接口</p>
-     *
-     * @param id 模型配置 ID
-     * @return 连接测试结果
      */
     public TestConnectionResult testConnection(Long id) {
-        LlmModelConfigEntity entity = configMapper.selectByIdAndNotDeleted(id);
-        if (entity == null) {
-            return new TestConnectionResult(false, "模型配置不存在", 0L);
-        }
+        AgentModelInfo info = getModelById(id);
 
         // 频率限制
         Long lastTime = lastTestTime.get(id);

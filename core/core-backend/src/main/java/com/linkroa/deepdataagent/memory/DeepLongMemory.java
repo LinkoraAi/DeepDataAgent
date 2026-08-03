@@ -33,9 +33,7 @@ import com.linkroa.deepdataagent.memory.retrieval.HybridRetrieverImpl;
 import com.linkroa.deepdataagent.memory.retrieval.TemporalReranker;
 import com.linkroa.deepdataagent.memory.vector.JVectorMemoryStore;
 
-import io.agentscope.core.memory.LongTermMemory;
 import io.agentscope.core.message.Msg;
-import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -43,8 +41,12 @@ import reactor.core.publisher.Mono;
 
 /**
  * Session-bound long-term memory implementation for DeepDataAgent.
+ * <p>AgentScope 2.0.0 已将 {@code io.agentscope.core.memory.LongTermMemory} 接口标记为
+ * {@code @Deprecated(forRemoval=true)}，本类不再实现该废弃接口。{@link #record(List)} 和
+ * {@link #retrieve(Msg)} 方法保留为普通公开方法，供 {@code MemoryInjectionMiddleware}
+ * 通过组合方式调用。内部记忆内核（FTS5/JVector/HybridRetriever/TemporalReranker）保持不变。</p>
  */
-public class DeepLongMemory implements LongTermMemory, AutoCloseable {
+public class DeepLongMemory implements AutoCloseable {
 
     private static final DateTimeFormatter AGENTSCOPE_TIMESTAMP_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
@@ -90,7 +92,6 @@ public class DeepLongMemory implements LongTermMemory, AutoCloseable {
         this.ownedResources = List.copyOf(ownedResources);
     }
 
-    @Override
     public Mono<Void> record(List<Msg> msgs) {
         return Mono.fromRunnable(() -> {
             if (msgs == null || msgs.size() < properties.getRecord().getMinRoundSize()) {
@@ -116,7 +117,6 @@ public class DeepLongMemory implements LongTermMemory, AutoCloseable {
         });
     }
 
-    @Override
     public Mono<String> retrieve(Msg msg) {
         return Mono.fromSupplier(() -> {
             String query = msg == null ? "" : msg.getTextContent();

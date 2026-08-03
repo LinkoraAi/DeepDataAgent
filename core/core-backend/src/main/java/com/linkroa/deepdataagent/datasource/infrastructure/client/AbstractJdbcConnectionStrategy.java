@@ -22,7 +22,7 @@ import java.util.Map;
  */
 public abstract class AbstractJdbcConnectionStrategy implements DatasourceConnectionStrategy {
 
-    private static final Logger log = LoggerFactory.getLogger(AbstractJdbcConnectionStrategy.class);
+    protected static final Logger log = LoggerFactory.getLogger(AbstractJdbcConnectionStrategy.class);
 
     private static final int CONNECTION_TIMEOUT_SECONDS = 10;
     private static final int QUERY_TIMEOUT_SECONDS = 30;
@@ -78,7 +78,10 @@ public abstract class AbstractJdbcConnectionStrategy implements DatasourceConnec
             ResultSet rs = conn.getMetaData().getTables(schemaName, schemaName, "%", new String[]{"TABLE"});
             while (rs.next()) {
                 String tableName = rs.getString("TABLE_NAME");
-                String tableComment = extractTableComment(conn, schemaName, tableName);
+                String tableComment = rs.getString("REMARKS");
+                if (tableComment == null) {
+                    tableComment = extractTableComment(conn, schemaName, tableName);
+                }
                 tables.add(new TableInfo(null, null, tableName, tableComment, null, null, null));
             }
         } catch (SQLException e) {

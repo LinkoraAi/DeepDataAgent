@@ -20,9 +20,9 @@ import com.linkroa.deepdataagent.memory.retrieval.TemporalReranker;
 import com.linkroa.deepdataagent.memory.vector.JVectorMemoryStore;
 
 import io.agentscope.core.model.ChatModelBase;
-import io.agentscope.core.model.DashScopeChatModel;
 import io.agentscope.core.model.GenerateOptions;
-import io.agentscope.core.model.OpenAIChatModel;
+import io.agentscope.extensions.model.dashscope.DashScopeChatModel;
+import io.agentscope.extensions.model.openai.OpenAIChatModel;
 
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;

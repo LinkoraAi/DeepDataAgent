@@ -6,7 +6,7 @@ import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceGateway;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceInfo;
 import com.linkroa.deepdataagent.agent.acl.datasource.JdbcCategory;
 import com.linkroa.deepdataagent.agent.acl.datasource.JdbcConnectionInfo;
-import com.linkroa.deepdataagent.agent.exception.DataAnalysisException;
+import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import com.linkroa.deepdataagent.datasource.domain.model.ApiField;
 import com.linkroa.deepdataagent.datasource.domain.model.ApiSchema;
 import com.linkroa.deepdataagent.datasource.domain.model.ColumnInfo;
@@ -71,7 +71,7 @@ public class DatasourceGatewayAdapter implements DatasourceGateway {
     @Override
     public String extractSchema(Long datasourceId) {
         DatasourceConnection connection = repository.findById(datasourceId)
-                .orElseThrow(() -> new DataAnalysisException("数据源不存在: " + datasourceId));
+                .orElseThrow(() -> new DeepDataAgentException("数据源不存在: " + datasourceId));
 
         if (connection.type() == DatasourceType.API) {
             return extractApiSchema(connection.id());
@@ -83,7 +83,7 @@ public class DatasourceGatewayAdapter implements DatasourceGateway {
         try {
             List<DatabaseSchema> schemas = strategy.extractSchemas(connection);
             if (schemas.isEmpty()) {
-                throw new DataAnalysisException("未找到数据库 schema");
+                throw new DeepDataAgentException("未找到数据库 schema");
             }
 
             StringBuilder schemaDesc = new StringBuilder();
@@ -113,21 +113,21 @@ public class DatasourceGatewayAdapter implements DatasourceGateway {
 
             String result = schemaDesc.toString().strip();
             if (result.isEmpty()) {
-                throw new DataAnalysisException("数据库 schema 为空");
+                throw new DeepDataAgentException("数据库 schema 为空");
             }
             return result;
-        } catch (DataAnalysisException e) {
+        } catch (DeepDataAgentException e) {
             throw e;
         } catch (Exception e) {
             log.error("提取 schema 失败: {}", e.getMessage(), e);
-            throw new DataAnalysisException("提取数据库 schema 失败: " + e.getMessage(), e);
+            throw new DeepDataAgentException("提取数据库 schema 失败: " + e.getMessage());
         }
     }
 
     @Override
     public List<Map<String, Object>> executeApiQuery(Long datasourceId, String apiSchemaName, int limit) {
         ApiSchema apiSchema = apiSchemaRepository.findByConnectionIdAndName(datasourceId, apiSchemaName)
-                .orElseThrow(() -> new DataAnalysisException("API Schema 不存在: " + apiSchemaName));
+                .orElseThrow(() -> new DeepDataAgentException("API Schema 不存在: " + apiSchemaName));
 
         int effectiveLimit = Math.min(Math.max(limit, 1), 1000);
         return paginationHandler.fetchAllPages(apiSchema, null, effectiveLimit);
@@ -136,7 +136,7 @@ public class DatasourceGatewayAdapter implements DatasourceGateway {
     private String extractApiSchema(Long connectionId) {
         List<ApiSchema> schemas = apiSchemaRepository.findByConnectionId(connectionId);
         if (schemas.isEmpty()) {
-            throw new DataAnalysisException("API 数据源未配置任何 Schema");
+            throw new DeepDataAgentException("API 数据源未配置任何 Schema");
         }
 
         StringBuilder schemaDesc = new StringBuilder();
@@ -164,7 +164,7 @@ public class DatasourceGatewayAdapter implements DatasourceGateway {
 
         String result = schemaDesc.toString().strip();
         if (result.isEmpty()) {
-            throw new DataAnalysisException("API Schema 为空");
+            throw new DeepDataAgentException("API Schema 为空");
         }
         return result;
     }
@@ -197,17 +197,15 @@ public class DatasourceGatewayAdapter implements DatasourceGateway {
     }
 
     private DatasourceCategory mapCategory(DatasourceType type) {
-        return switch (type) {
-            case JDBC -> DatasourceCategory.JDBC;
-            case API -> DatasourceCategory.API;
-        };
+        if (type == DatasourceType.JDBC) return DatasourceCategory.JDBC;
+        if (type == DatasourceType.API) return DatasourceCategory.API;
+        throw new IllegalArgumentException("Unsupported type: " + type);
     }
 
     private JdbcCategory mapJdbcCategory(JdbcType jdbcType) {
         if (jdbcType == null) return null;
-        return switch (jdbcType) {
-            case MYSQL -> JdbcCategory.MYSQL;
-            case CLICKHOUSE -> JdbcCategory.CLICKHOUSE;
-        };
+        if (jdbcType == JdbcType.MYSQL) return JdbcCategory.MYSQL;
+        if (jdbcType == JdbcType.CLICKHOUSE) return JdbcCategory.CLICKHOUSE;
+        throw new IllegalArgumentException("Unsupported jdbcType: " + jdbcType);
     }
 }

@@ -87,7 +87,17 @@
         </dependency>
         <dependency>
             <groupId>io.agentscope</groupId>
-            <artifactId>agentscope</artifactId>
+            <artifactId>agentscope-harness</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-dashscope</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-openai</artifactId>
             <version>${agentscope.version}</version>
         </dependency>
         <dependency>
@@ -164,6 +174,7 @@
                                 <exclude>**/com/linkroa/deepdataagent/**/infrastructure/client/**</exclude>
                                 <exclude>**/com/linkroa/deepdataagent/**/infrastructure/adapter/**</exclude>
                                 <exclude>**/com/linkroa/deepdataagent/**/sandbox/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/**/infrastructure/sse/**</exclude>
                             </excludes>
                         </configuration>
                     </execution>
@@ -214,6 +225,7 @@
                                 <exclude>**/com/linkroa/deepdataagent/**/infrastructure/client/**</exclude>
                                 <exclude>**/com/linkroa/deepdataagent/**/infrastructure/adapter/**</exclude>
                                 <exclude>**/com/linkroa/deepdataagent/**/sandbox/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/**/infrastructure/sse/**</exclude>
                             </excludes>
                         </configuration>
                     </execution>

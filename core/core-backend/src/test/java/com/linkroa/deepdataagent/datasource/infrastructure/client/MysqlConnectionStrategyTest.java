@@ -3,7 +3,13 @@ package com.linkroa.deepdataagent.datasource.infrastructure.client;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 class MysqlConnectionStrategyTest {
 
@@ -46,4 +52,51 @@ class MysqlConnectionStrategyTest {
     void should_returnDriverClass_when_getDriverClassName_given_instance() {
         assertEquals("com.mysql.cj.jdbc.Driver", strategy.getDriverClassName());
     }
+
+    @Test
+    void should_returnTableComment_when_extractTableComment_given_validTable() throws SQLException {
+        Connection conn = mock(Connection.class);
+        PreparedStatement stmt = mock(PreparedStatement.class);
+        ResultSet rs = mock(ResultSet.class);
+
+        when(conn.prepareStatement("SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?")).thenReturn(stmt);
+        when(stmt.executeQuery()).thenReturn(rs);
+        when(rs.next()).thenReturn(true);
+        when(rs.getString("TABLE_COMMENT")).thenReturn("User table comment");
+
+        String comment = strategy.extractTableComment(conn, "testdb", "users");
+
+        assertEquals("User table comment", comment);
+        verify(stmt).setString(1, "testdb");
+        verify(stmt).setString(2, "users");
+    }
+
+    @Test
+    void should_returnNull_when_extractTableComment_given_noResult() throws SQLException {
+        Connection conn = mock(Connection.class);
+        PreparedStatement stmt = mock(PreparedStatement.class);
+        ResultSet rs = mock(ResultSet.class);
+
+        when(conn.prepareStatement("SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?")).thenReturn(stmt);
+        when(stmt.executeQuery()).thenReturn(rs);
+        when(rs.next()).thenReturn(false);
+
+        String comment = strategy.extractTableComment(conn, "testdb", "users");
+
+        assertNull(comment);
+    }
+
+    @Test
+    void should_returnNull_when_extractTableComment_given_sqlException() throws SQLException {
+        Connection conn = mock(Connection.class);
+        PreparedStatement stmt = mock(PreparedStatement.class);
+
+        when(conn.prepareStatement("SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?")).thenReturn(stmt);
+        when(stmt.executeQuery()).thenThrow(new SQLException("Query failed"));
+
+        String comment = strategy.extractTableComment(conn, "testdb", "users");
+
+        assertNull(comment);
+    }
+
 }

@@ -36,13 +36,27 @@ public class DatasourceAssembler {
     }
 
     public static DatasourceConnection toDatasourceConnection(UpdateDatasourceCommand command, DatasourceConnection existing) {
+        JdbcConnectionConfig jdbcConfig = existing.jdbcConnectionConfig();
+        if (command.jdbcConfig() != null) {
+            // 如果新密码为空,保留原有密码
+            String password = StringUtils.isNotBlank(command.jdbcConfig().password())
+                    ? command.jdbcConfig().password()
+                    : (existing.jdbcConnectionConfig() != null ? existing.jdbcConnectionConfig().password() : "");
+            jdbcConfig = new JdbcConnectionConfig(
+                    command.jdbcConfig().host(),
+                    ObjectUtils.firstNonNull(command.jdbcConfig().port(), existing.jdbcConnectionConfig() != null ? existing.jdbcConnectionConfig().port() : 0),
+                    command.jdbcConfig().database(),
+                    command.jdbcConfig().username(),
+                    password
+            );
+        }
         return new DatasourceConnection(
                 existing.id(),
                 StringUtils.defaultIfBlank(command.name(), existing.name()),
                 existing.type(),
                 existing.subType(),
                 existing.status(),
-                existing.jdbcConnectionConfig(),
+                jdbcConfig,
                 StringUtils.defaultIfBlank(command.description(), existing.description()),
                 existing.createdAt(),
                 existing.updatedAt(),

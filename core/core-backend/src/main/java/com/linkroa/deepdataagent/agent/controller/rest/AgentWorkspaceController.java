@@ -1,5 +1,6 @@
 package com.linkroa.deepdataagent.agent.controller.rest;
 
+import com.linkroa.deepdataagent.agent.application.dto.WorkspaceDTO;
 import com.linkroa.deepdataagent.agent.application.service.AgentWorkspaceApplicationService;
 import com.linkroa.deepdataagent.agent.controller.response.AgentWorkspaceResponse;
 import com.linkroa.deepdataagent.agent.controller.request.GetWorkspaceRequest;
@@ -21,6 +22,23 @@ public class AgentWorkspaceController {
 
     @PostMapping("/workspace/get")
     public ApiResponse<AgentWorkspaceResponse> workspace(@RequestBody(required = false) GetWorkspaceRequest request) {
-        return ApiResponse.success(workspaceApplicationService.describeWorkspace());
+        WorkspaceDTO dto = workspaceApplicationService.describeWorkspace();
+        return ApiResponse.success(toResponse(dto));
+    }
+
+    /**
+     * 将应用层 DTO 转换为控制器层响应对象
+     *
+     * @param dto 工作区 DTO
+     * @return 工作区响应对象
+     */
+    private AgentWorkspaceResponse toResponse(WorkspaceDTO dto) {
+        return new AgentWorkspaceResponse(
+                dto.applicationName(),
+                dto.boundedContexts(),
+                dto.sandboxEnabled(),
+                dto.serverProxyEnabled(),
+                dto.sqlitePath()
+        );
     }
 }

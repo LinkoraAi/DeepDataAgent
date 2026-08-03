@@ -25,7 +25,6 @@
 
     <ModelFormDialog
       v-model:visible="dialogVisible"
-      :templates="modelStore.templates"
       :edit-config="editingConfig"
       @success="loadData"
     />

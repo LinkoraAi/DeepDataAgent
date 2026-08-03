@@ -8,50 +8,128 @@
     @update:visible="handleVisibleUpdate"
   >
     <t-form ref="formRef" :data="formData" :rules="formRules" label-width="100px">
-      <t-form-item label="预置模板" name="templateId">
-        <t-select v-model="formData.templateId" placeholder="请选择模板" :disabled="isEdit">
-          <t-option
-            v-for="template in templates"
-            :key="template.id"
-            :value="template.id"
-            :label="template.displayName"
+      <!-- 配置方式 -->
+      <t-form-item label="配置方式" name="mode">
+        <t-radio-group v-model="formData.mode" :disabled="isEdit">
+          <t-radio-button value="preset">模型服务商</t-radio-button>
+          <t-radio-button value="custom">自定义配置</t-radio-button>
+        </t-radio-group>
+      </t-form-item>
+
+      <!-- Tab 1: 模型服务商 -->
+      <template v-if="formData.mode === 'preset'">
+        <t-form-item label="服务商" name="providerKey">
+          <t-select
+            v-model="formData.providerKey"
+            placeholder="请选择服务商"
+            :disabled="isEdit"
+            @change="handleProviderChange"
           >
-            <div>
-              <div>{{ template.displayName }}</div>
-              <div style="font-size: 12px; color: var(--td-text-color-secondary)">
-                {{ template.provider }} - {{ template.description }}
-              </div>
-            </div>
-          </t-option>
-        </t-select>
-      </t-form-item>
+            <t-option
+              v-for="provider in providers"
+              :key="provider.providerKey"
+              :value="provider.providerKey"
+              :label="provider.name"
+            />
+          </t-select>
+        </t-form-item>
 
-      <t-form-item label="配置名称" name="name">
-        <t-input v-model="formData.name" placeholder="请输入配置名称" />
-      </t-form-item>
+        <t-form-item label="模型 ID" name="modelKey">
+          <t-input
+            v-model="formData.modelKey"
+            placeholder="请输入模型 ID（如 qwen3.7-max、gpt-4o）"
+            :disabled="isEdit"
+          />
+        </t-form-item>
 
-      <t-form-item label="API Key" name="apiKey">
-        <t-input
-          v-model="formData.apiKey"
-          type="password"
-          :placeholder="isEdit ? '留空表示不修改' : '请输入 API Key'"
-        />
-      </t-form-item>
+        <!-- 编辑模式：API Key 脱敏展示 -->
+        <t-form-item v-if="isEdit" label="API Key" name="apiKey">
+          <t-input
+            v-model="formData.apiKey"
+            :type="showApiKey ? 'text' : 'password'"
+            placeholder="......"
+            readonly
+          >
+            <template #suffix-icon>
+              <t-icon
+                :name="showApiKey ? 'browse-off' : 'browse'"
+                style="cursor: pointer"
+                @click="showApiKey = !showApiKey"
+              />
+            </template>
+          </t-input>
+        </t-form-item>
 
-      <t-form-item label="温度参数" name="temperature">
-        <t-slider v-model="formData.temperature" :min="0" :max="1" :step="0.1" />
-        <div style="font-size: 12px; color: var(--td-text-color-secondary); margin-top: 4px">
-          范围: 0 ~ 1，默认 0.1
-        </div>
-      </t-form-item>
+        <!-- 新增模式：API Key 可输入 -->
+        <t-form-item v-else label="API Key" name="apiKey">
+          <t-input
+            v-model="formData.apiKey"
+            type="password"
+            placeholder="请输入 API Key"
+          />
+        </t-form-item>
 
-      <t-form-item label="描述" name="description">
-        <t-textarea v-model="formData.description" placeholder="请输入描述（可选）" :maxlength="200" />
-      </t-form-item>
+        <t-form-item label="设为默认">
+          <t-switch v-model="formData.setDefault" />
+        </t-form-item>
+      </template>
 
-      <t-form-item v-if="!isEdit" label="设为默认">
-        <t-switch v-model="formData.setDefault" />
-      </t-form-item>
+      <!-- Tab 2: 自定义配置 -->
+      <template v-if="formData.mode === 'custom'">
+        <t-form-item label="API 格式" name="apiFormat">
+          <t-radio-group v-model="formData.apiFormat" :disabled="isEdit">
+            <t-radio-button value="openai">OpenAI</t-radio-button>
+            <t-radio-button value="anthropic">Anthropic</t-radio-button>
+          </t-radio-group>
+        </t-form-item>
+
+        <t-form-item label="接口地址" name="baseUrl">
+          <t-input
+            v-model="formData.baseUrl"
+            :placeholder="isEdit ? '留空表示不修改' : '如 https://api.openai.com/v1'"
+            :disabled="isEdit && !formData.baseUrl"
+          />
+        </t-form-item>
+
+        <t-form-item label="模型 ID" name="modelKey">
+          <t-input
+            v-model="formData.modelKey"
+            placeholder="如 gpt-4o、claude-3-5-sonnet-20241022"
+            :disabled="isEdit"
+          />
+        </t-form-item>
+
+        <!-- 编辑模式：API Key 脱敏展示 -->
+        <t-form-item v-if="isEdit" label="API Key" name="apiKey">
+          <t-input
+            v-model="formData.apiKey"
+            :type="showApiKey ? 'text' : 'password'"
+            placeholder="......"
+            readonly
+          >
+            <template #suffix-icon>
+              <t-icon
+                :name="showApiKey ? 'browse-off' : 'browse'"
+                style="cursor: pointer"
+                @click="showApiKey = !showApiKey"
+              />
+            </template>
+          </t-input>
+        </t-form-item>
+
+        <!-- 新增模式：API Key 可输入 -->
+        <t-form-item v-else label="API Key" name="apiKey">
+          <t-input
+            v-model="formData.apiKey"
+            type="password"
+            placeholder="请输入 API Key"
+          />
+        </t-form-item>
+
+        <t-form-item label="设为默认">
+          <t-switch v-model="formData.setDefault" />
+        </t-form-item>
+      </template>
     </t-form>
   </t-dialog>
 </template>
@@ -60,12 +138,11 @@
 import { ref, reactive, watch } from 'vue';
 import { MessagePlugin } from 'tdesign-vue-next';
 import type { FormInstanceFunctions, FormRule } from 'tdesign-vue-next';
-import type { ModelTemplate, ModelConfig } from '../types';
+import type { ModelProvider, ModelInfo, ModelConfig } from '../types';
 import * as modelApi from '@/shared/api/modelApi';
 
 const props = defineProps<{
   visible: boolean;
-  templates: ModelTemplate[];
   editConfig?: ModelConfig | null;
 }>();
 
@@ -77,20 +154,57 @@ const emit = defineEmits<{
 const formRef = ref<FormInstanceFunctions>();
 const submitting = ref(false);
 
+/** 是否为编辑模式 */
 const isEdit = ref(false);
 
+/** 编辑模式下是否显示 API Key 明文（实际为掩码） */
+const showApiKey = ref(false);
+
+/** 编辑模式下"设为默认"的原始值，用于判断是否变更 */
+const originalIsDefault = ref(false);
+
+/** 服务商列表 */
+const providers = ref<ModelProvider[]>([]);
+/** 当前服务商的模型列表 */
+const currentModels = ref<ModelInfo[]>([]);
+
 const formData = reactive({
-  templateId: null as number | null,
-  name: '',
+  mode: 'preset' as 'preset' | 'custom',
+  providerKey: '',
+  modelKey: '',
+  baseUrl: '',
+  apiFormat: 'openai',
   apiKey: '',
-  temperature: 0.1,
-  description: '',
   setDefault: false,
 });
 
 const formRules: Record<string, FormRule[]> = {
-  templateId: [{ required: true, message: '请选择预置模板', trigger: 'change' }],
-  name: [{ required: true, message: '请输入配置名称', trigger: 'blur' }],
+  providerKey: [
+    {
+      required: true,
+      message: '请选择服务商',
+      trigger: 'change',
+      validator: (value: string) => {
+        if (formData.mode === 'preset' && !isEdit.value && !value) {
+          return { result: false, message: '请选择服务商' };
+        }
+        return { result: true, message: '' };
+      },
+    },
+  ],
+  modelKey: [
+    {
+      required: true,
+      message: '请输入或选择模型',
+      trigger: 'blur',
+      validator: (value: string) => {
+        if (!isEdit.value && !value) {
+          return { result: false, message: '请输入或选择模型' };
+        }
+        return { result: true, message: '' };
+      },
+    },
+  ],
   apiKey: [
     {
       required: true,
@@ -104,27 +218,90 @@ const formRules: Record<string, FormRule[]> = {
       },
     },
   ],
+  baseUrl: [
+    {
+      required: true,
+      message: '请输入接口地址',
+      trigger: 'blur',
+      validator: (value: string) => {
+        if (formData.mode === 'custom' && !isEdit.value && !value) {
+          return { result: false, message: '请输入接口地址' };
+        }
+        return { result: true, message: '' };
+      },
+    },
+  ],
 };
+
+/** 服务商变更时联动加载模型列表 */
+async function handleProviderChange(providerKey: string) {
+  formData.modelKey = '';
+  currentModels.value = [];
+  if (providerKey) {
+    try {
+      currentModels.value = await modelApi.fetchModelsByProvider(providerKey);
+    } catch (err) {
+      console.error('Failed to load models:', err);
+    }
+  }
+}
+
+/** 模型下拉变更（直接使用 modelKey） */
+function handleModelChange(modelKey: string) {
+  formData.modelKey = modelKey;
+}
 
 watch(
   () => props.visible,
-  (val) => {
+  async (val) => {
     if (val) {
       if (props.editConfig) {
         isEdit.value = true;
-        formData.templateId = props.editConfig.templateId;
-        formData.name = props.editConfig.name;
-        formData.apiKey = '';
-        formData.temperature = props.editConfig.temperature;
-        formData.description = props.editConfig.description || '';
+        showApiKey.value = false;
+        formData.mode = props.editConfig.providerKey === 'custom' ? 'custom' : 'preset';
+        formData.providerKey = props.editConfig.providerKey;
+        formData.modelKey = props.editConfig.modelKey;
+        formData.baseUrl = props.editConfig.baseUrl || '';
+        formData.apiFormat = props.editConfig.apiFormat || 'openai';
+        formData.apiKey = props.editConfig.apiKeyMasked || '';
+        formData.setDefault = props.editConfig.isDefault;
+        originalIsDefault.value = props.editConfig.isDefault;
+
+        // 加载服务商列表（用于预设模式下显示服务商名称）
+        try {
+          providers.value = await modelApi.fetchProviders();
+          if (formData.mode === 'preset' && formData.providerKey) {
+            currentModels.value = await modelApi.fetchModelsByProvider(formData.providerKey);
+          }
+        } catch (err) {
+          console.error('Failed to load providers:', err);
+        }
+
+        // 获取解密后的 API Key（用于编辑时显示原文）
+        try {
+          const editConfig = await modelApi.fetchConfigForEdit(props.editConfig.id);
+          formData.apiKey = editConfig.apiKeyMasked || '';
+        } catch (err) {
+          console.error('Failed to fetch config for edit:', err);
+        }
       } else {
         isEdit.value = false;
-        formData.templateId = null;
-        formData.name = '';
+        showApiKey.value = false;
+        formData.mode = 'preset';
+        formData.providerKey = '';
+        formData.modelKey = '';
+        formData.baseUrl = '';
+        formData.apiFormat = 'openai';
         formData.apiKey = '';
-        formData.temperature = 0.1;
-        formData.description = '';
         formData.setDefault = false;
+        currentModels.value = [];
+
+        // 加载服务商列表
+        try {
+          providers.value = await modelApi.fetchProviders();
+        } catch (err) {
+          console.error('Failed to load providers:', err);
+        }
       }
     }
   }
@@ -139,21 +316,29 @@ async function handleSubmit() {
   submitting.value = true;
   try {
     if (isEdit.value && props.editConfig) {
-      await modelApi.updateConfig({
-        id: props.editConfig.id,
-        name: formData.name,
-        apiKey: formData.apiKey || undefined,
-        temperature: formData.temperature,
-        description: formData.description,
+      await modelApi.updateConfig(props.editConfig.id, {
+        baseUrl: formData.baseUrl || undefined,
       });
+      // 如果"设为默认"状态发生变化，调用设置默认接口
+      if (formData.setDefault !== originalIsDefault.value) {
+        await modelApi.setDefaultModel(props.editConfig.id);
+      }
       MessagePlugin.success('更新成功');
+    } else if (formData.mode === 'preset') {
+      await modelApi.addConfig({
+        providerKey: formData.providerKey,
+        modelKey: formData.modelKey,
+        apiKey: formData.apiKey,
+        setDefault: formData.setDefault,
+      });
+      MessagePlugin.success('添加成功');
     } else {
       await modelApi.addConfig({
-        name: formData.name,
-        templateId: formData.templateId!,
+        providerKey: 'custom',
+        modelKey: formData.modelKey,
+        baseUrl: formData.baseUrl,
+        apiFormat: formData.apiFormat,
         apiKey: formData.apiKey,
-        temperature: formData.temperature,
-        description: formData.description,
         setDefault: formData.setDefault,
       });
       MessagePlugin.success('添加成功');
@@ -176,3 +361,13 @@ function handleVisibleUpdate(visible: boolean) {
   emit('update:visible', visible);
 }
 </script>
+
+<style scoped lang="less">
+.model-form {
+  &__model-select {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+}
+</style>

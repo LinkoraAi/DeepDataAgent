@@ -4,7 +4,7 @@ import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceCategory;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceInfo;
 import com.linkroa.deepdataagent.agent.acl.datasource.JdbcCategory;
 import com.linkroa.deepdataagent.agent.acl.datasource.JdbcConnectionInfo;
-import com.linkroa.deepdataagent.agent.exception.DataAnalysisException;
+import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import com.linkroa.deepdataagent.agent.infrastructure.config.DataAnalysisProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,7 +41,7 @@ public class JdbcQueryExecutor implements QueryExecutor {
             String driverClass = getDriverClass(datasource.jdbcCategory());
             Class.forName(driverClass);
         } catch (ClassNotFoundException e) {
-            throw new DataAnalysisException("未找到 JDBC 驱动: " + e.getMessage());
+            throw new DeepDataAgentException("未找到 JDBC 驱动: " + e.getMessage());
         }
 
         long startTime = System.currentTimeMillis();
@@ -73,14 +73,14 @@ public class JdbcQueryExecutor implements QueryExecutor {
             return rows;
         } catch (SQLTimeoutException e) {
             log.error("SQL 执行超时: {}", e.getMessage());
-            throw new DataAnalysisException("SQL 执行超时，请优化查询条件");
+            throw new DeepDataAgentException("SQL 执行超时，请优化查询条件");
         } catch (SQLException e) {
             if (isConnectionError(e)) {
                 log.error("数据库连接失败: {}", e.getMessage());
-                throw new DataAnalysisException("数据库连接失败，请检查数据源配置");
+                throw new DeepDataAgentException("数据库连接失败，请检查数据源配置");
             }
             log.error("SQL 执行失败: {}", e.getMessage());
-            throw new DataAnalysisException("SQL 执行失败: " + e.getMessage(), e);
+            throw new DeepDataAgentException("SQL 执行失败: " + e.getMessage());
         }
     }
 

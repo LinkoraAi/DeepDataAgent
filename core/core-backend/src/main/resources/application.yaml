@@ -77,8 +77,35 @@ app:
     max-active-sessions: ${APP_SESSION_MAX_ACTIVE:100}
     context-load-size: ${APP_SESSION_CONTEXT_LOAD_SIZE:5}
   web-search:
-    api-key: ${APP_WEB_SEARCH_API_KEY:}
+    api-key: ${APP_WEB_SEARCH_API_KEY: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}
     endpoint: ${APP_WEB_SEARCH_ENDPOINT:https://api.tavily.com/search}
     max-results: ${APP_WEB_SEARCH_MAX_RESULTS:5}
     timeout-seconds: ${APP_WEB_SEARCH_TIMEOUT:10}
     enabled: ${APP_WEB_SEARCH_ENABLED:true}
+  agent:
+    sys-prompt: ${APP_AGENT_SYS_PROMPT:}
+    api-sys-prompt: ${APP_AGENT_API_SYS_PROMPT:}
+    memory:
+      # 框架记忆工作目录，默认 <项目根>/data/agentscope
+      workspace: ${APP_AGENT_MEMORY_WORKSPACE:}
+      # 是否启用框架记忆
+      enabled: ${APP_AGENT_MEMORY_ENABLED:true}
+      # 长期记忆整合最大 token 数
+      consolidation-max-tokens: ${APP_AGENT_MEMORY_CONSOLIDATION_MAX_TOKENS:4000}
+      # 长期记忆整合最小间隔（毫秒）
+      consolidation-min-gap: ${APP_AGENT_MEMORY_CONSOLIDATION_MIN_GAP:3600000}
+      # 记忆落盘触发策略：always / never / throttled
+      flush-trigger: ${APP_AGENT_MEMORY_FLUSH_TRIGGER:throttled}
+
+sse:
+  connection-pool:
+    max-active: ${SSE_CONNECTION_POOL_MAX_ACTIVE:500}
+    keep-alive-ms: ${SSE_CONNECTION_POOL_KEEP_ALIVE_MS:30000}
+  event-bus:
+    max-active-sessions: ${SSE_EVENT_BUS_MAX_ACTIVE_SESSIONS:500}
+    sink-buffer-size: ${SSE_EVENT_BUS_SINK_BUFFER_SIZE:1024}
+
+agent:
+  execution:
+    max-active-sessions: ${AGENT_EXECUTION_MAX_ACTIVE_SESSIONS:500}
+    virtual-threads: ${AGENT_EXECUTION_VIRTUAL_THREADS:true}

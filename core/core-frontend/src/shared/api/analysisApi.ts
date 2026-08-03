@@ -1,5 +1,5 @@
-import { fetchEventSource } from '@microsoft/fetch-event-source';
-import type { SSEEvent } from '@/modules/agent/types';
+import axios from 'axios';
+import type { AgentEvent } from '@/modules/agent/types';
 
 /**
  * Data analysis request
@@ -10,70 +10,38 @@ export interface DataAnalysisRequest {
   connectionId: string;
   userQuestion: string;
   enableWebSearch: boolean;
+  clientId: string;
 }
 
 /**
- * Execute data analysis with SSE streaming using @microsoft/fetch-event-source
+ * Data analysis response
+ */
+export interface DataAnalysisResponse {
+  sessionId: string;
+  message: string;
+}
+
+/**
+ * 执行数据分析（异步启动）
+ * <p>发送分析请求到后端，后端会异步执行分析并通过 SSE 连接推送事件。
+ * 事件通过 useSSEConnection 的回调接收。</p>
+ *
+ * @param request 分析请求参数（包含 clientId）
+ * @returns Promise<DataAnalysisResponse> 分析响应
  */
 export async function analyzeStream(
-  request: DataAnalysisRequest,
-  onEvent: (event: SSEEvent) => void,
-  onError?: (error: Error) => void,
-  onComplete?: () => void
-): Promise<AbortController> {
-  const controller = new AbortController();
-
+  request: DataAnalysisRequest
+): Promise<DataAnalysisResponse> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
   const url = `${baseUrl}/agent/data-analysis/analyze`;
 
-  try {
-    await fetchEventSource(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-      },
-      body: JSON.stringify(request),
-      signal: controller.signal,
-      async onopen(response) {
-        if (!response.ok) {
-          const errorMsg = `Connection failed: ${response.status} ${response.statusText}`;
-          throw new Error(errorMsg);
-        }
-      },
-      onmessage(ev) {
-        // ev.data 是 SSE data 字段的原始字符串
-        if (!ev.data) return;
-        try {
-          const event: SSEEvent = JSON.parse(ev.data);
-          if (event.type) {
-            onEvent(event);
-          }
-        } catch (err) {
-          console.error('[SSE] Failed to parse event data:', err, 'Raw:', ev.data);
-        }
-      },
-      onerror(err) {
-        console.error('[SSE] Stream error:', err);
-        onError?.(err instanceof Error ? err : new Error(String(err)));
-        // throw error 阻止自动重连
-        throw err;
-      },
-      onclose() {
-        onComplete?.();
-      },
-      openWhenHidden: true,
-    });
-  } catch (err: any) {
-    if (err.name === 'AbortError') {
-      console.debug('[SSE] Request aborted by user');
-    } else {
-      // fetchEventSource 内部的 onerror 已经处理了，这里只处理连接级别的错误
-      console.error('[SSE] Connection error:', err);
-      onError?.(err instanceof Error ? err : new Error(String(err)));
-      onComplete?.();
-    }
-  }
+  const response = await axios.post<DataAnalysisResponse>(url, request, {
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
 
-  return controller;
+  return response.data;
 }
+
+

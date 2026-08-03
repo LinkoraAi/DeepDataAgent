@@ -8,6 +8,7 @@ export type ErrorType =
   | 'timeout'
   | 'tool_execution'
   | 'model_error'
+  | 'data_error'
   | 'unknown';
 
 export interface AppError {
@@ -53,6 +54,23 @@ export function classifyError(raw: string): AppError {
       type: 'connection',
       message: raw,
       suggestion: '连接失败，请检查网络后重试',
+      retryable: true,
+    };
+  }
+
+  // Data errors (empty results, data format issues)
+  if (
+    lowerMsg.includes('empty') ||
+    lowerMsg.includes('空') ||
+    lowerMsg.includes('no data') ||
+    lowerMsg.includes('没有数据') ||
+    lowerMsg.includes('no rows') ||
+    lowerMsg.includes('无结果')
+  ) {
+    return {
+      type: 'data_error',
+      message: raw,
+      suggestion: '查询结果为空，请尝试调整查询条件或换一种问法',
       retryable: true,
     };
   }
@@ -126,6 +144,8 @@ export function getErrorIcon(type: ErrorType): string {
       return 'code';
     case 'model_error':
       return 'robot';
+    case 'data_error':
+      return 'data-base';
     default:
       return 'error';
   }

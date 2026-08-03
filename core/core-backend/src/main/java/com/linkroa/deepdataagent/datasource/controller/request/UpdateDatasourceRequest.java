@@ -8,5 +8,6 @@ public record UpdateDatasourceRequest(
     Long id,
     @NotBlank(message = "数据源名称不能为空")
     String name,
-    String description
+    String description,
+    JdbcConfigRequest jdbcConfig
 ) {}

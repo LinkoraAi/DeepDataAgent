@@ -1,6 +1,6 @@
 package com.linkroa.deepdataagent.agent.domain.support;
 
-import tools.jackson.databind.ObjectMapper;
+import com.linkroa.deepdataagent.agent.domain.service.port.JsonSerializationPort;
 import org.springframework.stereotype.Component;
 import org.springframework.util.ObjectUtils;
 
@@ -13,17 +13,18 @@ import java.util.stream.Collectors;
 
 /**
  * 数据摘要构建器
- * <p>将查询结果数据转换为适合 LLM 分析的摘要格式，包含统计信息和样本数据。</p>
+ * <p>将查询结果数据转换为适合 LLM 分析的摘要格式，包含统计信息和样本数据。
+ * 依赖领域层端口接口 {@link JsonSerializationPort}，避免直接依赖具体 JSON 库。</p>
  */
 @Component
 public class DataSummaryBuilder {
 
     private static final DateTimeFormatter SLASH_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy/M/d");
 
-    private final ObjectMapper objectMapper;
+    private final JsonSerializationPort jsonSerializationPort;
 
-    public DataSummaryBuilder(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
+    public DataSummaryBuilder(JsonSerializationPort jsonSerializationPort) {
+        this.jsonSerializationPort = jsonSerializationPort;
     }
 
     /**
@@ -70,7 +71,7 @@ public class DataSummaryBuilder {
         int maxRows = Math.min(data.size(), 10);
         sb.append(String.format("\n样本数据 (前 %d 行):\n", maxRows));
         try {
-            String sampleJson = objectMapper.writeValueAsString(data.subList(0, maxRows));
+            String sampleJson = jsonSerializationPort.toJson(data.subList(0, maxRows));
             sb.append(sampleJson);
         } catch (Exception e) {
             sb.append("数据序列化失败");

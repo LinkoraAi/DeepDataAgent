@@ -1,30 +1,26 @@
 package com.linkroa.deepdataagent.agent.infrastructure.config;
 
-import com.linkroa.deepdataagent.agent.infrastructure.persistence.AgentModelSchemaInitializer;
-import com.linkroa.deepdataagent.agent.infrastructure.persistence.AgentSessionSchemaInitializer;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 /**
  * Agent 模块配置
- * <p>在应用启动后自动初始化模型配置和会话相关的数据库表结构。</p>
  */
 @Component
 public class AgentConfig {
 
-    private final AgentModelSchemaInitializer modelSchemaInitializer;
-    private final AgentSessionSchemaInitializer sessionSchemaInitializer;
-
-    public AgentConfig(AgentModelSchemaInitializer modelSchemaInitializer,
-                       AgentSessionSchemaInitializer sessionSchemaInitializer) {
-        this.modelSchemaInitializer = modelSchemaInitializer;
-        this.sessionSchemaInitializer = sessionSchemaInitializer;
-    }
-
-    @EventListener(ApplicationReadyEvent.class)
-    public void onApplicationReady() {
-        modelSchemaInitializer.initialize();
-        sessionSchemaInitializer.initialize();
+    @Bean
+    public ObjectMapper objectMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        // 注册 Java 8 时间模块，支持 LocalDateTime 序列化（dialogue.messages JSON 字段需要）
+        mapper.registerModule(new JavaTimeModule());
+        // 时间类型以 ISO-8601 字符串输出（如 2026-08-03T12:00:00），而非时间戳数组
+        mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        return mapper;
     }
 }

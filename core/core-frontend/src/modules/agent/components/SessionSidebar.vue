@@ -7,14 +7,18 @@
       </button>
     </div>
 
-    <t-loading :loading="sessionStore.loading" text="加载中...">
-      <div v-if="sessionStore.sessions.length === 0" class="session-sidebar__empty">
-        <t-empty description="暂无会话" size="small" />
-      </div>
+    <!-- 加载状态：使用 storeToRefs + computed 确保 v-if 响应式 -->
+    <div v-if="isLoading" class="session-sidebar__loading">
+      <t-loading size="small" text="加载中..." />
+    </div>
 
-      <div v-else class="session-sidebar__list">
+    <div v-else-if="sessionsCount === 0" class="session-sidebar__empty">
+      <t-empty description="暂无会话" size="small" />
+    </div>
+
+    <div v-else class="session-sidebar__list" @scroll="handleScroll">
         <div
-          v-for="session in sessionStore.sessions"
+          v-for="session in sessions"
           :key="session.id"
           :class="['session-item', { 'session-item--active': session.id === sessionStore.currentSessionId }]"
           @click="handleSelectSession(session.id)"
@@ -23,8 +27,6 @@
             <div class="session-item__title">{{ session.title }}</div>
             <div class="session-item__meta">
               <span>{{ formatRelativeTime(session.lastMessageAt || session.createdAt) }}</span>
-              <span>·</span>
-              <span>{{ session.messageCount }} 条</span>
             </div>
           </div>
           <button
@@ -35,24 +37,57 @@
             <t-icon name="close" size="14px" />
           </button>
         </div>
-      </div>
-    </t-loading>
+
+        <!-- 滚动加载更多指示器 -->
+        <div v-if="isLoadingMore" class="session-sidebar__loading-more">
+          <t-loading size="small" />
+        </div>
+        <div v-else-if="!hasMore && sessions.length > 0" class="session-sidebar__no-more">
+          已加载全部会话
+        </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { MessagePlugin } from 'tdesign-vue-next';
+import { computed } from 'vue';
+import { storeToRefs } from 'pinia';
+import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import { useSessionStore } from '../stores/session';
 import { useDatasourceStore } from '../stores/datasource';
 import { useModelStore } from '@/modules/model/stores/model';
+import { useAnalysisStore } from '../stores/analysis';
 import { formatRelativeTime } from '@/shared/utils/format';
 
 const sessionStore = useSessionStore();
 const datasourceStore = useDatasourceStore();
 const modelStore = useModelStore();
+const analysisStore = useAnalysisStore();
 
-/** 新建会话 */
-async function handleNewSession() {
+/**
+ * 使用 storeToRefs 提取响应式状态
+ * <p>Pinia setup store 的状态通过 storeToRefs 提取后在模板中保持响应式。</p>
+ */
+const { loading, sessions, hasMore, isLoadingMore } = storeToRefs(sessionStore);
+const isLoading = computed(() => loading.value);
+const sessionsCount = computed(() => sessions.value.length);
+
+/** 滚动加载更多会话 */
+function handleScroll(event: Event) {
+  const container = event.currentTarget as HTMLElement;
+  const scrollTop = container.scrollTop;
+  const clientHeight = container.clientHeight;
+  const scrollHeight = container.scrollHeight;
+  const remaining = scrollHeight - scrollTop - clientHeight;
+
+  // 剩余可滚动距离小于 50px 且还有更多数据且未在加载中时触发
+  if (hasMore.value && !isLoadingMore.value && remaining < 50) {
+    sessionStore.loadMore();
+  }
+}
+
+/** 新建会话（懒创建模式：仅清空前端状态，首次发消息时才创建后端会话） */
+function handleNewSession() {
   if (!datasourceStore.currentDatasourceId) {
     MessagePlugin.warning('请先选择数据源');
     return;
@@ -61,31 +96,38 @@ async function handleNewSession() {
     MessagePlugin.warning('请先选择模型');
     return;
   }
-
-  try {
-    await sessionStore.createSession(
-      datasourceStore.currentDatasourceId,
-      modelStore.selectedConfigId
-    );
-    MessagePlugin.success('创建会话成功');
-  } catch (err) {
-    console.error('Create session failed:', err);
-  }
+  // 懒创建：仅清空当前状态，不调用后端 API
+  // 会话将在用户首次发送消息时创建（useDataAnalysis.submitQuestion 已有此逻辑）
+  analysisStore.reset();
+  sessionStore.clearCurrentSession();
 }
 
 /** 切换会话 */
 async function handleSelectSession(sessionId: string) {
+  console.debug('[SessionSidebar] handleSelectSession:', sessionId, 'current:', sessionStore.currentSessionId);
   await sessionStore.switchSession(sessionId);
 }
 
-/** 关闭会话 */
-async function handleCloseSession(sessionId: string) {
-  try {
-    await sessionStore.closeSession(sessionId);
-    MessagePlugin.success('关闭会话成功');
-  } catch (err) {
-    console.error('Close session failed:', err);
-  }
+/** 关闭会话（带二次确认弹窗） */
+function handleCloseSession(sessionId: string) {
+  const confirmDialog = DialogPlugin.confirm({
+    header: '删除会话',
+    body: '确定要删除这个会话吗？删除后将无法恢复。',
+    confirmBtn: { content: '删除', theme: 'danger' },
+    cancelBtn: '取消',
+    onConfirm: async () => {
+      confirmDialog.destroy();
+      try {
+        await sessionStore.closeSession(sessionId);
+        MessagePlugin.success('删除会话成功');
+        // 关闭会话后重置分页并重新加载列表
+        await sessionStore.loadSessions();
+      } catch (err) {
+        MessagePlugin.error('删除会话失败');
+        console.error('Close session failed:', err);
+      }
+    },
+  });
 }
 </script>
 
@@ -127,10 +169,31 @@ async function handleCloseSession(sessionId: string) {
     padding: 40px 16px;
   }
 
+  &__loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 16px;
+  }
+
   &__list {
     flex: 1;
     overflow-y: auto;
     padding: 8px;
+  }
+
+  &__loading-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 16px;
+  }
+
+  &__no-more {
+    text-align: center;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: #94a3b8;
   }
 }
 
@@ -206,13 +269,14 @@ async function handleCloseSession(sessionId: string) {
     border-radius: 4px;
     cursor: pointer;
     color: #94a3b8;
-    opacity: 0;
+    opacity: 0.3;
     transition: all 0.15s;
     flex-shrink: 0;
 
     &:hover {
       background: rgba(15, 23, 42, 0.08);
       color: #ef4444;
+      opacity: 1;
     }
   }
 }

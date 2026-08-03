@@ -24,6 +24,10 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
+      '/agent/sse': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
       '/datasource': {
         target: 'http://localhost:8080',
         changeOrigin: true,

@@ -74,7 +74,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_throwException_when_updateDatasource_given_notFound() {
         when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
-        UpdateDatasourceCommand command = new UpdateDatasourceCommand(999L, "name", null);
+        UpdateDatasourceCommand command = new UpdateDatasourceCommand(999L, "name", null, null);
         assertThrows(DeepDataAgentException.class, () -> service.updateDatasource(command));
     }
 
@@ -271,7 +271,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_updateConnection_when_updateDatasource_given_validCommand() {
         DatasourceConnection existing = createApiConnection(1L);
-        UpdateDatasourceCommand command = new UpdateDatasourceCommand(1L, "updated-name", "updated-desc");
+        UpdateDatasourceCommand command = new UpdateDatasourceCommand(1L, "updated-name", "updated-desc", null);
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(existing));
         when(connectionRepository.findByName("updated-name")).thenReturn(Optional.empty());
         when(connectionRepository.update(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -289,7 +289,7 @@ class DatasourceApplicationServiceTest {
     void should_throwException_when_updateDatasource_given_duplicateName() {
         DatasourceConnection existing = createApiConnection(1L);
         DatasourceConnection other = createApiConnection(2L);
-        UpdateDatasourceCommand command = new UpdateDatasourceCommand(1L, "duplicate-name", null);
+        UpdateDatasourceCommand command = new UpdateDatasourceCommand(1L, "duplicate-name", null, null);
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(existing));
         when(connectionRepository.findByName("duplicate-name")).thenReturn(Optional.of(other));
         assertThrows(DeepDataAgentException.class, () -> service.updateDatasource(command));

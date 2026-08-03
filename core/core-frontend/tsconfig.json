@@ -16,7 +16,8 @@
     ],
     "skipLibCheck": true,
     "types": [
-      "vite/client"
+      "vite/client",
+      "vitest/globals"
     ],
     "baseUrl": ".",
     "paths": {

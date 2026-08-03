@@ -2,6 +2,11 @@ package com.linkroa.deepdataagent.datasource.infrastructure.client;
 
 import com.linkroa.deepdataagent.datasource.domain.model.DatasourceConnection;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
 /**
  * ClickHouse连接策略
  */
@@ -30,6 +35,23 @@ public class ClickhouseConnectionStrategy extends AbstractJdbcConnectionStrategy
         sql.append(quoteIdentifier(tableName));
         sql.append(" LIMIT ").append(limit);
         return sql.toString();
+    }
+
+    @Override
+    protected String extractTableComment(Connection conn, String schemaName, String tableName) {
+        String sql = "SELECT comment FROM system.tables WHERE database = ? AND name = ?";
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, schemaName);
+            stmt.setString(2, tableName);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("comment");
+                }
+            }
+        } catch (SQLException e) {
+            log.warn("查询ClickHouse表备注失败: {}", e.getMessage());
+        }
+        return null;
     }
 
     @Override

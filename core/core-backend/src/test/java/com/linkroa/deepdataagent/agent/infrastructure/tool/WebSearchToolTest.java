@@ -243,4 +243,21 @@ class WebSearchToolTest {
         assertThat(result).isEqualTo("搜索失败: 未知错误");
         verify(webSearchService, times(1)).search(query, maxResults);
     }
+
+    @Test
+    void should_returnFallbackJson_when_search_given_serializationFailure() throws Exception {
+        // given: ObjectMapper 序列化失败
+        ObjectMapper failingMapper = mock(ObjectMapper.class);
+        when(failingMapper.writeValueAsString(any())).thenThrow(new RuntimeException("Serialization failed"));
+        WebSearchTool tool = new WebSearchTool(webSearchService, properties, failingMapper);
+        String query = "test query";
+        when(webSearchService.search(query, 5)).thenReturn(List.of(SearchResult.of("Title", "url", "snippet", "content")));
+
+        // when
+        String result = tool.search(query, 5);
+
+        // then
+        assertThat(result).isEqualTo("{\"results\": []}");
+        verify(webSearchService, times(1)).search(query, 5);
+    }
 }

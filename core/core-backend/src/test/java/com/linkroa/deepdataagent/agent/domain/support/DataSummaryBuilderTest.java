@@ -1,27 +1,34 @@
 package com.linkroa.deepdataagent.agent.domain.support;
 
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
+import com.linkroa.deepdataagent.agent.domain.service.port.JsonSerializationPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 /**
  * DataSummaryBuilder 单元测试
  * <p>测试数据摘要构建的各种场景，包括空数据、数值统计、日期解析等。</p>
  */
+@ExtendWith(MockitoExtension.class)
 class DataSummaryBuilderTest {
+
+    @Mock
+    private JsonSerializationPort jsonSerializationPort;
 
     private DataSummaryBuilder builder;
 
     @BeforeEach
     void setUp() {
-        builder = new DataSummaryBuilder(new ObjectMapper());
+        builder = new DataSummaryBuilder(jsonSerializationPort);
     }
 
     // ==================== build ====================
@@ -232,20 +239,19 @@ class DataSummaryBuilderTest {
     }
 
     @Test
-    void should_showUnknownType_when_build_given_nullFirstValue() {
+    void should_includeNonNumberFieldType_when_build_given_stringColumn() {
         // given
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("name", null);
-        row.put("age", 30);
-
-        List<Map<String, Object>> data = List.of(row);
+        List<Map<String, Object>> data = List.of(
+                Map.of("name", "Alice", "description", "Engineer")
+        );
 
         // when
         String result = builder.build(data);
 
         // then
-        assertTrue(result.contains("name: unknown"));
-        assertTrue(result.contains("age: Integer"));
+        assertTrue(result.contains("数值列统计:"));
+        assertTrue(result.contains("name: String"));
+        assertTrue(result.contains("description: String"));
     }
 
     @Test
@@ -263,20 +269,20 @@ class DataSummaryBuilderTest {
     }
 
     @Test
-    void should_handleInvalidDateString_when_build_given_mixedDateStringFormat() {
+    void should_showUnknownType_when_build_given_nullFirstValue() {
         // given
-        List<Map<String, Object>> data = List.of(
-                Map.of("date", "2025-01-01", "value", 100),
-                Map.of("date", "invalid-date", "value", 200),
-                Map.of("date", "2025-12-31", "value", 300)
-        );
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("name", null);
+        row.put("age", 30);
+
+        List<Map<String, Object>> data = List.of(row);
 
         // when
         String result = builder.build(data);
 
         // then
-        // 应该仍然能检测到时间范围（忽略无效日期）
-        assertTrue(result.contains("时间范围:"));
+        assertTrue(result.contains("name: unknown"));
+        assertTrue(result.contains("age: Integer"));
     }
 
     @Test
@@ -292,5 +298,65 @@ class DataSummaryBuilderTest {
         // then
         assertTrue(result.contains("总行数: 1"));
         assertTrue(result.contains("样本数据 (前 1 行):"));
+    }
+
+    @Test
+    void should_skipNullValuesInNumberStats_when_build_given_numericColumnWithNulls() {
+        // given
+        Map<String, Object> row1 = new LinkedHashMap<>();
+        row1.put("id", 1);
+        row1.put("value", 100);
+
+        Map<String, Object> row2 = new LinkedHashMap<>();
+        row2.put("id", 2);
+        row2.put("value", null);
+
+        Map<String, Object> row3 = new LinkedHashMap<>();
+        row3.put("id", 3);
+        row3.put("value", 300);
+
+        List<Map<String, Object>> data = List.of(row1, row2, row3);
+
+        // when
+        String result = builder.build(data);
+
+        // then
+        assertTrue(result.contains("value:"));
+        assertTrue(result.contains("总和=400.00"));
+        assertTrue(result.contains("平均=200.00"));
+        assertTrue(result.contains("最大=300.00"));
+        assertTrue(result.contains("最小=100.00"));
+    }
+
+    @Test
+    void should_handleObjectType_when_build_given_objectColumn() {
+        // given
+        List<Map<String, Object>> data = List.of(
+                Map.of("id", 1, "obj", new Object())
+        );
+
+        // when
+        String result = builder.build(data);
+
+        // then
+        assertTrue(result.contains("obj: Object"));
+    }
+
+    @Test
+    void should_handleSerializationFailure_when_build_given_jsonSerializationThrowsException() {
+        // given
+        List<Map<String, Object>> data = List.of(
+                Map.of("id", 1, "value", 100)
+        );
+        doAnswer(invocation -> { throw new RuntimeException("Serialization failed"); })
+                .when(jsonSerializationPort).toJson(any());
+
+        DataSummaryBuilder failingBuilder = new DataSummaryBuilder(jsonSerializationPort);
+
+        // when
+        String result = failingBuilder.build(data);
+
+        // then
+        assertTrue(result.contains("数据序列化失败"));
     }
 }

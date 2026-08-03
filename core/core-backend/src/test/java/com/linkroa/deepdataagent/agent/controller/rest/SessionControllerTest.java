@@ -1,5 +1,8 @@
 package com.linkroa.deepdataagent.agent.controller.rest;
 
+import com.linkroa.deepdataagent.agent.application.dto.MessageDTO;
+import com.linkroa.deepdataagent.agent.application.dto.SessionDTO;
+import com.linkroa.deepdataagent.agent.application.dto.SessionListItemDTO;
 import com.linkroa.deepdataagent.agent.application.service.SessionApplicationService;
 import com.linkroa.deepdataagent.agent.controller.request.CloseSessionRequest;
 import com.linkroa.deepdataagent.agent.controller.request.CreateSessionRequest;
@@ -21,6 +24,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
 /**
@@ -45,10 +49,10 @@ class SessionControllerTest {
     @Test
     void should_returnSuccess_when_createSession_given_validRequest() {
         // given
-        CreateSessionRequest request = new CreateSessionRequest(1L, 2L);
-        SessionResponse expectedResponse = new SessionResponse(
-                "session-123", "新对话", 1L, 2L, "active", 0, null, "2025-01-01 00:00:00", null);
-        when(sessionApplicationService.createSession(1L, 2L)).thenReturn(expectedResponse);
+        CreateSessionRequest request = new CreateSessionRequest(1L, 2L, 3L, "测试问题");
+        SessionDTO sessionDTO = new SessionDTO(
+                "session-123", "测试问题", 2L, 3L, "ACTIVE", null, "2025-01-01 00:00:00");
+        when(sessionApplicationService.createSession(1L, 2L, 3L, "测试问题")).thenReturn(sessionDTO);
 
         // when
         ApiResponse<SessionResponse> result = controller.createSession(request);
@@ -56,14 +60,14 @@ class SessionControllerTest {
         // then
         assertTrue(result.success());
         assertEquals("session-123", result.data().id());
-        verify(sessionApplicationService).createSession(1L, 2L);
+        verify(sessionApplicationService).createSession(1L, 2L, 3L, "测试问题");
     }
 
     @Test
     void should_returnError_when_createSession_given_nonexistentDatasource() {
         // given
-        CreateSessionRequest request = new CreateSessionRequest(999L, 1L);
-        when(sessionApplicationService.createSession(999L, 1L))
+        CreateSessionRequest request = new CreateSessionRequest(1L, 999L, 1L, "测试问题");
+        when(sessionApplicationService.createSession(1L, 999L, 1L, "测试问题"))
                 .thenThrow(new IllegalArgumentException("数据源不存在: 999"));
 
         // when
@@ -78,8 +82,8 @@ class SessionControllerTest {
     @Test
     void should_returnError_when_createSession_given_sessionLimitReached() {
         // given
-        CreateSessionRequest request = new CreateSessionRequest(1L, 1L);
-        when(sessionApplicationService.createSession(1L, 1L))
+        CreateSessionRequest request = new CreateSessionRequest(1L, 1L, 1L, "测试问题");
+        when(sessionApplicationService.createSession(1L, 1L, 1L, "测试问题"))
                 .thenThrow(new IllegalStateException("活跃会话数已达上限"));
 
         // when
@@ -95,12 +99,12 @@ class SessionControllerTest {
     @Test
     void should_returnSuccess_when_listSessions_given_activeSessions() {
         // given
-        List<SessionListItem> expectedList = List.of(
-                new SessionListItem("session-1", "会话1", 1L, 1L, "active", 0, null, "2025-01-01 00:00:00"));
-        when(sessionApplicationService.listSessions()).thenReturn(expectedList);
+        List<SessionListItemDTO> expectedList = List.of(
+                new SessionListItemDTO("session-1", "会话1", 1L, 1L, "ACTIVE", null, "2025-01-01 00:00:00"));
+        when(sessionApplicationService.listSessions(null, null)).thenReturn(expectedList);
 
         // when
-        ApiResponse<List<SessionListItem>> result = controller.listSessions(new ListSessionsRequest());
+        ApiResponse<List<SessionListItem>> result = controller.listSessions(new ListSessionsRequest(null, null));
 
         // then
         assertTrue(result.success());
@@ -110,14 +114,30 @@ class SessionControllerTest {
     @Test
     void should_returnEmptyList_when_listSessions_given_noSessions() {
         // given
-        when(sessionApplicationService.listSessions()).thenReturn(List.of());
+        when(sessionApplicationService.listSessions(null, null)).thenReturn(List.of());
 
         // when
-        ApiResponse<List<SessionListItem>> result = controller.listSessions(new ListSessionsRequest());
+        ApiResponse<List<SessionListItem>> result = controller.listSessions(new ListSessionsRequest(null, null));
 
         // then
         assertTrue(result.success());
         assertTrue(result.data().isEmpty());
+    }
+
+    @Test
+    void should_passParams_when_listSessions_given_limitAndOffset() {
+        // given
+        List<SessionListItemDTO> expectedList = List.of(
+                new SessionListItemDTO("session-2", "会话2", 2L, 2L, "ACTIVE", null, "2025-01-01 00:00:00"));
+        when(sessionApplicationService.listSessions(20, 40)).thenReturn(expectedList);
+
+        // when
+        ApiResponse<List<SessionListItem>> result = controller.listSessions(new ListSessionsRequest(20, 40));
+
+        // then
+        assertTrue(result.success());
+        assertEquals(1, result.data().size());
+        verify(sessionApplicationService).listSessions(20, 40);
     }
 
     // ==================== getSession ====================
@@ -125,9 +145,9 @@ class SessionControllerTest {
     @Test
     void should_returnSuccess_when_getSession_given_validSessionId() {
         // given
-        SessionResponse expectedResponse = new SessionResponse(
-                "session-1", "测试会话", 1L, 1L, "active", 5, null, "2025-01-01 00:00:00", null);
-        when(sessionApplicationService.getSession("session-1")).thenReturn(expectedResponse);
+        SessionDTO sessionDTO = new SessionDTO(
+                "session-1", "测试会话", 1L, 1L, "ACTIVE", null, "2025-01-01 00:00:00");
+        when(sessionApplicationService.getSession("session-1")).thenReturn(sessionDTO);
 
         // when
         ApiResponse<SessionResponse> result = controller.getSession(new GetSessionRequest("session-1"));
@@ -199,13 +219,13 @@ class SessionControllerTest {
     @Test
     void should_returnSuccess_when_getMessages_given_validSessionId() {
         // given
-        List<MessageResponse> expectedMessages = List.of(
-                new MessageResponse(1L, "session-1", "user", "你好", null, null, null, "2025-01-01 00:00:00"));
-        when(sessionApplicationService.getMessages(eq("session-1"), anyInt(), anyInt()))
+        List<MessageDTO> expectedMessages = List.of(
+                new MessageDTO(1L, "session-1", 100L, "user", "你好", null, null, "2025-01-01 00:00:00"));
+        when(sessionApplicationService.getMessages(eq("session-1"), anyInt(), isNull()))
                 .thenReturn(expectedMessages);
 
         // when
-        ApiResponse<List<MessageResponse>> result = controller.getMessages(new GetMessagesRequest("session-1", 50, 0));
+        ApiResponse<List<MessageResponse>> result = controller.getMessages(new GetMessagesRequest("session-1", 50, null));
 
         // then
         assertTrue(result.success());
@@ -216,11 +236,11 @@ class SessionControllerTest {
     @Test
     void should_returnSuccess_when_getMessages_given_defaultParams() {
         // given
-        when(sessionApplicationService.getMessages(eq("session-1"), anyInt(), anyInt()))
+        when(sessionApplicationService.getMessages(eq("session-1"), isNull(), isNull()))
                 .thenReturn(List.of());
 
         // when
-        ApiResponse<List<MessageResponse>> result = controller.getMessages(new GetMessagesRequest("session-1", 50, 0));
+        ApiResponse<List<MessageResponse>> result = controller.getMessages(new GetMessagesRequest("session-1", null, null));
 
         // then
         assertTrue(result.success());
@@ -229,11 +249,11 @@ class SessionControllerTest {
     @Test
     void should_returnError_when_getMessages_given_nonexistentSessionId() {
         // given
-        when(sessionApplicationService.getMessages(eq("nonexistent"), anyInt(), anyInt()))
+        when(sessionApplicationService.getMessages(eq("nonexistent"), anyInt(), isNull()))
                 .thenThrow(new IllegalArgumentException("会话不存在"));
 
         // when
-        ApiResponse<List<MessageResponse>> result = controller.getMessages(new GetMessagesRequest("nonexistent", 50, 0));
+        ApiResponse<List<MessageResponse>> result = controller.getMessages(new GetMessagesRequest("nonexistent", 50, null));
 
         // then
         assertFalse(result.success());

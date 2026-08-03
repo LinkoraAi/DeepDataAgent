@@ -1,31 +1,11 @@
 package com.linkroa.deepdataagent.agent.controller.response;
 
-import com.linkroa.deepdataagent.agent.domain.model.DataAnalysisResult;
-
-import java.util.List;
-import java.util.Map;
-
 /**
- * 数据分析响应 DTO
+ * 数据分析响应
+ * <p>数据分析接口的响应体，包含会话 ID 和分析状态消息。</p>
+ *
+ * @param sessionId 会话 ID
+ * @param message   分析状态消息
  */
-public record DataAnalysisResponse(
-    String sql,
-    List<Map<String, Object>> data,
-    String chartType,
-    String chartOption,
-    String analysis,
-    /** 标记查询结果是否为空 */
-    boolean isEmptyResult
-) {
-    public static DataAnalysisResponse from(DataAnalysisResult result) {
-        boolean isEmpty = result.queryData() == null || result.queryData().isEmpty();
-        return new DataAnalysisResponse(
-                result.sql(),
-                result.queryData(),
-                result.chart().chartType().name(),
-                result.chart().echartsOption(),
-                result.analysis(),
-                isEmpty
-        );
-    }
+public record DataAnalysisResponse(String sessionId, String message) {
 }

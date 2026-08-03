@@ -23,4 +23,10 @@ public class SessionProperties {
      * <p>从 conversation_msg 表加载最近 N 条消息用于上下文重建。默认 5。</p>
      */
     private int contextLoadSize = 5;
+
+    /**
+     * 会话列表默认分页大小
+     * <p>侧边栏会话列表每次加载的最大条数。默认 20。</p>
+     */
+    private int sessionListPageSize = 20;
 }

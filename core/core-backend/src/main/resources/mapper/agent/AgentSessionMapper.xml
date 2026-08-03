@@ -10,4 +10,13 @@
         ORDER BY COALESCE(last_message_at, created_at) DESC
     </select>
 
+    <select id="selectActiveSessionsPaged" resultType="com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.AgentSessionEntity">
+        SELECT *
+        FROM agent_session
+        WHERE status = 'active'
+          AND is_deleted = 0
+        ORDER BY COALESCE(last_message_at, created_at) DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
 </mapper>

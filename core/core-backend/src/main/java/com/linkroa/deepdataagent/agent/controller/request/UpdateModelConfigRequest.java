@@ -1,15 +1,14 @@
 package com.linkroa.deepdataagent.agent.controller.request;
 
-import jakarta.validation.constraints.NotNull;
-
 /**
  * 更新模型配置请求
+ * <p>支持更新 API Key 和 base_url，非空字段才会覆盖现有值。
+ * 配置 ID 通过 URL 路径参数传递，不包含在请求体中。</p>
  */
 public record UpdateModelConfigRequest(
-    @NotNull(message = "配置 ID 不能为空")
-    Long id,
-    String name,
+    /** API Key（加密存储，留空表示不修改） */
     String apiKey,
-    Double temperature,
-    String description
+
+    /** API 基础地址（留空表示不修改） */
+    String baseUrl
 ) {}

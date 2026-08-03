@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper.DialogueMapper">
+
+    <select id="selectBySessionId" resultType="com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.DialogueEntity">
+        SELECT *
+        FROM dialogue
+        WHERE session_id = #{sessionId}
+        ORDER BY id ASC
+    </select>
+
+    <select id="selectRoundsBySessionId" resultType="com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.DialogueEntity">
+        SELECT *
+        FROM dialogue
+        WHERE session_id = #{sessionId} AND is_deleted = 0
+        <if test="beforeDialogueId != null">
+            AND id &lt; #{beforeDialogueId}
+        </if>
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectRunning" resultType="com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.DialogueEntity">
+        SELECT *
+        FROM dialogue
+        WHERE status = 'RUNNING' AND is_deleted = 0
+    </select>
+
+</mapper>

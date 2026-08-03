@@ -109,12 +109,16 @@ class TavilyWebSearchServiceTest {
     void should_returnEmptyList_when_search_given_apiCallThrowsException() {
         // given
         lenient().when(properties.getApiKey()).thenReturn("test-api-key");
+        lenient().when(properties.getEndpoint()).thenReturn("https://api.tavily.com/search");
 
         RestClient.RequestBodyUriSpec uriSpec = mock(RestClient.RequestBodyUriSpec.class);
+        RestClient.RequestBodySpec bodySpec = mock(RestClient.RequestBodySpec.class);
+        RestClient.ResponseSpec responseSpec = mock(RestClient.ResponseSpec.class);
         when(restClient.post()).thenReturn(uriSpec);
-        // 注意：.uri() 会被调用，但 .body() 会抛异常
         when(uriSpec.uri(anyString())).thenReturn(uriSpec);
-        when(uriSpec.body(any())).thenThrow(new RuntimeException("API error"));
+        when(uriSpec.body(any(Object.class))).thenReturn(bodySpec);
+        when(bodySpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.body(String.class)).thenThrow(new RuntimeException("API error"));
 
         // when
         List<SearchResult> results = service.search("test", 5);
@@ -359,6 +363,37 @@ class TavilyWebSearchServiceTest {
         List<SearchResult> results = service.search("test", 5);
         
         // then
+        assertThat(results).isEmpty();
+    }
+
+    @Test
+    void should_returnEmptyList_when_search_given_readTreeReturnsNull() {
+        // given: ObjectMapper.readTree 返回 null（使用 mock ObjectMapper）
+        ObjectMapper mockMapper = mock(ObjectMapper.class);
+        TavilyWebSearchService serviceWithMockMapper = new TavilyWebSearchService(properties, restClient, mockMapper);
+
+        lenient().when(properties.getApiKey()).thenReturn("test-api-key");
+        lenient().when(properties.getEndpoint()).thenReturn("https://api.tavily.com/search");
+
+        RestClient.RequestBodyUriSpec uriSpec = mock(RestClient.RequestBodyUriSpec.class);
+        RestClient.RequestBodySpec bodySpec = mock(RestClient.RequestBodySpec.class);
+        RestClient.ResponseSpec responseSpec = mock(RestClient.ResponseSpec.class);
+        when(restClient.post()).thenReturn(uriSpec);
+        when(uriSpec.uri(anyString())).thenReturn(uriSpec);
+        when(uriSpec.body(any(Object.class))).thenReturn(bodySpec);
+        when(bodySpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.body(String.class)).thenReturn("{}");
+
+        try {
+            when(mockMapper.readTree(anyString())).thenReturn(null);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        // when
+        List<SearchResult> results = serviceWithMockMapper.search("test", 5);
+
+        // then: root == null 分支被覆盖，返回空列表
         assertThat(results).isEmpty();
     }
 

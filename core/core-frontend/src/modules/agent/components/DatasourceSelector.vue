@@ -1,7 +1,7 @@
 <template>
   <div class="datasource-selector">
-    <t-popup v-model="popupVisible" placement="top-start" trigger="click" :overlay-style="{ width: '240px' }">
-      <div class="datasource-selector__trigger" :class="{ 'datasource-selector__trigger--empty': !currentDatasource }">
+    <t-popup v-model="popupVisible" placement="bottom-start" trigger="click" :overlay-style="{ width: '240px' }" :disabled="disabled">
+      <div class="datasource-selector__trigger" :class="{ 'datasource-selector__trigger--empty': !currentDatasource, 'datasource-selector__trigger--disabled': disabled }">
         <t-icon name="server" size="14px" class="datasource-selector__icon" />
         <span class="datasource-selector__name">{{ displayName }}</span>
         <span v-if="currentDatasource" class="datasource-selector__type">{{ currentDatasource.type }}</span>
@@ -27,6 +27,10 @@
               暂无可用数据源
             </div>
           </div>
+          <div v-if="datasourceStore.enabledDatasources.length === 0" class="datasource-selector__popup-footer" @click="goToDatasourceConfig">
+            <t-icon name="setting" size="14px" />
+            <span>数据源管理</span>
+          </div>
         </div>
       </template>
     </t-popup>
@@ -35,9 +39,17 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { useDatasourceStore } from '../stores/datasource';
 
+const props = withDefaults(defineProps<{
+  disabled?: boolean;
+}>(), {
+  disabled: false,
+});
+
 const datasourceStore = useDatasourceStore();
+const router = useRouter();
 const popupVisible = ref(false);
 
 /** 当前选中的数据源对象 */
@@ -61,6 +73,12 @@ function handleSelect(id: number) {
   popupVisible.value = false;
 }
 
+/** 跳转到数据源管理页 */
+function goToDatasourceConfig() {
+  popupVisible.value = false;
+  router.push('/settings?tab=datasource');
+}
+
 onMounted(() => {
   if (datasourceStore.enabledDatasources.length === 0) {
     datasourceStore.loadEnabled();
@@ -74,22 +92,29 @@ onMounted(() => {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 10px;
-    border-radius: 6px;
+    padding: 6px 12px;
+    border-radius: 8px;
     cursor: pointer;
-    font-size: 12px;
-    background: rgba(15, 23, 42, 0.04);
-    color: #475569;
-    transition: all 0.15s;
+    font-size: 13px;
+    color: #334155;
+    transition: background-color 0.15s;
 
     &:hover {
-      background: rgba(15, 23, 42, 0.08);
+      background: rgba(15, 23, 42, 0.06);
     }
 
     &--empty {
-      background: transparent;
-      border: 1px dashed rgba(15, 23, 42, 0.2);
       color: #94a3b8;
+    }
+
+    &--disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      pointer-events: none;
+
+      &:hover {
+        background: transparent;
+      }
     }
   }
 
@@ -182,6 +207,22 @@ onMounted(() => {
     text-align: center;
     font-size: 13px;
     color: #94a3b8;
+  }
+
+  &__popup-footer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 12px;
+    border-top: 1px solid rgba(15, 23, 42, 0.06);
+    font-size: 13px;
+    color: #64748b;
+    cursor: pointer;
+    margin-top: 4px;
+
+    &:hover {
+      color: #0052d9;
+    }
   }
 }
 </style>

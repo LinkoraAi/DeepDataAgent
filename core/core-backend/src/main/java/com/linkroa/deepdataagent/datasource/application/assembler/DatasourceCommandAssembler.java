@@ -183,7 +183,8 @@ public final class DatasourceCommandAssembler {
         return new UpdateDatasourceCommand(
                 request.id(),
                 request.name(),
-                request.description()
+                request.description(),
+                toJdbcConfigCommand(request.jdbcConfig())
         );
     }
 
