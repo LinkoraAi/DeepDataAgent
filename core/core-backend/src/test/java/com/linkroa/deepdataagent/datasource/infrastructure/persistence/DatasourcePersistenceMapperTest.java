@@ -302,7 +302,7 @@ class DatasourcePersistenceMapperTest {
 
     @Test
     void should_mapAllFields_when_toEntity_given_validDatasourceConnection() {
-        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("localhost", 3306, "mydb", "root", "pass123");
+        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("localhost", 3306, "mydb", "root", "pass123", null);
         DatasourceConnection connection = new DatasourceConnection(1L, "testDs", DatasourceType.JDBC, JdbcType.MYSQL,
                 DatasourceStatus.ENABLED, jdbcConfig, "desc", FIXED_TIME, FIXED_TIME, "admin", "admin2");
 
@@ -326,7 +326,7 @@ class DatasourcePersistenceMapperTest {
     @Test
     void should_mapAllFields_when_toDomain_given_validDatasourceConnectionEntity() {
         String encryptedPassword = encryptionUtil.encrypt("pass123");
-        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("localhost", 3306, "mydb", "root", encryptedPassword);
+        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("localhost", 3306, "mydb", "root", encryptedPassword, null);
         String jdbcJson;
         try {
             jdbcJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(jdbcConfig);
@@ -372,7 +372,7 @@ class DatasourcePersistenceMapperTest {
 
     @Test
     void should_defaultToEnabled_when_toDomain_given_blankStatus() {
-        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("localhost", 3306, "mydb", "root", "pass");
+        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("localhost", 3306, "mydb", "root", "pass", null);
         String jdbcJson;
         try {
             jdbcJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(jdbcConfig);
@@ -395,7 +395,7 @@ class DatasourcePersistenceMapperTest {
 
     @Test
     void should_roundTrip_when_toEntityAndToDomain_given_jdbcDatasourceConnection() {
-        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("localhost", 5432, "testdb", "admin", "secret");
+        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("localhost", 5432, "testdb", "admin", "secret", null);
         DatasourceConnection original = new DatasourceConnection(1L, "myDs", DatasourceType.JDBC, JdbcType.MYSQL,
                 DatasourceStatus.ENABLED, jdbcConfig, "my description", FIXED_TIME, FIXED_TIME, "creator", "updater");
 
@@ -417,7 +417,7 @@ class DatasourcePersistenceMapperTest {
 
     @Test
     void should_encryptJdbcPassword_when_toEntity_given_jdbcConnection() {
-        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("host", 3306, "db", "user", "plainPassword");
+        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("host", 3306, "db", "user", "plainPassword", null);
         DatasourceConnection connection = new DatasourceConnection(1L, "testDs", DatasourceType.JDBC, JdbcType.MYSQL,
                 DatasourceStatus.ENABLED, jdbcConfig, null, null, null, null, null);
 
@@ -432,7 +432,7 @@ class DatasourcePersistenceMapperTest {
     @Test
     void should_decryptJdbcPassword_when_toDomain_given_encryptedPassword() {
         String encryptedPassword = encryptionUtil.encrypt("plainPassword");
-        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("host", 3306, "db", "user", encryptedPassword);
+        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("host", 3306, "db", "user", encryptedPassword, null);
         String jdbcJson;
         try {
             jdbcJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(jdbcConfig);
@@ -480,7 +480,7 @@ class DatasourcePersistenceMapperTest {
 
     @Test
     void should_handleNullEncryptionUtil_when_toEntity_given_nullEncryptionUtilForJdbc() {
-        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("host", 3306, "db", "user", "plain");
+        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("host", 3306, "db", "user", "plain", null);
         DatasourceConnection connection = new DatasourceConnection(1L, "testDs", DatasourceType.JDBC, JdbcType.MYSQL,
                 DatasourceStatus.ENABLED, jdbcConfig, null, null, null, null, null);
 
@@ -492,7 +492,7 @@ class DatasourcePersistenceMapperTest {
     @Test
     void should_handleNullEncryptionUtil_when_toDomain_given_nullEncryptionUtilForJdbc() {
         String encryptedPassword = encryptionUtil.encrypt("plain");
-        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("host", 3306, "db", "user", encryptedPassword);
+        JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("host", 3306, "db", "user", encryptedPassword, null);
         String jdbcJson;
         try {
             jdbcJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(jdbcConfig);

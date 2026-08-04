@@ -31,6 +31,18 @@ public abstract class AbstractJdbcConnectionStrategy implements DatasourceConnec
 
     public abstract String getDriverClassName();
 
+    /**
+     * 获取 JDBC 元数据查询使用的 catalog（数据库名）
+     * <p>MySQL 中 catalog 即数据库名；PostgreSQL 中 catalog 为数据库名，schema 为 schema 名，
+     * 二者需分开传入 getTables/getColumns，否则 PostgreSQL 会按 schema 名去查 catalog 导致查不到表。</p>
+     *
+     * @param connection 数据源连接
+     * @return catalog 名称（数据库名）
+     */
+    protected String getCatalogName(DatasourceConnection connection) {
+        return connection.jdbcConnectionConfig().database();
+    }
+
     protected abstract String buildPreviewSql(String schemaName, String tableName, int limit);
 
     @Override
@@ -75,7 +87,7 @@ public abstract class AbstractJdbcConnectionStrategy implements DatasourceConnec
         String url = buildJdbcUrl(connection);
         List<TableInfo> tables = new ArrayList<>();
         try (Connection conn = DriverManager.getConnection(url, connection.jdbcConnectionConfig().username(), connection.jdbcConnectionConfig().password())) {
-            ResultSet rs = conn.getMetaData().getTables(schemaName, schemaName, "%", new String[]{"TABLE"});
+            ResultSet rs = conn.getMetaData().getTables(getCatalogName(connection), schemaName, "%", new String[]{"TABLE"});
             while (rs.next()) {
                 String tableName = rs.getString("TABLE_NAME");
                 String tableComment = rs.getString("REMARKS");
@@ -96,7 +108,7 @@ public abstract class AbstractJdbcConnectionStrategy implements DatasourceConnec
         String url = buildJdbcUrl(connection);
         List<ColumnInfo> columns = new ArrayList<>();
         try (Connection conn = DriverManager.getConnection(url, connection.jdbcConnectionConfig().username(), connection.jdbcConnectionConfig().password())) {
-            ResultSet rs = conn.getMetaData().getColumns(schemaName, schemaName, tableName, "%");
+            ResultSet rs = conn.getMetaData().getColumns(getCatalogName(connection), schemaName, tableName, "%");
             while (rs.next()) {
                 String columnName = rs.getString("COLUMN_NAME");
                 String dataType = rs.getString("TYPE_NAME");
@@ -137,7 +149,7 @@ public abstract class AbstractJdbcConnectionStrategy implements DatasourceConnec
                 while (rs.next()) {
                     Map<String, Object> row = new LinkedHashMap<>();
                     for (int i = 1; i <= columnCount; i++) {
-                        row.put(metaData.getColumnLabel(i), rs.getObject(i));
+                        row.put(metaData.getColumnLabel(i), convertPreviewValue(rs.getObject(i)));
                     }
                     rows.add(row);
                 }
@@ -160,14 +172,40 @@ public abstract class AbstractJdbcConnectionStrategy implements DatasourceConnec
         return "\"" + identifier.replace("\"", "\"\"") + "\"";
     }
 
-    private String diagnoseSqlException(SQLException e) {
+    /**
+     * 转换预览数据中的单元格值
+     * <p>默认原样返回，PostgreSQL 等子类可覆写以将复合类型（jsonb、数组等）转为文本展示。</p>
+     *
+     * @param value 原始单元格值
+     * @return 转换后的值
+     */
+    protected Object convertPreviewValue(Object value) {
+        return value;
+    }
+
+    /**
+     * 将 SQL 异常转换为可读的中文连接诊断信息
+     * <p>按 SQLState 与消息关键字识别常见连接失败场景，避免直接暴露底层原始错误。</p>
+     *
+     * @param e SQL 异常
+     * @return 诊断后的中文提示
+     */
+    String diagnoseSqlException(SQLException e) {
         String state = e.getSQLState();
         if (state != null) {
             if (state.startsWith("08")) {
                 return "网络连接失败，请检查主机地址和端口号";
             }
-            if ("28000".equals(state) || "08004".equals(state)) {
+            // 28000/08004 通用认证失败，28P01 PostgreSQL 密码认证失败(invalid_password)
+            if ("28000".equals(state) || "08004".equals(state) || "28P01".equals(state)) {
                 return "身份认证失败，请检查用户名和密码";
+            }
+            // PostgreSQL: 3D000 目标 schema 不存在，42501 schema 无访问权限
+            if ("3D000".equals(state)) {
+                return "目标 schema 不存在，请检查 schema 配置";
+            }
+            if ("42501".equals(state)) {
+                return "目标 schema 无访问权限，请检查 schema 配置或用户权限";
             }
         }
         if (e.getMessage() != null) {
@@ -177,6 +215,10 @@ public abstract class AbstractJdbcConnectionStrategy implements DatasourceConnec
             }
             if (msg.contains("unknown database") || msg.contains("database") && msg.contains("not found")) {
                 return "数据库不存在，请检查数据库名称";
+            }
+            // PostgreSQL 的 schema 不存在错误信息
+            if (msg.contains("schema") && msg.contains("does not exist")) {
+                return "目标 schema 不存在，请检查 schema 配置";
             }
             if (msg.contains("access denied") || msg.contains("authentication failed")) {
                 return "身份认证失败，请检查用户名和密码";

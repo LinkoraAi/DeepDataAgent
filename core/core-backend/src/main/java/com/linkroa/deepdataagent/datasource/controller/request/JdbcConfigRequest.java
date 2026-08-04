@@ -16,5 +16,7 @@ public record JdbcConfigRequest(
     @NotBlank(message = "用户名不能为空")
     String username,
     
-    String password
+    String password,
+
+    String schema
 ) {}

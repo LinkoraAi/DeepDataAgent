@@ -11,6 +11,7 @@ public enum DatasourceTypeEnum {
 
     MYSQL("JDBC", "MYSQL","MySQL", "OLTP"),
     CLICKHOUSE("JDBC", "CLICKHOUSE", "ClickHouse", "OLAP"),
+    POSTGRESQL("JDBC", "POSTGRESQL", "PostgreSQL", "OLTP"),
     API("API", "API","API", "API");
 
     private final String type;

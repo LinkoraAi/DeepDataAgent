@@ -22,7 +22,8 @@ public class DatasourceAssembler {
                     ObjectUtils.firstNonNull(command.jdbcConfig().port(), 0),
                     command.jdbcConfig().database(),
                     command.jdbcConfig().username(),
-                    command.jdbcConfig().password()
+                    command.jdbcConfig().password(),
+                    command.jdbcConfig().schema()
             );
         }
 
@@ -47,7 +48,8 @@ public class DatasourceAssembler {
                     ObjectUtils.firstNonNull(command.jdbcConfig().port(), existing.jdbcConnectionConfig() != null ? existing.jdbcConnectionConfig().port() : 0),
                     command.jdbcConfig().database(),
                     command.jdbcConfig().username(),
-                    password
+                    password,
+                    command.jdbcConfig().schema()
             );
         }
         return new DatasourceConnection(

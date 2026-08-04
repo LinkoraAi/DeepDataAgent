@@ -83,6 +83,9 @@ public class TextToSqlTool {
                     if (ds.jdbcCategory() == JdbcCategory.CLICKHOUSE) {
                         return "ClickHouse";
                     }
+                    if (ds.jdbcCategory() == JdbcCategory.POSTGRESQL) {
+                        return "PostgreSQL";
+                    }
                     return "MySQL";
                 })
                 .orElse("MySQL");

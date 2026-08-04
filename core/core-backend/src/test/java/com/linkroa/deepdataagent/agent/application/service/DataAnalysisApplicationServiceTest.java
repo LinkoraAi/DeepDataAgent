@@ -23,8 +23,6 @@ import com.linkroa.deepdataagent.agent.infrastructure.sse.agent.AgentExecutionPo
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.harness.agent.HarnessAgent;
-import org.springframework.transaction.support.TransactionCallback;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -77,9 +75,6 @@ class DataAnalysisApplicationServiceTest {
     private AgentProperties agentProperties;
 
     @Mock
-    private TransactionTemplate transactionTemplate;
-
-    @Mock
     private SessionToolContext sessionToolContext;
 
     @Mock
@@ -101,13 +96,6 @@ class DataAnalysisApplicationServiceTest {
         // 使用真实 EventAdapter：registerContext 需返回真实 CollectorContext，供 BatchFlushManager 复制快照
         eventAdapter = new EventAdapter();
 
-        // lenient stubbing: TransactionTemplate 执行回调而不实际开启事务
-        lenient().doAnswer(invocation -> {
-            java.util.function.Consumer<org.springframework.transaction.TransactionStatus> callback = invocation.getArgument(0);
-            callback.accept(null);
-            return null;
-        }).when(transactionTemplate).executeWithoutResult(any());
-
         service = new DataAnalysisApplicationService(
                 datasourceGateway,
                 llmClient,
@@ -118,7 +106,6 @@ class DataAnalysisApplicationServiceTest {
                 dialogueRepository,
                 sessionProperties,
                 agentProperties,
-                transactionTemplate,
                 sessionToolContext,
                 sseConnectionPool,
                 sessionEventBus,
@@ -150,11 +137,6 @@ class DataAnalysisApplicationServiceTest {
         when(datasourceGateway.findDatasource(100L)).thenReturn(Optional.of(datasource));
 
         when(messagePersistenceService.persistUserMessageSync(anyString(), anyString())).thenReturn(dialogueId);
-        // 执行 transactionTemplate.execute 回调，使 persistUserMessageSync 真正被调用
-        when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
-            TransactionCallback<Long> callback = invocation.getArgument(0);
-            return callback.doInTransaction(null);
-        });
         when(agentFactory.getOrCreateAgent(any(), any(), any(), anyBoolean(), anyList())).thenReturn(agent);
     }
 

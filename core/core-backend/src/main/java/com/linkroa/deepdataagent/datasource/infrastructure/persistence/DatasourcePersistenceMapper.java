@@ -241,7 +241,8 @@ public final class DatasourcePersistenceMapper {
                 config.port(),
                 config.database(),
                 config.username(),
-                encryptionUtil.encrypt(config.password())
+                encryptionUtil.encrypt(config.password()),
+                config.schema()
         );
     }
 
@@ -254,7 +255,8 @@ public final class DatasourcePersistenceMapper {
                 config.port(),
                 config.database(),
                 config.username(),
-                encryptionUtil.decrypt(config.password())
+                encryptionUtil.decrypt(config.password()),
+                config.schema()
         );
     }
 

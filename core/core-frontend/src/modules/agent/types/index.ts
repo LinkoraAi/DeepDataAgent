@@ -245,6 +245,8 @@ export interface DatasourceConnection {
   port?: number;
   database?: string;
   username?: string;
+  /** PostgreSQL 等数据源的 schema，默认 public */
+  schema?: string;
   /** 密码掩码文本，编辑时回显用（如 "****...****"），null 表示未配置密码 */
   maskedPassword?: string;
   description?: string;

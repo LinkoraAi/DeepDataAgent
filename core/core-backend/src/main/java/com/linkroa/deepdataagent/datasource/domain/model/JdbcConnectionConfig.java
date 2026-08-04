@@ -10,8 +10,12 @@ public record JdbcConnectionConfig(
         int port,
         String database,
         String username,
-        String password
+        String password,
+        String schema
 ) {
+    /** schema 默认值，PostgreSQL 默认使用 public schema */
+    private static final String DEFAULT_SCHEMA = "public";
+
     public JdbcConnectionConfig {
         if (StringUtils.isBlank(host)) {
             throw new IllegalArgumentException("主机地址不能为空");
@@ -27,6 +31,10 @@ public record JdbcConnectionConfig(
         }
         if (StringUtils.isBlank(password)) {
             throw new IllegalArgumentException("密码不能为空");
+        }
+        // schema 为空时默认使用 public，兼容旧数据及非 PostgreSQL 数据源
+        if (StringUtils.isBlank(schema)) {
+            schema = DEFAULT_SCHEMA;
         }
     }
 }

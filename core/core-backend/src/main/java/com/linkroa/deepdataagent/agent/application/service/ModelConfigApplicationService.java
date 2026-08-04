@@ -12,7 +12,7 @@ import com.linkroa.deepdataagent.agent.domain.repository.AgentModelInfoRepositor
 import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -24,19 +24,30 @@ import java.util.concurrent.ConcurrentHashMap;
  * 模型配置应用服务
  * <p>基于新的 AgentModelInfo 聚合根管理模型配置。
  * 接收应用层命令对象，返回应用层 DTO，由控制器层完成请求对象与命令对象、DTO 与响应对象的转换。</p>
+ * <p>事务统一采用编程式事务（{@link TransactionTemplate}），事务边界在各方法内部自包含，不依赖调用方开启事务。</p>
  */
 @Service
 public class ModelConfigApplicationService {
 
     private final AgentModelInfoRepository modelInfoRepository;
     private final LLMClient llmClient;
+    private final TransactionTemplate transactionTemplate;
     private final Map<Long, Long> lastTestTime = new ConcurrentHashMap<>();
     private static final long TEST_COOLDOWN_MS = 5000;
 
+    /**
+     * 构造方法
+     *
+     * @param modelInfoRepository 模型配置仓储
+     * @param llmClient           LLM 客户端
+     * @param transactionTemplate 编程式事务模板
+     */
     public ModelConfigApplicationService(AgentModelInfoRepository modelInfoRepository,
-                                         LLMClient llmClient) {
+                                         LLMClient llmClient,
+                                         TransactionTemplate transactionTemplate) {
         this.modelInfoRepository = modelInfoRepository;
         this.llmClient = llmClient;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /**
@@ -125,89 +136,97 @@ public class ModelConfigApplicationService {
 
     /**
      * 添加模型配置
+     * <p>新增配置并（若设置为默认）清除其他默认配置，二者在同一编程式事务内原子提交。</p>
      */
-    @Transactional
     public void addConfig(AddModelConfigCommand command) {
-        AgentModelInfo info = new AgentModelInfo();
-        info.setProviderDisplayName(command.providerKey());
-        info.setProviderName(command.providerKey());
-        info.setModelId(command.modelKey());
-        info.setApiUrl(command.baseUrl());
-        info.setApiKey(command.apiKey());
-        info.setDefaultModel(Boolean.TRUE.equals(command.setDefault()) ? 1 : 0);
-        info.setEnabled(1);
-        info.setSortOrder(0);
+        transactionTemplate.executeWithoutResult(status -> {
+            AgentModelInfo info = new AgentModelInfo();
+            info.setProviderDisplayName(command.providerKey());
+            info.setProviderName(command.providerKey());
+            info.setModelId(command.modelKey());
+            info.setApiUrl(command.baseUrl());
+            info.setApiKey(command.apiKey());
+            info.setDefaultModel(Boolean.TRUE.equals(command.setDefault()) ? 1 : 0);
+            info.setEnabled(1);
+            info.setSortOrder(0);
 
-        modelInfoRepository.save(info);
+            modelInfoRepository.save(info);
 
-        // 如果设为默认，清除其他默认
-        if (Boolean.TRUE.equals(command.setDefault())) {
-            modelInfoRepository.findAllEnabled().stream()
-                    .filter(m -> !m.getId().equals(info.getId()) && m.getDefaultModel() != null && m.getDefaultModel() == 1)
-                    .forEach(m -> {
-                        m.setDefaultModel(0);
-                        modelInfoRepository.update(m);
-                    });
-        }
+            // 如果设为默认，清除其他默认
+            if (Boolean.TRUE.equals(command.setDefault())) {
+                modelInfoRepository.findAllEnabled().stream()
+                        .filter(m -> !m.getId().equals(info.getId()) && m.getDefaultModel() != null && m.getDefaultModel() == 1)
+                        .forEach(m -> {
+                            m.setDefaultModel(0);
+                            modelInfoRepository.update(m);
+                        });
+            }
+        });
     }
 
     /**
      * 更新模型配置
+     * <p>更新操作在编程式事务内完成；缓存失效为非 DB 操作，置于事务外执行。</p>
      */
-    @Transactional
     public void updateConfig(Long id, UpdateModelConfigCommand command) {
-        AgentModelInfo info = getModelById(id);
+        transactionTemplate.executeWithoutResult(status -> {
+            AgentModelInfo info = getModelById(id);
 
-        if (command.baseUrl() != null) {
-            info.setApiUrl(command.baseUrl());
-        }
-        if (command.apiKey() != null && !command.apiKey().isBlank()) {
-            info.setApiKey(command.apiKey());
-        }
+            if (command.baseUrl() != null) {
+                info.setApiUrl(command.baseUrl());
+            }
+            if (command.apiKey() != null && !command.apiKey().isBlank()) {
+                info.setApiKey(command.apiKey());
+            }
 
-        modelInfoRepository.update(info);
+            modelInfoRepository.update(info);
+        });
         llmClient.evictCache(id);
     }
 
     /**
      * 删除模型配置（软删除）
+     * <p>软删除并（若删除的是默认模型）迁移默认配置，二者在同一编程式事务内原子提交；
+     * 缓存失效为非 DB 操作，置于事务外执行。</p>
      */
-    @Transactional
     public void deleteConfig(Long id) {
-        AgentModelInfo info = getModelById(id);
+        transactionTemplate.executeWithoutResult(status -> {
+            AgentModelInfo info = getModelById(id);
 
-        modelInfoRepository.markDeleted(id);
+            modelInfoRepository.markDeleted(id);
 
-        // 如果删除的是默认模型，选择下一个作为默认
-        if (info.getDefaultModel() != null && info.getDefaultModel() == 1) {
-            modelInfoRepository.findAllEnabled().stream()
-                    .findFirst()
-                    .ifPresent(m -> {
-                        m.setDefaultModel(1);
-                        modelInfoRepository.update(m);
-                    });
-        }
-
+            // 如果删除的是默认模型，选择下一个作为默认
+            if (info.getDefaultModel() != null && info.getDefaultModel() == 1) {
+                modelInfoRepository.findAllEnabled().stream()
+                        .findFirst()
+                        .ifPresent(m -> {
+                            m.setDefaultModel(1);
+                            modelInfoRepository.update(m);
+                        });
+            }
+        });
         llmClient.evictCache(id);
     }
 
     /**
      * 设置默认模型
+     * <p>取消所有默认并设置指定模型为默认，二者在同一编程式事务内原子提交。</p>
      */
-    @Transactional
     public void setDefaultModel(Long id) {
-        AgentModelInfo info = getModelById(id);
+        transactionTemplate.executeWithoutResult(status -> {
+            AgentModelInfo info = getModelById(id);
 
-        // 取消所有默认
-        modelInfoRepository.findAllEnabled().stream()
-                .filter(m -> m.getDefaultModel() != null && m.getDefaultModel() == 1)
-                .forEach(m -> {
-                    m.setDefaultModel(0);
-                    modelInfoRepository.update(m);
-                });
+            // 取消所有默认
+            modelInfoRepository.findAllEnabled().stream()
+                    .filter(m -> m.getDefaultModel() != null && m.getDefaultModel() == 1)
+                    .forEach(m -> {
+                        m.setDefaultModel(0);
+                        modelInfoRepository.update(m);
+                    });
 
-        info.setDefaultModel(1);
-        modelInfoRepository.update(info);
+            info.setDefaultModel(1);
+            modelInfoRepository.update(info);
+        });
     }
 
     /**

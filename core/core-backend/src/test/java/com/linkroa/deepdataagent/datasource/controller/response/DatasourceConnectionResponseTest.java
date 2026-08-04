@@ -14,7 +14,7 @@ class DatasourceConnectionResponseTest {
     void should_mapJdbcFields_when_from_given_jdbcConnection() {
         DatasourceConnection connection = new DatasourceConnection(
                 1L, "test", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
-                new JdbcConnectionConfig("localhost", 3306, "testdb", "root", "pass"),
+                new JdbcConnectionConfig("localhost", 3306, "testdb", "root", "pass", null),
                 "desc", LocalDateTime.parse("2024-01-01T00:00:00"), LocalDateTime.parse("2024-01-02T00:00:00"), "admin", null
         );
 

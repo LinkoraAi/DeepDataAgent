@@ -23,7 +23,7 @@ class DatasourceCommandAssemblerTest {
 
     @Test
     void should_createCreateDatasourceCommand_when_toCreateCommand_given_validRequest() {
-        JdbcConfigRequest jdbcConfig = new JdbcConfigRequest("localhost", 3306, "testdb", "root", "pass");
+        JdbcConfigRequest jdbcConfig = new JdbcConfigRequest("localhost", 3306, "testdb", "root", "pass", null);
         CreateDatasourceRequest request = new CreateDatasourceRequest(
                 "test-ds", "JDBC", "MYSQL", null, jdbcConfig, null
         );
@@ -51,7 +51,7 @@ class DatasourceCommandAssemblerTest {
 
     @Test
     void should_createTestConnectionCommand_when_toTestCommand_given_validRequest() {
-        JdbcConfigRequest jdbcConfig = new JdbcConfigRequest("localhost", 3306, "testdb", "root", "pass");
+        JdbcConfigRequest jdbcConfig = new JdbcConfigRequest("localhost", 3306, "testdb", "root", "pass", null);
         TestConnectionRequest request = new TestConnectionRequest(
                 1L, "test-jdbc", "JDBC", "MYSQL", "test description", jdbcConfig, null
         );
@@ -181,7 +181,7 @@ class DatasourceCommandAssemblerTest {
     void should_createCommandWithNullApiSchemas_when_toCreateCommand_given_nullApiSchemas() {
         CreateDatasourceRequest request = new CreateDatasourceRequest(
                 "jdbc-ds", "JDBC", "MYSQL", null,
-                new JdbcConfigRequest("localhost", 3306, "db", "root", "pass"), null
+                new JdbcConfigRequest("localhost", 3306, "db", "root", "pass", null), null
         );
 
         CreateDatasourceCommand command = DatasourceCommandAssembler.toCreateCommand(request);
@@ -602,7 +602,7 @@ class DatasourceCommandAssemblerTest {
 
     @Test
     void should_useNullSubType_when_toCreateCommand_given_jdbcTypeWithNullSubType() {
-        JdbcConfigRequest jdbcConfig = new JdbcConfigRequest("localhost", 3306, "testdb", "root", "pass");
+        JdbcConfigRequest jdbcConfig = new JdbcConfigRequest("localhost", 3306, "testdb", "root", "pass", null);
         CreateDatasourceRequest request = new CreateDatasourceRequest(
                 "test-ds", "JDBC", null, null, jdbcConfig, null
         );

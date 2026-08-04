@@ -114,7 +114,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_throwException_when_testConnection_given_notFound() {
         when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
-        TestConnectionCommand command = new TestConnectionCommand(999L, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        TestConnectionCommand command = new TestConnectionCommand(999L, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         assertThrows(DeepDataAgentException.class, () -> service.testConnection(command));
     }
 
@@ -174,7 +174,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_cascadeDeleteJdbc_when_deleteDatasource_given_jdbcConnection() {
         DatasourceConnection connection = new DatasourceConnection(1L, "jdbc-test", DatasourceType.JDBC, JdbcType.MYSQL,
-                DatasourceStatus.ENABLED, new JdbcConnectionConfig("h", 3306, "db", "u", "p"), null, null, null, null, null);
+                DatasourceStatus.ENABLED, new JdbcConnectionConfig("h", 3306, "db", "u", "p", null), null, null, null, null, null);
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanDelete(connection);
         doAnswer(invocation -> {
@@ -190,7 +190,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_testApiConnection_when_testConnection_given_apiSchema() {
         TestConnectionCommand command = new TestConnectionCommand(
-                null, "API", null, null, null, null, null, null,
+                null, "API", null, null, null, null, null, null, null,
                 "http://example.com/api", "GET", null, null, null, null, null, null, null, 30, null);
         DatasourceConnectionStrategy.ConnectionTestResult expectedResult =
                 DatasourceConnectionStrategy.ConnectionTestResult.ok();
@@ -226,9 +226,9 @@ class DatasourceApplicationServiceTest {
     void should_createJdbcDatasource_when_createDatasource_given_jdbcCommand() {
         CreateDatasourceCommand command = new CreateDatasourceCommand(
                 "new-jdbc", DatasourceType.JDBC, JdbcType.MYSQL, null,
-                new JdbcConfigCommand("localhost", 3306, "db", "u", "p"), null);
+                new JdbcConfigCommand("localhost", 3306, "db", "u", "p", null), null);
         DatasourceConnection savedConnection = new DatasourceConnection(1L, "new-jdbc", DatasourceType.JDBC, JdbcType.MYSQL,
-                DatasourceStatus.ENABLED, new JdbcConnectionConfig("localhost", 3306, "db", "u", "p"),
+                DatasourceStatus.ENABLED, new JdbcConnectionConfig("localhost", 3306, "db", "u", "p", null),
                 null, null, null, null, null);
         when(connectionRepository.findByName("new-jdbc")).thenReturn(Optional.empty());
         when(connectionRepository.save(any())).thenReturn(savedConnection);
@@ -243,6 +243,18 @@ class DatasourceApplicationServiceTest {
         DatasourceConnection result = service.createDatasource(command);
 
         assertEquals(DatasourceType.JDBC, result.type());
+    }
+
+    @Test
+    void should_throwException_when_createDatasource_given_invalidPgSchema() {
+        // given
+        CreateDatasourceCommand command = new CreateDatasourceCommand(
+                "pg-ds", DatasourceType.JDBC, JdbcType.POSTGRESQL, null,
+                new JdbcConfigCommand("localhost", 5432, "db", "u", "p", "public,analytics"), null);
+        when(connectionRepository.findByName("pg-ds")).thenReturn(Optional.empty());
+
+        // when / then
+        assertThrows(DeepDataAgentException.class, () -> service.createDatasource(command));
     }
 
     @Test
@@ -286,6 +298,29 @@ class DatasourceApplicationServiceTest {
     }
 
     @Test
+    void should_resyncMetadata_when_updateDatasource_given_jdbcConnection() {
+        // given JDBC 数据源更新后应重新同步元数据
+        DatasourceConnection existing = createJdbcConnection(1L);
+        JdbcConfigCommand jdbcConfig = new JdbcConfigCommand("localhost", 3306, "testdb", "root", "password", null);
+        UpdateDatasourceCommand command = new UpdateDatasourceCommand(1L, "updated-name", "updated-desc", jdbcConfig);
+        when(connectionRepository.findById(1L)).thenReturn(Optional.of(existing));
+        when(connectionRepository.findByName("updated-name")).thenReturn(Optional.empty());
+        when(connectionRepository.update(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
+        when(strategy.extractSchemas(any())).thenReturn(List.of());
+        doAnswer(invocation -> {
+            var callback = (org.springframework.transaction.support.TransactionCallback<DatasourceConnection>) invocation.getArgument(0);
+            return callback.doInTransaction(null);
+        }).when(transactionTemplate).execute(any());
+
+        // when
+        service.updateDatasource(command);
+
+        // then 更新后触发了元数据同步
+        verify(strategy).extractSchemas(any());
+    }
+
+    @Test
     void should_throwException_when_updateDatasource_given_duplicateName() {
         DatasourceConnection existing = createApiConnection(1L);
         DatasourceConnection other = createApiConnection(2L);
@@ -318,14 +353,14 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_testJdbcConnection_when_testConnection_given_existingConnection() {
         DatasourceConnection connection = new DatasourceConnection(1L, "jdbc-test", DatasourceType.JDBC, JdbcType.MYSQL,
-                DatasourceStatus.ENABLED, new JdbcConnectionConfig("h", 3306, "db", "u", "p"), null, null, null, null, null);
+                DatasourceStatus.ENABLED, new JdbcConnectionConfig("h", 3306, "db", "u", "p", null), null, null, null, null, null);
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
         DatasourceConnectionStrategy strategy = mock(DatasourceConnectionStrategy.class);
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(strategy.testConnection(connection)).thenReturn(
                 DatasourceConnectionStrategy.ConnectionTestResult.ok());
 
-        TestConnectionCommand command = new TestConnectionCommand(1L, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        TestConnectionCommand command = new TestConnectionCommand(1L, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         DatasourceConnectionStrategy.ConnectionTestResult result = service.testConnection(command);
 
         assertTrue(result.success());
@@ -334,7 +369,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_testJdbcConnection_when_testConnection_given_newConnection() {
         TestConnectionCommand command = new TestConnectionCommand(
-                null, "JDBC", "MYSQL", "localhost", 3306, "testdb", "root", "pass",
+                null, "JDBC", "MYSQL", "localhost", 3306, "testdb", "root", "pass", null,
                 null, null, null, null, null, null, null, null, null, null, null);
         DatasourceConnectionStrategy strategy = mock(DatasourceConnectionStrategy.class);
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
@@ -480,7 +515,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_throwException_when_previewTableData_given_disabledConnection() {
         DatasourceConnection connection = new DatasourceConnection(1L, "test", DatasourceType.JDBC, JdbcType.MYSQL,
-                DatasourceStatus.DISABLED, new JdbcConnectionConfig("localhost", 3306, "db", "u", "p"),
+                DatasourceStatus.DISABLED, new JdbcConnectionConfig("localhost", 3306, "db", "u", "p", null),
                 null, null, null, null, null);
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
         assertThrows(DeepDataAgentException.class, () -> service.previewTableData(1L, "users", 10));
@@ -554,7 +589,7 @@ class DatasourceApplicationServiceTest {
     }
 
     private DatasourceConnection createJdbcConnection(Long id) {
-        JdbcConnectionConfig config = new JdbcConnectionConfig("localhost", 3306, "testdb", "root", "password");
+        JdbcConnectionConfig config = new JdbcConnectionConfig("localhost", 3306, "testdb", "root", "password", null);
         return new DatasourceConnection(id, "jdbc-test", DatasourceType.JDBC, JdbcType.MYSQL,
                 DatasourceStatus.ENABLED, config, null, null, null, null, null);
     }

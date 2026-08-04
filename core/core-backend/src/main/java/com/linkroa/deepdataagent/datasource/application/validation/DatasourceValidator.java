@@ -1,7 +1,10 @@
 package com.linkroa.deepdataagent.datasource.application.validation;
 
 import com.linkroa.deepdataagent.datasource.domain.model.enums.*;
+import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import org.apache.commons.lang3.StringUtils;
+
+import java.util.List;
 
 
 /**
@@ -78,6 +81,33 @@ public final class DatasourceValidator {
             return null;
         }
         return DatasourceStatus.valueOf(value);
+    }
+
+    /**
+     * PostgreSQL 内置 schema，禁止作为同步目标
+     */
+    private static final List<String> POSTGRESQL_BUILTIN_SCHEMAS =
+            List.of("pg_catalog", "information_schema", "pg_toast");
+
+    /**
+     * 校验 PostgreSQL schema 配置
+     * <p>仅当子类型为 PostgreSQL 时校验，要求 schema 为单个值且不是系统内置 schema。
+     * schema 为空时使用默认值 public，不做校验。</p>
+     *
+     * @param subType JDBC 子类型
+     * @param schema  待校验的 schema，可为空
+     */
+    public static void validatePostgresqlSchema(JdbcType subType, String schema) {
+        if (subType != JdbcType.POSTGRESQL || StringUtils.isBlank(schema)) {
+            return;
+        }
+        String trimmed = schema.trim();
+        if (trimmed.contains(",") || trimmed.contains(";")) {
+            throw new DeepDataAgentException("PostgreSQL 仅支持单个 schema，请勿填写多个值");
+        }
+        if (POSTGRESQL_BUILTIN_SCHEMAS.contains(trimmed.toLowerCase())) {
+            throw new DeepDataAgentException("PostgreSQL 内置 schema 不允许作为同步目标: " + schema);
+        }
     }
 
 }

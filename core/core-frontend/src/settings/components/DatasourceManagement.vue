@@ -16,6 +16,7 @@
           <t-option value="" label="全部类型" />
           <t-option value="MYSQL" label="MySQL" />
           <t-option value="CLICKHOUSE" label="ClickHouse" />
+          <t-option value="POSTGRESQL" label="PostgreSQL" />
           <t-option value="API" label="API" />
         </t-select>
         <t-select v-model="filterStatus" placeholder="全部状态" @change="handleFilterChange">
@@ -79,6 +80,15 @@
             <t-button theme="default" variant="outline" size="small" @click="handleBrowse(datasource)">
               浏览数据
             </t-button>
+            <t-button
+              theme="default"
+              variant="outline"
+              size="small"
+              :loading="syncingId === datasource.id"
+              @click="handleSync(datasource)"
+            >
+              同步元数据
+            </t-button>
             <t-button theme="default" variant="outline" size="small" @click="handleEdit(datasource)">
               编辑
             </t-button>
@@ -139,6 +149,7 @@ const filterStatus = ref('');
 const dialogVisible = ref(false);
 const editingDatasource = ref<DatasourceConnection | null>(null);
 const testingId = ref<number | null>(null);
+const syncingId = ref<number | null>(null);
 const browseVisible = ref(false);
 const browsingDatasource = ref<DatasourceConnection | null>(null);
 
@@ -193,10 +204,24 @@ async function handleTestConnection(datasource: DatasourceConnection) {
     });
     MessagePlugin.success('连接测试成功');
   } catch (err: any) {
+    // 错误提示已由 HTTP 拦截器统一弹出，这里仅记录日志避免重复弹窗
     console.error('Test connection failed:', err);
-    MessagePlugin.error(err.message || '连接测试失败');
   } finally {
     testingId.value = null;
+  }
+}
+
+async function handleSync(datasource: DatasourceConnection) {
+  syncingId.value = datasource.id;
+  try {
+    await datasourceStore.syncDatasource(datasource.id);
+    MessagePlugin.success('元数据同步成功');
+    await loadDatasources();
+  } catch (err: any) {
+    // 错误提示已由 HTTP 拦截器统一弹出，这里仅记录日志避免重复弹窗
+    console.error('Sync metadata failed:', err);
+  } finally {
+    syncingId.value = null;
   }
 }
 
@@ -253,6 +278,7 @@ function getTypeIcon(type: string): string {
   const icons: Record<string, string> = {
     MYSQL: 'M',
     CLICKHOUSE: 'C',
+    POSTGRESQL: 'P',
     API: 'A',
   };
   return icons[type] || '?';
@@ -262,6 +288,7 @@ function getTypeClass(type: string): string {
   const classes: Record<string, string> = {
     MYSQL: 'mysql',
     CLICKHOUSE: 'clickhouse',
+    POSTGRESQL: 'postgresql',
     API: 'api',
   };
   return classes[type] || '';
@@ -353,6 +380,11 @@ onMounted(() => {
     &.clickhouse {
       background: rgba(255, 153, 0, 0.08);
       color: #ff9900;
+    }
+
+    &.postgresql {
+      background: rgba(0, 122, 204, 0.08);
+      color: #007acc;
     }
 
     &.api {

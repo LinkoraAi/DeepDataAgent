@@ -192,6 +192,7 @@ class DatasourceControllerTest {
         List<DatasourceTypeResponse> expectedTypes = List.of(
                 new DatasourceTypeResponse("JDBC", "MYSQL", "MySQL", "OLTP"),
                 new DatasourceTypeResponse("JDBC", "CLICKHOUSE", "ClickHouse", "OLAP"),
+                new DatasourceTypeResponse("JDBC", "POSTGRESQL", "PostgreSQL", "OLTP"),
                 new DatasourceTypeResponse("API", "API", "API", "API")
         );
         when(datasourceService.getSupportedTypes()).thenReturn(expectedTypes);
@@ -199,14 +200,16 @@ class DatasourceControllerTest {
         ApiResponse<List<DatasourceTypeResponse>> response = controller.getSupportedTypes();
 
         assertTrue(response.success());
-        assertEquals(3, response.data().size());
+        assertEquals(4, response.data().size());
         assertEquals("JDBC", response.data().get(0).type());
         assertEquals("MYSQL", response.data().get(0).subType());
         assertEquals("MySQL", response.data().get(0).name());
         assertEquals("OLTP", response.data().get(0).category());
-        assertEquals("API", response.data().get(2).type());
-        assertEquals("API", response.data().get(2).subType());
-        assertEquals("API", response.data().get(2).category());
+        assertEquals("POSTGRESQL", response.data().get(2).subType());
+        assertEquals("PostgreSQL", response.data().get(2).name());
+        assertEquals("API", response.data().get(3).type());
+        assertEquals("API", response.data().get(3).subType());
+        assertEquals("API", response.data().get(3).category());
         verify(datasourceService).getSupportedTypes();
     }
 

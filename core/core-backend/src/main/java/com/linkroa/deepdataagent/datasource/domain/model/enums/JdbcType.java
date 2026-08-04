@@ -10,7 +10,8 @@ import lombok.Getter;
 public enum JdbcType {
 
     MYSQL(3306, "MySQL"),
-    CLICKHOUSE(8123, "ClickHouse");
+    CLICKHOUSE(8123, "ClickHouse"),
+    POSTGRESQL(5432, "PostgreSQL");
 
     private final int defaultPort;
     private final String displayName;

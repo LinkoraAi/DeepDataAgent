@@ -35,6 +35,7 @@ export async function createDatasource(params: {
     database: string;
     username: string;
     password: string;
+    schema?: string;
   };
 }): Promise<void> {
   return post('/datasource/create', params);
@@ -53,6 +54,7 @@ export async function updateDatasource(params: {
     database: string;
     username: string;
     password?: string;
+    schema?: string;
   };
 }): Promise<void> {
   return post('/datasource/update', params);
@@ -79,6 +81,7 @@ export async function testConnection(params: {
     database: string;
     username: string;
     password: string;
+    schema?: string;
   };
 }): Promise<string> {
   return post('/datasource/test-connection', params);
@@ -96,6 +99,13 @@ export async function enableDatasource(id: number): Promise<void> {
  */
 export async function disableDatasource(id: number): Promise<void> {
   return post('/datasource/disable', { id });
+}
+
+/**
+ * Sync datasource metadata
+ */
+export async function syncDatasource(id: number): Promise<void> {
+  return post('/datasource/sync', { id });
 }
 
 /**

@@ -27,23 +27,27 @@
         </div>
       </t-form-item>
 
-      <t-form-item v-if="formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE'" label="主机地址" name="host">
+      <t-form-item v-if="formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE' || formData.type === 'POSTGRESQL'" label="主机地址" name="host">
         <t-input v-model="formData.host" placeholder="请输入主机地址" />
       </t-form-item>
 
-      <t-form-item v-if="formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE'" label="端口" name="port">
+      <t-form-item v-if="formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE' || formData.type === 'POSTGRESQL'" label="端口" name="port">
         <t-input v-model="formData.port" type="number" placeholder="请输入端口号" />
       </t-form-item>
 
-      <t-form-item v-if="formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE'" label="数据库名" name="database">
+      <t-form-item v-if="formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE' || formData.type === 'POSTGRESQL'" label="数据库名" name="database">
         <t-input v-model="formData.database" placeholder="请输入数据库名" />
       </t-form-item>
 
-      <t-form-item v-if="formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE'" label="用户名" name="username">
+      <t-form-item v-if="formData.type === 'POSTGRESQL'" label="schema" name="schema">
+        <t-input v-model="formData.schema" placeholder="请输入 schema（默认 public）" />
+      </t-form-item>
+
+      <t-form-item v-if="formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE' || formData.type === 'POSTGRESQL'" label="用户名" name="username">
         <t-input v-model="formData.username" placeholder="请输入用户名" />
       </t-form-item>
 
-      <t-form-item v-if="formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE'" label="密码" name="password">
+      <t-form-item v-if="formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE' || formData.type === 'POSTGRESQL'" label="密码" name="password">
         <!-- 编辑模式:显示纯文本提示,密码不可修改 -->
         <template v-if="isEdit">
           <span class="password-readonly">......</span>
@@ -139,6 +143,7 @@ const loadingApiConfig = ref(false);
 const typeOptions = [
   { value: 'MYSQL', label: 'MySQL', icon: 'M' },
   { value: 'CLICKHOUSE', label: 'ClickHouse', icon: 'C' },
+  { value: 'POSTGRESQL', label: 'PostgreSQL', icon: 'P' },
   { value: 'API', label: 'API', icon: 'A' },
 ];
 
@@ -150,6 +155,7 @@ const formData = reactive({
   database: '',
   username: '',
   password: '',
+  schema: '',
   description: '',
 });
 
@@ -162,7 +168,7 @@ const formRules: Record<string, FormRule[]> = {
       message: '请输入主机地址',
       trigger: 'blur',
       validator: (value: string) => {
-        if ((formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE') && !value) {
+        if (isJdbcType(formData.type) && !value) {
           return { result: false, message: '请输入主机地址' };
         }
         return { result: true, message: '' };
@@ -175,7 +181,7 @@ const formRules: Record<string, FormRule[]> = {
       message: '请输入端口号',
       trigger: 'blur',
       validator: (value: number) => {
-        if ((formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE') && !value) {
+        if (isJdbcType(formData.type) && !value) {
           return { result: false, message: '请输入端口号' };
         }
         return { result: true, message: '' };
@@ -188,8 +194,22 @@ const formRules: Record<string, FormRule[]> = {
       message: '请输入数据库名',
       trigger: 'blur',
       validator: (value: string) => {
-        if ((formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE') && !value) {
+        if (isJdbcType(formData.type) && !value) {
           return { result: false, message: '请输入数据库名' };
+        }
+        return { result: true, message: '' };
+      },
+    },
+  ],
+  schema: [
+    {
+      required: false,
+      message: '请输入 schema',
+      trigger: 'blur',
+      validator: (value: string) => {
+        // 仅 PostgreSQL 校验；schema 为空时使用默认 public，不做限制
+        if (formData.type === 'POSTGRESQL' && value && value.includes(',')) {
+          return { result: false, message: 'PostgreSQL 仅支持单个 schema，请勿填写多个值' };
         }
         return { result: true, message: '' };
       },
@@ -201,7 +221,7 @@ const formRules: Record<string, FormRule[]> = {
       message: '请输入用户名',
       trigger: 'blur',
       validator: (value: string) => {
-        if ((formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE') && !value) {
+        if (isJdbcType(formData.type) && !value) {
           return { result: false, message: '请输入用户名' };
         }
         return { result: true, message: '' };
@@ -214,7 +234,7 @@ const formRules: Record<string, FormRule[]> = {
       message: '请输入密码',
       trigger: 'blur',
       validator: (value: string) => {
-        if (!isEdit.value && (formData.type === 'MYSQL' || formData.type === 'CLICKHOUSE') && !value) {
+        if (!isEdit.value && isJdbcType(formData.type) && !value) {
           return { result: false, message: '请输入密码' };
         }
         return { result: true, message: '' };
@@ -240,6 +260,7 @@ watch(
         formData.host = props.editDatasource.host || '';
         formData.port = props.editDatasource.port || 3306;
         formData.database = props.editDatasource.database || '';
+        formData.schema = props.editDatasource.schema || 'public';
         formData.username = props.editDatasource.username || '';
         // 编辑时回显掩码密码（如 ****...****），用户可修改
         formData.password = props.editDatasource.maskedPassword || '';
@@ -258,6 +279,7 @@ watch(
         formData.database = '';
         formData.username = '';
         formData.password = '';
+        formData.schema = '';
         formData.description = '';
         apiSchemaList.value = [];
         currentApiSchema.value = null;
@@ -306,13 +328,15 @@ function handleTypeChange(type: string) {
       formData.port = 3306;
     } else if (type === 'CLICKHOUSE') {
       formData.port = 8123;
+    } else if (type === 'POSTGRESQL') {
+      formData.port = 5432;
     }
   }
 }
 
-/** 判断是否为 JDBC 类型(MYSQL / CLICKHOUSE) */
+/** 判断是否为 JDBC 类型(MYSQL / CLICKHOUSE / POSTGRESQL) */
 function isJdbcType(type: string): boolean {
-  return type === 'MYSQL' || type === 'CLICKHOUSE';
+  return type === 'MYSQL' || type === 'CLICKHOUSE' || type === 'POSTGRESQL';
 }
 
 async function handleTestConnection() {
@@ -336,6 +360,7 @@ async function handleTestConnection() {
             database: formData.database,
             username: formData.username,
             password: formData.password,
+            schema: formData.schema || 'public',
           }
         : undefined,
     };
@@ -343,8 +368,8 @@ async function handleTestConnection() {
     await datasourceStore.testConnection(params);
     MessagePlugin.success('连接测试成功');
   } catch (err: any) {
+    // 错误提示已由 HTTP 拦截器统一弹出，这里仅记录日志避免重复弹窗
     console.error('Test connection failed:', err);
-    MessagePlugin.error(err.message || '连接测试失败');
   } finally {
     testing.value = false;
   }
@@ -369,6 +394,7 @@ async function handleSubmit() {
               port: formData.port,
               database: formData.database,
               username: formData.username,
+              schema: formData.schema || 'public',
               // 编辑模式不发送密码,保持原有密码不变
             }
           : undefined,
@@ -387,6 +413,7 @@ async function handleSubmit() {
               database: formData.database,
               username: formData.username,
               password: formData.password,
+              schema: formData.schema || 'public',
             }
           : undefined,
       });

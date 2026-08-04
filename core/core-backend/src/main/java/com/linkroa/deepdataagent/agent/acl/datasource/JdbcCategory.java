@@ -6,5 +6,6 @@ package com.linkroa.deepdataagent.agent.acl.datasource;
  */
 public enum JdbcCategory {
     MYSQL,
-    CLICKHOUSE
+    CLICKHOUSE,
+    POSTGRESQL
 }

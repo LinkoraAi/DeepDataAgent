@@ -60,7 +60,8 @@ public final class DatasourceCommandAssembler {
                 request.port(),
                 request.database(),
                 request.username(),
-                request.password()
+                request.password(),
+                request.schema()
         );
     }
 
@@ -198,6 +199,7 @@ public final class DatasourceCommandAssembler {
         String database = request.jdbcConfig() != null ? request.jdbcConfig().database() : null;
         String username = request.jdbcConfig() != null ? request.jdbcConfig().username() : null;
         String password = request.jdbcConfig() != null ? request.jdbcConfig().password() : null;
+        String schema = request.jdbcConfig() != null ? request.jdbcConfig().schema() : null;
 
         String apiUrl = request.apiSchema() != null ? request.apiSchema().url() : null;
         String apiMethod = request.apiSchema() != null ? request.apiSchema().method() : null;
@@ -231,6 +233,7 @@ public final class DatasourceCommandAssembler {
                 database,
                 username,
                 password,
+                schema,
                 apiUrl,
                 apiMethod,
                 apiHeaders,

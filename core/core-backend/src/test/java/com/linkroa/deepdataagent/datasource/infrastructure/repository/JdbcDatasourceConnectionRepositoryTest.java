@@ -83,7 +83,7 @@ class JdbcDatasourceConnectionRepositoryTest extends DatasourceRepositoryTestSup
         DatasourceConnection saved = repository.save(createJdbcConnection(null));
         DatasourceConnection updated = new DatasourceConnection(
                 saved.id(), "updated-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
-                new JdbcConnectionConfig("newhost", 3307, "newdb", "newuser", "newpass"),
+                new JdbcConnectionConfig("newhost", 3307, "newdb", "newuser", "newpass", null),
                 "updated desc", saved.createdAt(), saved.updatedAt(), saved.createdBy(), saved.updatedBy()
         );
 
@@ -168,7 +168,7 @@ class JdbcDatasourceConnectionRepositoryTest extends DatasourceRepositoryTestSup
         for (int i = 0; i < 5; i++) {
             DatasourceConnection conn = new DatasourceConnection(
                     null, "ds-" + i, DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
-                    new JdbcConnectionConfig("host", 3306, "db", "user", "pass"),
+                    new JdbcConnectionConfig("host", 3306, "db", "user", "pass", null),
                     null, null, null, null, null
             );
             repository.save(conn);
@@ -183,7 +183,7 @@ class JdbcDatasourceConnectionRepositoryTest extends DatasourceRepositoryTestSup
 
     private DatasourceConnection createJdbcConnection(Long id) {
         return new DatasourceConnection(id, "test-ds", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
-                new JdbcConnectionConfig("localhost", 3306, "testdb", "root", "pass"),
+                new JdbcConnectionConfig("localhost", 3306, "testdb", "root", "pass", null),
                 null, null, null, null, null);
     }
 

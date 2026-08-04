@@ -99,6 +99,8 @@ public class JdbcQueryExecutor implements QueryExecutor {
                     .formatted(config.host(), config.port(), config.database());
             case CLICKHOUSE -> "jdbc:clickhouse://%s:%d/%s"
                     .formatted(config.host(), config.port(), config.database());
+            case POSTGRESQL -> "jdbc:postgresql://%s:%d/%s?currentSchema=%s"
+                    .formatted(config.host(), config.port(), config.database(), config.schema());
         };
     }
 
@@ -106,6 +108,7 @@ public class JdbcQueryExecutor implements QueryExecutor {
         return switch (jdbcCategory) {
             case MYSQL -> "com.mysql.cj.jdbc.Driver";
             case CLICKHOUSE -> "com.clickhouse.jdbc.ClickHouseDriver";
+            case POSTGRESQL -> "org.postgresql.Driver";
         };
     }
 }

@@ -14,6 +14,7 @@ public record TestConnectionCommand(
         String database,
         String username,
         String password,
+        String schema,
         String apiUrl,
         String apiMethod,
         Map<String, String> apiHeaders,

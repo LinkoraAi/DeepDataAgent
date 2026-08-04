@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.Optional;
@@ -34,11 +35,20 @@ class ModelConfigApplicationServiceTest {
     @Mock
     private LLMClient llmClient;
 
+    @Mock
+    private TransactionTemplate transactionTemplate;
+
     private ModelConfigApplicationService service;
 
     @BeforeEach
     void setUp() {
-        service = new ModelConfigApplicationService(modelInfoRepository, llmClient);
+        service = new ModelConfigApplicationService(modelInfoRepository, llmClient, transactionTemplate);
+        // 模拟编程式事务：直接执行回调，不实际开启事务（部分只读测试不触发，故 lenient）
+        lenient().doAnswer(invocation -> {
+            java.util.function.Consumer<org.springframework.transaction.TransactionStatus> callback = invocation.getArgument(0);
+            callback.accept(null);
+            return null;
+        }).when(transactionTemplate).executeWithoutResult(any());
     }
 
     // ==================== listAllEnabled ====================

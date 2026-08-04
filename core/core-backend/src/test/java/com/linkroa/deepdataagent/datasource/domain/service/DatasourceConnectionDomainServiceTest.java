@@ -82,7 +82,7 @@ class DatasourceConnectionDomainServiceTest {
     void should_throwException_when_jdbcSubTypeIsNull_given_nullSubType() {
         assertThrows(IllegalArgumentException.class, () -> new DatasourceConnection(
                 1L, "test", DatasourceType.JDBC, null, DatasourceStatus.ENABLED,
-                new JdbcConnectionConfig("host", 3306, "db", "user", "pass"),
+                new JdbcConnectionConfig("host", 3306, "db", "user", "pass", null),
                 null, null, null, null, null
         ));
     }
@@ -122,13 +122,13 @@ class DatasourceConnectionDomainServiceTest {
 
     private DatasourceConnection createConnection(DatasourceStatus status) {
         return new DatasourceConnection(1L, "test", DatasourceType.JDBC, JdbcType.MYSQL, status,
-                new JdbcConnectionConfig("localhost", 3306, "testdb", "root", "pass"),
+                new JdbcConnectionConfig("localhost", 3306, "testdb", "root", "pass", null),
                 null, null, null, null, null);
     }
 
     private DatasourceConnection createJdbcConnection(String host, int port, String database, String username, String password) {
         return new DatasourceConnection(1L, "test", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
-                new JdbcConnectionConfig(host, port, database, username, password),
+                new JdbcConnectionConfig(host, port, database, username, password, null),
                 null, null, null, null, null);
     }
 }

@@ -175,7 +175,7 @@ public class DatasourceGatewayAdapter implements DatasourceGateway {
             JdbcConnectionConfig cfg = conn.jdbcConnectionConfig();
             jdbcConfig = new JdbcConnectionInfo(
                     cfg.host(), cfg.port(), cfg.database(),
-                    cfg.username(), cfg.password());
+                    cfg.username(), cfg.password(), cfg.schema());
         }
 
         ApiConnectionInfo apiConfig = null;
@@ -206,6 +206,7 @@ public class DatasourceGatewayAdapter implements DatasourceGateway {
         if (jdbcType == null) return null;
         if (jdbcType == JdbcType.MYSQL) return JdbcCategory.MYSQL;
         if (jdbcType == JdbcType.CLICKHOUSE) return JdbcCategory.CLICKHOUSE;
+        if (jdbcType == JdbcType.POSTGRESQL) return JdbcCategory.POSTGRESQL;
         throw new IllegalArgumentException("Unsupported jdbcType: " + jdbcType);
     }
 }

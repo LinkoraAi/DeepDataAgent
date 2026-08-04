@@ -8,6 +8,7 @@ import com.linkroa.deepdataagent.agent.domain.valueobject.DialogueStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 
@@ -24,35 +25,49 @@ public class MessagePersistenceService {
 
     private final AgentSessionRepository sessionRepository;
     private final DialogueRepository dialogueRepository;
+    private final TransactionTemplate transactionTemplate;
 
+    /**
+     * 构造方法
+     *
+     * @param sessionRepository   会话仓储
+     * @param dialogueRepository  对话轮次仓储
+     * @param transactionTemplate 编程式事务模板，用于保证对话、用户消息与会话时间三处写入的原子性
+     */
     public MessagePersistenceService(AgentSessionRepository sessionRepository,
-                                     DialogueRepository dialogueRepository) {
+                                     DialogueRepository dialogueRepository,
+                                     TransactionTemplate transactionTemplate) {
         this.sessionRepository = sessionRepository;
         this.dialogueRepository = dialogueRepository;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /**
      * 同步持久化用户消息并创建对话轮次
      * <p>创建新的 Dialogue（状态 RUNNING），将用户消息作为 messages 数组的第一个元素写入，
      * 返回 newly created 的 dialogueId 供流式生命周期使用。</p>
+     * <p>方法内部使用 {@link TransactionTemplate} 开启编程式事务，保证创建对话、写入用户消息、
+     * 触摸会话最后消息时间三处写入要么全部成功、要么全部回滚，事务边界自包含，不依赖调用方开启事务。</p>
      *
      * @param sessionId    会话 ID
      * @param userQuestion 用户问题
      * @return 新创建的对话轮次 ID
      */
     public Long persistUserMessageSync(String sessionId, String userQuestion) {
-        Dialogue dialogue = new Dialogue(sessionId, userQuestion);
-        dialogue.start();
-        dialogueRepository.save(dialogue);
+        return transactionTemplate.execute(status -> {
+            Dialogue dialogue = new Dialogue(sessionId, userQuestion);
+            dialogue.start();
+            dialogueRepository.save(dialogue);
 
-        DialogueMessage userMsg = DialogueMessage.userMessage(1, userQuestion);
-        userMsg.setDialogueId(dialogue.getId());
-        userMsg.complete();
-        dialogueRepository.updateMessages(dialogue.getId(), List.of(userMsg), DialogueStatus.RUNNING);
+            DialogueMessage userMsg = DialogueMessage.userMessage(1, userQuestion);
+            userMsg.setDialogueId(dialogue.getId());
+            userMsg.complete();
+            dialogueRepository.updateMessages(dialogue.getId(), List.of(userMsg), DialogueStatus.RUNNING);
 
-        sessionRepository.touchLastMessage(sessionId);
-        log.debug("MessagePersistenceService: persisted user message for dialogue={}", dialogue.getId());
-        return dialogue.getId();
+            sessionRepository.touchLastMessage(sessionId);
+            log.debug("MessagePersistenceService: persisted user message for dialogue={}", dialogue.getId());
+            return dialogue.getId();
+        });
     }
 
     /**

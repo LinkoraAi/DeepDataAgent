@@ -122,6 +122,10 @@ export const useDatasourceStore = defineStore('datasource', () => {
     await refreshEnabled();
   }
 
+  async function syncDatasource(id: number) {
+    await datasourceApi.syncDatasource(id);
+  }
+
   return {
     datasources,
     enabledDatasources,
@@ -138,5 +142,6 @@ export const useDatasourceStore = defineStore('datasource', () => {
     testConnection,
     enableDatasource,
     disableDatasource,
+    syncDatasource,
   };
 });

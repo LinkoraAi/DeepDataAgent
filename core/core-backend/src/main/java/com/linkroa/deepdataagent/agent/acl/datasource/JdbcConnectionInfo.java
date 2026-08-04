@@ -9,7 +9,8 @@ public record JdbcConnectionInfo(
     int port,
     String database,
     String username,
-    String password
+    String password,
+    String schema
 ) {
     public JdbcConnectionInfo {
         if (host == null || host.isBlank()) {

@@ -5,5 +5,6 @@ public record JdbcConfigCommand(
     Integer port,
     String database,
     String username,
-    String password
+    String password,
+    String schema
 ) {}

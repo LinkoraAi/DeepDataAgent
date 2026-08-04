@@ -12,14 +12,21 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * MessagePersistenceService 单元测试
@@ -34,11 +41,19 @@ class MessagePersistenceServiceTest {
     @Mock
     private DialogueRepository dialogueRepository;
 
+    @Mock
+    private TransactionTemplate transactionTemplate;
+
     private MessagePersistenceService service;
 
     @BeforeEach
     void setUp() {
-        service = new MessagePersistenceService(sessionRepository, dialogueRepository);
+        service = new MessagePersistenceService(sessionRepository, dialogueRepository, transactionTemplate);
+        // 模拟编程式事务：直接执行回调，不实际开启事务（updateSessionMetadataSync 测试不触发，故 lenient）
+        lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
+            TransactionCallback<Long> callback = invocation.getArgument(0);
+            return callback.doInTransaction(null);
+        });
     }
 
     @Test
@@ -72,5 +87,19 @@ class MessagePersistenceServiceTest {
 
         // then
         verify(sessionRepository).touchLastMessage("session-1");
+    }
+
+    @Test
+    void should_propagateException_when_persistUserMessageSync_given_saveFails() {
+        // given
+        when(dialogueRepository.save(any())).thenThrow(new RuntimeException("保存对话失败"));
+
+        // when & then
+        RuntimeException ex = assertThrows(RuntimeException.class,
+                () -> service.persistUserMessageSync("session-1", "分析销量"));
+        assertEquals("保存对话失败", ex.getMessage());
+        // 事务回调中途失败，后续写入不得执行，保证三处写入原子性
+        verify(dialogueRepository, never()).updateMessages(any(), any(), any());
+        verify(sessionRepository, never()).touchLastMessage(anyString());
     }
 }

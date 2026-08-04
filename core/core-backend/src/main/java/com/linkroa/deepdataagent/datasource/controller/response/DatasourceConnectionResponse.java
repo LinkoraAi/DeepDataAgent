@@ -17,6 +17,7 @@ public record DatasourceConnectionResponse(
         String host,
         Integer port,
         String database,
+        String schema,
         String username,
         String maskedPassword,
         String description,
@@ -31,6 +32,7 @@ public record DatasourceConnectionResponse(
         String host = null;
         Integer port = null;
         String database = null;
+        String schema = null;
         String username = null;
         String maskedPassword = null;
 
@@ -38,6 +40,7 @@ public record DatasourceConnectionResponse(
             host = connection.jdbcConnectionConfig().host();
             port = connection.jdbcConnectionConfig().port();
             database = connection.jdbcConnectionConfig().database();
+            schema = connection.jdbcConnectionConfig().schema();
             username = connection.jdbcConnectionConfig().username();
             // 密码已配置时返回固定掩码，前端据此判断是否需要用户重新输入
             if (StringUtils.isNotBlank(connection.jdbcConnectionConfig().password())) {
@@ -54,6 +57,7 @@ public record DatasourceConnectionResponse(
                 host,
                 port,
                 database,
+                schema,
                 username,
                 maskedPassword,
                 connection.description(),

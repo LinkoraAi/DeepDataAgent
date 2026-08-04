@@ -8,6 +8,7 @@ import com.linkroa.deepdataagent.datasource.application.command.TestConnectionCo
 import com.linkroa.deepdataagent.datasource.application.command.UpdateDatasourceCommand;
 import com.linkroa.deepdataagent.datasource.application.query.ListDatasourceQuery;
 import com.linkroa.deepdataagent.datasource.application.query.TableListQuery;
+import com.linkroa.deepdataagent.datasource.application.validation.DatasourceValidator;
 import com.linkroa.deepdataagent.datasource.controller.request.*;
 import com.linkroa.deepdataagent.datasource.controller.response.*;
 import com.linkroa.deepdataagent.datasource.domain.model.*;
@@ -90,6 +91,9 @@ public class DatasourceApplicationService {
         if (connectionRepository.findByName(command.name()).isPresent()) {
             throw new DeepDataAgentException("数据源名称已被使用");
         }
+        if (command.type() == DatasourceType.JDBC && command.jdbcConfig() != null) {
+            DatasourceValidator.validatePostgresqlSchema(command.subType(), command.jdbcConfig().schema());
+        }
         DatasourceConnection connection = DatasourceAssembler.toDatasourceConnection(command);
         return transactionTemplate.execute(status -> {
             DatasourceConnection saved = connectionRepository.save(connection);
@@ -112,8 +116,16 @@ public class DatasourceApplicationService {
                     .filter(c -> !c.id().equals(existing.id()))
                     .ifPresent(c -> { throw new DeepDataAgentException("数据源名称已被使用"); });
         }
+        if (command.jdbcConfig() != null) {
+            DatasourceValidator.validatePostgresqlSchema(existing.subType(), command.jdbcConfig().schema());
+        }
         DatasourceConnection updated = DatasourceAssembler.toDatasourceConnection(command, existing);
-        return transactionTemplate.execute(status -> connectionRepository.update(updated));
+        DatasourceConnection saved = transactionTemplate.execute(status -> connectionRepository.update(updated));
+        // JDBC 数据源更新成功后重新同步元数据（置于事务外，避免远程调用占用数据库连接）
+        if (saved.type() == DatasourceType.JDBC) {
+            doSyncMetadata(saved);
+        }
+        return saved;
     }
 
     public void enableDatasource(Long id) {
@@ -158,6 +170,7 @@ public class DatasourceApplicationService {
         }
         DatasourceType type = DatasourceType.valueOf(command.type());
         JdbcType subType = type == DatasourceType.JDBC && StringUtils.isNotBlank(command.subType()) ? JdbcType.valueOf(command.subType()) : null;
+        DatasourceValidator.validatePostgresqlSchema(subType, command.schema());
         DatasourceConnectionStrategy strategy = strategyFactory.getStrategy(type, subType);
         if (type == DatasourceType.API) {
             ApiSchema tempSchema = buildTempApiSchema(command);
@@ -584,7 +597,7 @@ public class DatasourceApplicationService {
         if (type == DatasourceType.JDBC) {
             jdbcConfig = new JdbcConnectionConfig(
                     command.host(), command.port() != null ? command.port() : 0,
-                    command.database(), command.username(), command.password()
+                    command.database(), command.username(), command.password(), command.schema()
             );
         }
         return DatasourceConnection.create("temporary_test_connection", type, subType, null, jdbcConfig);

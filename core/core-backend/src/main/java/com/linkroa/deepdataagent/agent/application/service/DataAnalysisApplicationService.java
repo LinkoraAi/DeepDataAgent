@@ -34,7 +34,6 @@ import io.agentscope.core.middleware.MiddlewareBase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
@@ -72,7 +71,6 @@ public class DataAnalysisApplicationService {
     private final DialogueRepository dialogueRepository;
     private final SessionProperties sessionProperties;
     private final AgentProperties agentProperties;
-    private final TransactionTemplate transactionTemplate;
     private final SessionToolContext sessionToolContext;
     private final SSEConnectionPool sseConnectionPool;
     private final SessionEventBus sessionEventBus;
@@ -88,7 +86,6 @@ public class DataAnalysisApplicationService {
             DialogueRepository dialogueRepository,
             SessionProperties sessionProperties,
             AgentProperties agentProperties,
-            TransactionTemplate transactionTemplate,
             SessionToolContext sessionToolContext,
             SSEConnectionPool sseConnectionPool,
             SessionEventBus sessionEventBus,
@@ -102,7 +99,6 @@ public class DataAnalysisApplicationService {
         this.dialogueRepository = dialogueRepository;
         this.sessionProperties = sessionProperties;
         this.agentProperties = agentProperties;
-        this.transactionTemplate = transactionTemplate;
         this.sessionToolContext = sessionToolContext;
         this.sseConnectionPool = sseConnectionPool;
         this.sessionEventBus = sessionEventBus;
@@ -167,8 +163,8 @@ public class DataAnalysisApplicationService {
             sessionToolContext.register(sessionId, command.modelConfigId());
 
             // 关键修复：立即持久化用户消息，确保切换会话回来时 loadMessages 能获取到
-            Long dialogueId = transactionTemplate.execute(status ->
-                    messagePersistenceService.persistUserMessageSync(sessionId, command.userQuestion()));
+            // 事务边界由 MessagePersistenceService#persistUserMessageSync 内部编程式事务自包含
+            Long dialogueId = messagePersistenceService.persistUserMessageSync(sessionId, command.userQuestion());
 
             // 3. 判断是否为首次分析
             boolean isFirstAnalysis = session.getLastMessageTime() == null;
@@ -410,6 +406,7 @@ public class DataAnalysisApplicationService {
         return switch (datasource.jdbcCategory()) {
             case MYSQL -> "MySQL";
             case CLICKHOUSE -> "ClickHouse";
+            case POSTGRESQL -> "PostgreSQL";
         };
     }
 

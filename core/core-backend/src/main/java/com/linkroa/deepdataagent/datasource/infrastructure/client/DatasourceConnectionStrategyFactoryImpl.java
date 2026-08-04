@@ -24,6 +24,7 @@ public class DatasourceConnectionStrategyFactoryImpl implements DatasourceConnec
         this.jdbcStrategies = new EnumMap<>(JdbcType.class);
         this.jdbcStrategies.put(JdbcType.MYSQL, new MysqlConnectionStrategy());
         this.jdbcStrategies.put(JdbcType.CLICKHOUSE, new ClickhouseConnectionStrategy());
+        this.jdbcStrategies.put(JdbcType.POSTGRESQL, new PostgresqlConnectionStrategy());
         this.apiStrategy = apiStrategy;
     }
 

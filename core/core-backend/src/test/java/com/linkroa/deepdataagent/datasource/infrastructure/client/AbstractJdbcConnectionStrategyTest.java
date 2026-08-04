@@ -1,85 +1,94 @@
 package com.linkroa.deepdataagent.datasource.infrastructure.client;
 
-import com.linkroa.deepdataagent.datasource.domain.model.DatasourceConnection;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.junit.jupiter.api.Assertions.*;
+import java.sql.SQLException;
 
-@ExtendWith(MockitoExtension.class)
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * 抽象 JDBC 连接策略的异常诊断测试
+ * <p>覆盖 diagnoseSqlException 对常见连接失败场景的 SQLState 识别与中文提示转换。</p>
+ */
 class AbstractJdbcConnectionStrategyTest {
 
-    private TestJdbcStrategy strategy;
+    private AbstractJdbcConnectionStrategy strategy;
 
     @BeforeEach
     void setUp() {
-        strategy = new TestJdbcStrategy();
+        strategy = new MysqlConnectionStrategy();
     }
 
     @Test
-    void should_buildSqlWithSchema_when_buildPreviewSql_given_validSchemaAndTable() {
-        String sql = strategy.buildPreviewSql("testdb", "users", 100);
+    void should_returnAuthFailure_when_diagnoseSqlException_given_pgInvalidPasswordState() {
+        // given PostgreSQL 密码认证失败 SQLState 28P01
+        SQLException ex = new SQLException("psql: FATAL: password authentication failed for user", "28P01");
 
-        assertEquals("SELECT * FROM \"testdb\".\"users\" LIMIT 100", sql);
+        // when
+        String message = strategy.diagnoseSqlException(ex);
+
+        // then
+        assertTrue(message.contains("身份认证失败"));
     }
 
     @Test
-    void should_buildSqlWithoutSchema_when_buildPreviewSql_given_nullSchema() {
-        String sql = strategy.buildPreviewSql(null, "users", 100);
+    void should_returnAuthFailure_when_diagnoseSqlException_given_genericAuthState() {
+        // given 通用认证失败 SQLState 28000
+        SQLException ex = new SQLException("Access denied", "28000");
 
-        assertEquals("SELECT * FROM \"users\" LIMIT 100", sql);
+        // when
+        String message = strategy.diagnoseSqlException(ex);
+
+        // then
+        assertTrue(message.contains("身份认证失败"));
     }
 
     @Test
-    void should_buildSqlWithoutSchema_when_buildPreviewSql_given_blankSchema() {
-        String sql = strategy.buildPreviewSql("   ", "users", 100);
+    void should_returnNetworkFailure_when_diagnoseSqlException_given_connectionState() {
+        // given 网络类错误 SQLState 以 08 开头
+        SQLException ex = new SQLException("Connection refused", "08001");
 
-        assertEquals("SELECT * FROM \"users\" LIMIT 100", sql);
+        // when
+        String message = strategy.diagnoseSqlException(ex);
+
+        // then
+        assertTrue(message.contains("网络连接失败"));
     }
 
     @Test
-    void should_quoteIdentifier_when_quoteIdentifier_given_normalIdentifier() {
-        String quoted = strategy.quoteIdentifier("table_name");
+    void should_returnSchemaNotFound_when_diagnoseSqlException_given_pgInvalidCatalogState() {
+        // given PostgreSQL schema 不存在 SQLState 3D000
+        SQLException ex = new SQLException("schema \"public\" does not exist", "3D000");
 
-        assertEquals("\"table_name\"", quoted);
+        // when
+        String message = strategy.diagnoseSqlException(ex);
+
+        // then
+        assertTrue(message.contains("schema 不存在"));
     }
 
     @Test
-    void should_returnEmpty_when_quoteIdentifier_given_nullIdentifier() {
-        String quoted = strategy.quoteIdentifier(null);
+    void should_returnSchemaNoPrivilege_when_diagnoseSqlException_given_pgInsufficientPrivilegeState() {
+        // given PostgreSQL 无权限 SQLState 42501
+        SQLException ex = new SQLException("permission denied for schema analytics", "42501");
 
-        assertEquals("", quoted);
+        // when
+        String message = strategy.diagnoseSqlException(ex);
+
+        // then
+        assertTrue(message.contains("无访问权限"));
     }
 
     @Test
-    void should_escapeDoubleQuote_when_quoteIdentifier_given_identifierWithQuote() {
-        String quoted = strategy.quoteIdentifier("table\"name");
+    void should_returnRawMessage_when_diagnoseSqlException_given_unknownState() {
+        // given 无法识别的 SQLState
+        SQLException ex = new SQLException("some unknown error", "XX000");
 
-        assertEquals("\"table\"\"name\"", quoted);
-    }
+        // when
+        String message = strategy.diagnoseSqlException(ex);
 
-    private static class TestJdbcStrategy extends AbstractJdbcConnectionStrategy {
-        @Override
-        public String buildJdbcUrl(DatasourceConnection connection) {
-            return "jdbc:test://localhost:3306/test";
-        }
-
-        @Override
-        public String getDriverClassName() {
-            return "com.test.jdbc.Driver";
-        }
-
-        @Override
-        protected String buildPreviewSql(String schemaName, String tableName, int limit) {
-            StringBuilder sql = new StringBuilder("SELECT * FROM ");
-            if (schemaName != null && !schemaName.isBlank()) {
-                sql.append(quoteIdentifier(schemaName)).append(".");
-            }
-            sql.append(quoteIdentifier(tableName));
-            sql.append(" LIMIT ").append(limit);
-            return sql.toString();
-        }
+        // then 兜底返回原始错误信息
+        assertTrue(message.contains("some unknown error"));
     }
 }

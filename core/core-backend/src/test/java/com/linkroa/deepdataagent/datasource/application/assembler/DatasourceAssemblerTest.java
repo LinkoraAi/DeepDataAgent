@@ -20,7 +20,7 @@ class DatasourceAssemblerTest {
 
     @Test
     void should_mapJdbcFields_when_toDatasourceConnection_given_jdbcCreateCommand() {
-        JdbcConfigCommand jdbcConfig = new JdbcConfigCommand("localhost", 3306, "testdb", "root", "pass");
+        JdbcConfigCommand jdbcConfig = new JdbcConfigCommand("localhost", 3306, "testdb", "root", "pass", null);
         CreateDatasourceCommand command = new CreateDatasourceCommand(
                 "test-ds", DatasourceType.JDBC, JdbcType.MYSQL, "desc", jdbcConfig, null
         );
@@ -40,7 +40,7 @@ class DatasourceAssemblerTest {
 
     @Test
     void should_useDefaultPort_when_portIsNull_given_jdbcCreateCommandWithoutPort() {
-        JdbcConfigCommand jdbcConfig = new JdbcConfigCommand("localhost", 3306, "testdb", "root", "pass");
+        JdbcConfigCommand jdbcConfig = new JdbcConfigCommand("localhost", 3306, "testdb", "root", "pass", null);
         CreateDatasourceCommand command = new CreateDatasourceCommand(
                 "test-ds", DatasourceType.JDBC, JdbcType.MYSQL, null, jdbcConfig, null
         );
@@ -60,7 +60,7 @@ class DatasourceAssemblerTest {
 
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(
                 1L, "updated-ds", "updated desc",
-                new JdbcConfigCommand("new-host", 3306, "newdb", "newuser", "newpass")
+                new JdbcConfigCommand("new-host", 3306, "newdb", "newuser", "newpass", null)
         );
 
         DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command, existing);
@@ -98,7 +98,7 @@ class DatasourceAssemblerTest {
     void should_mergeFields_when_toDatasourceConnection_given_updateCommandWithPartialChanges() {
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "old-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
-                new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass"),
+                new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass", null),
                 "old desc", null, null, null, null
         );
 
@@ -121,7 +121,7 @@ class DatasourceAssemblerTest {
     void should_keepExistingFields_when_updateCommandHasNulls_given_partialUpdate() {
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "old-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
-                new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass"),
+                new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass", null),
                 "old desc", null, null, null, null
         );
 
@@ -139,7 +139,7 @@ class DatasourceAssemblerTest {
 
     @Test
     void should_useProvidedPort_when_portIsNotNull_given_jdbcCreateCommand() {
-        JdbcConfigCommand jdbcConfig = new JdbcConfigCommand("localhost", 3307, "testdb", "root", "pass");
+        JdbcConfigCommand jdbcConfig = new JdbcConfigCommand("localhost", 3307, "testdb", "root", "pass", null);
         CreateDatasourceCommand command = new CreateDatasourceCommand(
                 "test-ds", DatasourceType.JDBC, JdbcType.MYSQL, "desc", jdbcConfig, null
         );
@@ -153,13 +153,13 @@ class DatasourceAssemblerTest {
     void should_keepExistingPassword_when_updateCommandHasBlankPassword_given_existingConnection() {
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "old-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
-                new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass"),
+                new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass", null),
                 "old desc", null, null, null, null
         );
 
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(
                 1L, "new-name", "new desc",
-                new JdbcConfigCommand("new-host", 3307, "newdb", "newuser", "")
+                new JdbcConfigCommand("new-host", 3307, "newdb", "newuser", "", null)
         );
 
         DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command, existing);
@@ -172,13 +172,13 @@ class DatasourceAssemblerTest {
     void should_useExistingPort_when_updateCommandPortIsNull_given_existingConnection() {
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "old-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
-                new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass"),
+                new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass", null),
                 "old desc", null, null, null, null
         );
 
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(
                 1L, "new-name", "new desc",
-                new JdbcConfigCommand("new-host", null, "newdb", "newuser", "newpass")
+                new JdbcConfigCommand("new-host", null, "newdb", "newuser", "newpass", null)
         );
 
         DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command, existing);
@@ -190,7 +190,7 @@ class DatasourceAssemblerTest {
     void should_useDefaultName_when_commandNameIsBlank_given_updateCommand() {
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "old-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
-                new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass"),
+                new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass", null),
                 "old desc", null, null, null, null
         );
 
@@ -207,7 +207,7 @@ class DatasourceAssemblerTest {
     void should_useDefaultDescription_when_commandDescriptionIsBlank_given_updateCommand() {
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "old-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
-                new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass"),
+                new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass", null),
                 "old desc", null, null, null, null
         );
 
@@ -235,7 +235,7 @@ class DatasourceAssemblerTest {
 
     @Test
     void should_ignoreJdbcConfig_when_toDatasourceConnection_given_apiTypeWithJdbcConfig() {
-        JdbcConfigCommand jdbcConfig = new JdbcConfigCommand("localhost", 3306, "testdb", "root", "pass");
+        JdbcConfigCommand jdbcConfig = new JdbcConfigCommand("localhost", 3306, "testdb", "root", "pass", null);
         CreateDatasourceCommand command = new CreateDatasourceCommand(
                 "api-ds", DatasourceType.API, null, "API desc", jdbcConfig, null
         );
