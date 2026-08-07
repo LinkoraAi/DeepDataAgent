@@ -29,7 +29,8 @@ public final class SessionListItemAssembler {
                 session.getModelConfigId(),
                 session.getStatus().name(),
                 session.getLastMessageTime() != null ? session.getLastMessageTime().format(FORMATTER) : null,
-                session.getCreatedTime() != null ? session.getCreatedTime().format(FORMATTER) : null
+                session.getCreatedTime() != null ? session.getCreatedTime().format(FORMATTER) : null,
+                false
         );
     }
 }

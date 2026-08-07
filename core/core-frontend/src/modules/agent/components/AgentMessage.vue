@@ -27,9 +27,16 @@
             :analysis-end-time="message.analysisState?.analysisEndTime ?? null"
           />
 
+          <!-- 分析报告（主内容，分析中及分析完成后均显示，流式渲染） -->
+          <ReportSection
+            v-if="hasReport"
+            :report="message.analysisState!.analysisReport!"
+            :is-analyzing="isAnalyzing"
+          />
+
           <!-- 分析完成后才显示的区块 -->
           <template v-if="!isAnalyzing">
-            <!-- 图表（交互增强） -->
+            <!-- 图表（紧随报告，交互增强） -->
             <ChartSection
               v-if="hasChart"
               :chart-config="message.analysisState!.chartConfig"
@@ -42,25 +49,18 @@
               :results="message.analysisState!.searchResults!"
             />
 
-            <!-- 建议追问（仅分析完成后显示，点击由 SuggestionsSection 内部处理） -->
-            <SuggestionsSection
-              v-if="hasSuggestions"
-              :suggestions="message.analysisState!.suggestions"
-            />
-
             <!-- 数据表格（导出 + 分页） -->
             <DataTableSection
               v-if="hasData"
               :data="message.analysisState!.queryData"
             />
-          </template>
 
-          <!-- 分析报告（分析中及分析完成后均显示，流式渲染） -->
-          <ReportSection
-            v-if="hasReport"
-            :report="message.analysisState!.analysisReport!"
-            :is-analyzing="isAnalyzing"
-          />
+            <!-- 建议追问（仅分析完成后显示，点击由 SuggestionsSection 内部处理） -->
+            <SuggestionsSection
+              v-if="hasSuggestions"
+              :suggestions="message.analysisState!.suggestions"
+            />
+          </template>
         </template>
       </div>
 

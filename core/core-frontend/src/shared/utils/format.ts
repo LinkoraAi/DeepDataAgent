@@ -30,6 +30,23 @@ export function formatRelativeTime(date: string | Date | undefined): string {
 }
 
 /**
+ * Format session list time
+ * <p>今天显示时分（如 12:30），今天之前显示日期+时分（如 8月6号 12:30）。</p>
+ *
+ * @param date 时间字符串或 Date
+ * @returns 格式化后的会话时间
+ */
+export function formatSessionTime(date: string | Date | undefined): string {
+  if (!date) return '';
+  const d = dayjs(date);
+  if (!d.isValid()) return '';
+  if (d.isSame(dayjs(), 'day')) {
+    return d.format('HH:mm');
+  }
+  return d.format('M月D号 HH:mm');
+}
+
+/**
  * Format number with thousands separator
  */
 export function formatNumber(num: number | undefined | null): string {

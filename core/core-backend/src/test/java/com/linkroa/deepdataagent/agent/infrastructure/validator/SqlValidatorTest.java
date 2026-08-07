@@ -23,7 +23,9 @@ class SqlValidatorTest {
         properties.setDangerousKeywords(List.of(
                 "DROP", "ALTER", "CREATE", "TRUNCATE",
                 "GRANT", "REVOKE", "EXEC", "EXECUTE",
-                "LOAD_FILE", "INTO OUTFILE", "INTO DUMPFILE"
+                "DELETE", "UPDATE", "INSERT",
+                "LOAD_FILE", "INTO OUTFILE", "INTO DUMPFILE",
+                "REPLACE INTO"
         ));
         sqlValidator = new SqlValidator(properties);
     }
@@ -341,6 +343,77 @@ class SqlValidatorTest {
     void should_throwException_when_validate_given_mixedCaseDropTable() {
         // given
         String sql = "SELECT * FROM users; DrOp TABLE users";
+
+        // when & then
+        assertThrows(DeepDataAgentException.class,
+                () -> sqlValidator.validate(sql));
+    }
+
+    // ==================== 引号感知屏蔽：字符串字面量不误伤危险词 ====================
+
+    @Test
+    void should_passValidation_when_validate_given_dropInsideStringLiteral() {
+        // given - 字符串字面量内的 drop 不应触发 DROP
+        String sql = "SELECT * FROM users WHERE note = 'drop'";
+
+        // when
+        assertDoesNotThrow(() -> sqlValidator.validate(sql));
+    }
+
+    @Test
+    void should_passValidation_when_validate_given_deleteInsideStringLiteral() {
+        // given - 字符串字面量内的 delete 不应触发 DELETE
+        String sql = "SELECT id FROM logs WHERE action = 'delete'";
+
+        // when
+        assertDoesNotThrow(() -> sqlValidator.validate(sql));
+    }
+
+    @Test
+    void should_passValidation_when_validate_given_updateInsideStringLiteral() {
+        // given - 字符串字面量内的 update 不应触发 UPDATE
+        String sql = "SELECT event FROM audit_log WHERE event_type = 'update'";
+
+        // when
+        assertDoesNotThrow(() -> sqlValidator.validate(sql));
+    }
+
+    @Test
+    void should_passValidation_when_validate_given_replaceFunction() {
+        // given - REPLACE() 是字符串函数，不应被误判为 REPLACE INTO
+        String sql = "SELECT REPLACE(name, 'a', 'b') FROM users";
+
+        // when
+        assertDoesNotThrow(() -> sqlValidator.validate(sql));
+    }
+
+    // ==================== WITH CTE 内嵌 DML 被拦截（堵住绕过漏洞） ====================
+
+    @Test
+    void should_throwException_when_validate_given_cteWrappingUpdate() {
+        // given - PostgreSQL 支持的 WITH CTE DML，危险词在可执行区，应被拦截
+        String sql = "WITH x AS (UPDATE users SET flag = 1 RETURNING *) SELECT * FROM x";
+
+        // when & then
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> sqlValidator.validate(sql));
+        assertTrue(exception.getMessage().contains("UPDATE"));
+    }
+
+    @Test
+    void should_throwException_when_validate_given_cteWrappingDelete() {
+        // given - WITH CTE 包裹 DELETE，应被拦截
+        String sql = "WITH x AS (DELETE FROM users WHERE id = 1 RETURNING *) SELECT * FROM x";
+
+        // when & then
+        assertThrows(DeepDataAgentException.class,
+                () -> sqlValidator.validate(sql));
+    }
+
+    @Test
+    void should_throwException_when_validate_given_replaceInto() {
+        // given - MySQL 的 REPLACE INTO 应被拦截
+        String sql = "REPLACE INTO users (id, name) VALUES (1, 'test')";
 
         // when & then
         assertThrows(DeepDataAgentException.class,

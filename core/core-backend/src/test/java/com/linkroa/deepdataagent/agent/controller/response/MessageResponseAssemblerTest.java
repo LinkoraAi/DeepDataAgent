@@ -106,6 +106,31 @@ class MessageResponseAssemblerTest {
     }
 
     @Test
+    void should_mapToolCallWithResult_when_toResponse_given_mergedToolMessage() {
+        // given
+        LocalDateTime now = LocalDateTime.now();
+        DialogueMessage message = new DialogueMessage(
+                3L,
+                MessageRole.ASSISTANT,
+                MessageType.TOOL_CALL,
+                DialogueContent.toolCall("query_database", "{\"sql\": \"SELECT * FROM users\"}", "查询到的数据"),
+                MessageStatus.COMPLETED,
+                now,
+                now
+        );
+
+        // when
+        MessageResponse result = MessageResponseAssembler.toResponse(message, SESSION_ID, DIALOGUE_ID);
+
+        // then
+        assertEquals(3L, result.id());
+        assertEquals("query_database", result.toolCalls());
+        assertEquals("{\"sql\": \"SELECT * FROM users\"}", result.content());
+        assertEquals("查询到的数据", result.toolResult());
+        assertEquals(SESSION_ID, result.sessionId());
+    }
+
+    @Test
     void should_mapToolResultMessage_when_toResponse_given_toolResult() {
         // given
         LocalDateTime now = LocalDateTime.now();

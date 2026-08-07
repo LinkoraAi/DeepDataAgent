@@ -19,7 +19,7 @@ import java.util.Map;
 public class ApiQueryExecutor implements QueryExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(ApiQueryExecutor.class);
-    private static final int DEFAULT_LIMIT = 1000;
+    private static final int DEFAULT_LIMIT = 500;
 
     private final DatasourceGateway datasourceGateway;
 

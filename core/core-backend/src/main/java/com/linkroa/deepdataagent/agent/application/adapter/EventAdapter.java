@@ -24,6 +24,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -157,6 +158,8 @@ public class EventAdapter {
                             toolCallEvent.getToolCallName(), "",
                             System.currentTimeMillis(), toolCallEvent.getToolCallId()));
                 }
+                // 工具调用开始意味着当前累积的 TEXT_BLOCK 是中间叙述，作为 THINKING 消息落库并清空
+                flushNarrativeAsThinking(context);
                 return List.of();
 
             case TOOL_CALL_DELTA:
@@ -167,11 +170,13 @@ public class EventAdapter {
                 return List.of();
 
             case TOOL_CALL_END:
-                // 工具调用结束，创建 TOOL_CALL 消息
+                // 工具调用结束，创建 TOOL_CALL 消息并按 toolCallId 登记映射，等待结果回填
                 if (event instanceof ToolCallEndEvent toolCallEndEvent) {
                     ToolCallItem tc = collector.getToolCallById(toolCallEndEvent.getToolCallId());
                     if (tc != null) {
-                        context.addMessage(buildToolCallMessage(context, tc));
+                        DialogueMessage message = buildToolCallMessage(context, tc);
+                        context.addMessage(message);
+                        context.registerToolCallMessage(toolCallEndEvent.getToolCallId(), message);
                     }
                 }
                 return List.of();
@@ -188,15 +193,14 @@ public class EventAdapter {
                 return List.of();
 
             case TOOL_RESULT_END:
-                // 工具调用完成，创建 TOOL_RESULT 消息
+                // 工具调用完成，按 toolCallId 精确回填结果到同一条 TOOL_CALL 消息，不再新建 TOOL_RESULT 消息
                 if (event instanceof ToolResultEndEvent toolResultEvent) {
-                    String toolName = toolResultEvent.getToolCallName();
                     String toolCallId = toolResultEvent.getToolCallId();
                     var state = toolResultEvent.getState();
                     boolean success = state != null && !"error".equalsIgnoreCase(state.getValue());
                     String resultContent = collector.getToolResult(toolCallId);
                     collector.setToolCallResult(toolCallId, resultContent, success);
-                    context.addMessage(buildToolResultMessage(context, toolName, resultContent));
+                    context.mergeToolResult(toolCallId, resultContent, success);
                 }
                 return List.of();
 
@@ -222,13 +226,17 @@ public class EventAdapter {
 
             case AGENT_END:
                 // Agent 执行结束，创建最终 ASSISTANT 消息
-                String report = context.getAssistantText();
+                // 优先采用 AGENT_RESULT 的权威最终文本（含最终报告的 TEXT_BLOCK 已累积于此，但以 finalResponse 为准）
+                String report = context.finalResponse();
                 if (report == null || report.isBlank()) {
-                    // 兜底：从最终响应提取
-                    report = context.finalResponse();
+                    // 兜底：退回清洗后的累积文本（此时缓冲仅含最终轮 TEXT_BLOCK）
+                    report = context.flushAssistantText();
                     if (report != null) {
                         report = TextCleaner.stripReasoningPreamble(report);
                     }
+                } else {
+                    // 最终报告已由 finalResponse 提供，丢弃累积的最终 TEXT_BLOCK 缓冲
+                    context.clearAssistantText();
                 }
                 if (report != null && !report.isBlank()) {
                     context.addMessage(buildAssistantMessage(context, report));
@@ -238,6 +246,20 @@ public class EventAdapter {
             default:
                 // 其他事件类型忽略
                 return List.of();
+        }
+    }
+
+    /**
+     * 将累积的中间叙述作为 THINKING 消息落库并清空缓冲
+     * <p>TOOL_CALL_START 时调用：当前累积的 TEXT_BLOCK 是 Agent 调用工具前的过程叙述，
+     * 应作为 THINKING 消息保留执行说明，而非混入最终报告。</p>
+     *
+     * @param context 收集器上下文
+     */
+    private void flushNarrativeAsThinking(CollectorContext context) {
+        String narrative = context.flushAssistantText();
+        if (narrative != null && !narrative.isBlank()) {
+            context.addMessage(buildThinkingMessage(context, narrative));
         }
     }
 
@@ -271,24 +293,6 @@ public class EventAdapter {
                 MessageRole.TOOL,
                 MessageType.TOOL_CALL,
                 DialogueContent.toolCall(tc.name(), tc.input(), null),
-                MessageStatus.COMPLETED,
-                LocalDateTime.now(), LocalDateTime.now());
-    }
-
-    /**
-     * 构建 TOOL_RESULT 消息
-     *
-     * @param context 收集器上下文
-     * @param toolName 工具名
-     * @param result   工具结果文本
-     * @return TOOL_RESULT 消息
-     */
-    private DialogueMessage buildToolResultMessage(CollectorContext context, String toolName, String result) {
-        return new DialogueMessage(
-                context.nextSequenceNumber(),
-                MessageRole.TOOL,
-                MessageType.TOOL_RESULT,
-                DialogueContent.toolCall(toolName != null ? toolName : "", null, result),
                 MessageStatus.COMPLETED,
                 LocalDateTime.now(), LocalDateTime.now());
     }
@@ -342,6 +346,8 @@ public class EventAdapter {
         private final AnalysisSnapshotCollector collector;
         /** 对话消息列表（完整分析过程） */
         private final List<DialogueMessage> messages = new ArrayList<>();
+        /** 按 toolCallId 关联的 TOOL_CALL 消息映射，用于结果精确回填 */
+        private final Map<String, DialogueMessage> toolCallMessageMap = new HashMap<>();
         /** 最终响应文本 */
         private String finalResponse;
         /** 助手文本增量累积器（TEXT_DELTA 累积，AGENT_END 时生成最终消息） */
@@ -431,6 +437,49 @@ public class EventAdapter {
         }
 
         /**
+         * 登记工具调用消息到 toolCallId 映射
+         * <p>在 TOOL_CALL_END 时调用，建立 toolCallId 到消息的关联，
+         * 供 TOOL_RESULT_END 精确回填结果，避免依赖工具名或顺序配对。</p>
+         *
+         * @param toolCallId 工具调用 ID
+         * @param message    对应的 TOOL_CALL 消息
+         */
+        public void registerToolCallMessage(String toolCallId, DialogueMessage message) {
+            synchronized (this) {
+                if (toolCallId != null && message != null) {
+                    toolCallMessageMap.put(toolCallId, message);
+                }
+            }
+        }
+
+        /**
+         * 按 toolCallId 将工具结果回填到对应的 TOOL_CALL 消息
+         * <p>在 TOOL_RESULT_END 时调用，将结果并入同一条消息的 content
+         * （title=工具名、input=入参、result=结果），并标记成功/失败，随后移除映射。
+         * 若分析中断（仅 TOOL_CALL_END 无 TOOL_RESULT_END），消息保留「有入参、无结果」。</p>
+         *
+         * @param toolCallId 工具调用 ID
+         * @param result     工具结果文本
+         * @param success    是否成功
+         */
+        public void mergeToolResult(String toolCallId, String result, boolean success) {
+            synchronized (this) {
+                if (toolCallId == null) {
+                    return;
+                }
+                DialogueMessage message = toolCallMessageMap.remove(toolCallId);
+                if (message != null) {
+                    DialogueContent content = message.getContent();
+                    String name = content != null ? content.title() : "";
+                    String input = content != null ? content.input() : null;
+                    message.setContent(DialogueContent.toolCall(name, input, result));
+                    message.setStatus(success ? MessageStatus.COMPLETED : MessageStatus.FAILED);
+                    message.setEndTime(LocalDateTime.now());
+                }
+            }
+        }
+
+        /**
          * 获取消息列表引用
          * <p>调用方需在 {@code synchronized (this)} 内复制快照后再读取。</p>
          *
@@ -442,6 +491,9 @@ public class EventAdapter {
 
         /**
          * 累积助手文本增量
+         * <p>当前 TEXT_BLOCK 先累积于此；TOOL_CALL_START 时确认是中间叙述，
+         * 调用 {@link #flushAssistantText()} 作为 THINKING 消息落库并清空；
+         * AGENT_END 时若 {@link #finalResponse()} 为空，则作为报告兜底。</p>
          *
          * @param delta 文本增量
          */
@@ -449,6 +501,27 @@ public class EventAdapter {
             if (delta != null) {
                 assistantTextBuilder.append(delta);
             }
+        }
+
+        /**
+         * 取出累积的助手文本并清空缓冲
+         *
+         * @return 累积的文本，若为空返回 null
+         */
+        public String flushAssistantText() {
+            if (assistantTextBuilder.length() == 0) {
+                return null;
+            }
+            String text = assistantTextBuilder.toString();
+            assistantTextBuilder.setLength(0);
+            return text;
+        }
+
+        /**
+         * 清空累积的助手文本缓冲
+         */
+        public void clearAssistantText() {
+            assistantTextBuilder.setLength(0);
         }
 
         /**

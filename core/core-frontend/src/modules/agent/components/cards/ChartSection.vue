@@ -113,7 +113,7 @@ const chartTypes = [
   { value: 'pie', label: '饼图' },
 ];
 
-/** 当前图表配置（根据类型切换修改 series.type） */
+/** 当前图表配置（根据类型切换修改 series.type，并归一化布局防裁剪/重叠） */
 const currentChartConfig = computed(() => {
   if (!props.chartConfig) return null;
   
@@ -135,8 +135,95 @@ const currentChartConfig = computed(() => {
       s.type = currentChartType.value;
     });
   }
-  return config;
+  return normalizeChartLayout(config);
 });
+
+/**
+ * 归一化 ECharts 布局，确保内容完整显示且不重叠
+ * <p>LLM 生成的 option 可能设置过小的 grid 边距或错误的标题/图例位置，
+ * 导致坐标轴名称被裁剪、标题/图例与绘图区相互重叠。
+ * 此处用像素兜底并强制 containLabel，保证图表可读性。</p>
+ */
+function normalizeChartLayout(config: any): any {
+  if (!config) return config;
+
+  const hasLegend = config.legend !== undefined;
+  const hasTitle = config.title !== undefined;
+  const seriesType = (config.series?.[0]?.type || '').toLowerCase();
+
+  // 标题固定在顶部居中，避免与绘图区重叠
+  if (hasTitle) {
+    config.title = { ...config.title, left: 'center', top: 0 };
+  }
+  // 图例固定在底部居中，避免与 x 轴名称重叠
+  if (hasLegend) {
+    config.legend = { ...config.legend, left: 'center', bottom: 0 };
+  }
+
+  // 直角坐标系（柱状/折线）需预留绘图区边距，容纳坐标轴名称且不与标题/图例重叠
+  if (seriesType === 'line' || seriesType === 'bar') {
+    // 先治理 x 轴（标签旋转 + 名称居中），再据其结果计算底部边距
+    let rotate = 0;
+    let hasXName = false;
+    if (config.xAxis) {
+      if (Array.isArray(config.xAxis)) {
+        config.xAxis = config.xAxis.map((axis: any) => normalizeXAxis(axis));
+        rotate = config.xAxis[0]?.axisLabel?.rotate || 0;
+        hasXName = config.xAxis.some((a: any) => a && a.name);
+      } else {
+        config.xAxis = normalizeXAxis(config.xAxis);
+        rotate = config.xAxis?.axisLabel?.rotate || 0;
+        hasXName = Boolean(config.xAxis?.name);
+      }
+    }
+    // 底部空间 = x 轴名称（居中后位于标签下方）+ 图例
+    const nameSpace = hasXName ? (rotate > 0 ? 50 : 34) : 8;
+    const legendSpace = hasLegend ? 30 : 10;
+    config.grid = {
+      // 保留 LLM 自定义的其他 grid 属性，但强制以下布局参数
+      ...(config.grid || {}),
+      left: 50,                  // 容纳 y 轴名称（竖排）
+      right: 32,                 // 避免最右侧刻度标签被容器裁切
+      top: hasTitle ? 50 : 30,   // 标题下方留白
+      bottom: nameSpace + legendSpace,
+      containLabel: true,        // 坐标轴标签计入绘图区，避免裁剪
+    };
+  }
+
+  return config;
+}
+
+/**
+ * 归一化 x 轴标签与名称显示策略，避免刻度标签重叠/溢出、名称被右缘裁切
+ * <p>LLM 生成的 option 常缺省 axisLabel 配置，分类标签多/长时会互相重叠
+ * 或超出容器边缘；x 轴名称默认在轴右端（end），水平文字易超出容器被裁切。
+ * 这里根据标签数量与长度自动旋转标签，并将轴名称移至底部居中，
+ * 保证所有刻度与名称完整可见（不使用 hideOverlap，避免标签被整体隐藏）。</p>
+ */
+function normalizeXAxis(axis: any): any {
+  if (!axis) return axis;
+  const labels: any[] = Array.isArray(axis.data) ? axis.data : [];
+  const count = labels.length;
+  const maxLen = labels.reduce((max, label) => Math.max(max, String(label).length), 0);
+  // 标签较多或较长时自动旋转，保证全部可见而不溢出
+  let rotate = 0;
+  if (count > 6 || maxLen > 10) {
+    rotate = 30;
+  } else if (count > 3 && maxLen > 6) {
+    rotate = 20;
+  }
+  return {
+    ...axis,
+    // 轴名称移至底部居中，避免默认右端定位导致超出容器被裁切
+    ...(axis.name ? { nameLocation: 'middle', nameGap: rotate > 0 ? 45 : 30 } : {}),
+    axisLabel: {
+      ...(axis.axisLabel || {}),
+      interval: 0,  // 显示所有刻度标签
+      rotate,       // 长/多标签旋转，避免重叠
+      hideOverlap: false, // 关闭隐藏，确保标签始终可见
+    },
+  };
+}
 
 /** 判断图表是否具有直观价值，避免无意义展示 */
 const shouldDisplay = computed(() => {

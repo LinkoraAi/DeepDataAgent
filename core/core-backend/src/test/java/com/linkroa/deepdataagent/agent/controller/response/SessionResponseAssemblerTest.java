@@ -54,6 +54,7 @@ class SessionResponseAssemblerTest {
     void should_mapTimestampsAsNull_when_toResponse_given_nullTimestamps() {
         // given
         AgentSession session = new AgentSession("session-3", "新会话", 3L, 10L, 20L, SessionStatus.ACTIVE);
+        session.setLastMessageTime(null);
 
         // when
         SessionResponse result = SessionResponseAssembler.toResponse(session);

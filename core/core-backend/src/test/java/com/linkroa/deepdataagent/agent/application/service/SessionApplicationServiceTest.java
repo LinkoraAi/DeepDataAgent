@@ -3,6 +3,7 @@ package com.linkroa.deepdataagent.agent.application.service;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceCategory;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceGateway;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceInfo;
+import com.linkroa.deepdataagent.agent.application.context.RunningAnalysisRegistry;
 import com.linkroa.deepdataagent.agent.application.dto.MessageDTO;
 import com.linkroa.deepdataagent.agent.application.dto.SessionDTO;
 import com.linkroa.deepdataagent.agent.application.dto.SessionListItemDTO;
@@ -16,6 +17,7 @@ import com.linkroa.deepdataagent.agent.domain.repository.DialogueRepository;
 import com.linkroa.deepdataagent.agent.domain.valueobject.MessageRole;
 import com.linkroa.deepdataagent.agent.domain.valueobject.SessionStatus;
 import com.linkroa.deepdataagent.agent.infrastructure.agent.HarnessAgentFactory;
+import com.linkroa.deepdataagent.agent.infrastructure.collector.AnalysisEventBuffer;
 import com.linkroa.deepdataagent.agent.infrastructure.config.SessionProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,17 +59,21 @@ class SessionApplicationServiceTest {
     @Mock
     private HarnessAgentFactory agentFactory;
 
+    private RunningAnalysisRegistry runningAnalysisRegistry;
+
     private SessionApplicationService service;
 
     @BeforeEach
     void setUp() {
+        runningAnalysisRegistry = new RunningAnalysisRegistry();
         service = new SessionApplicationService(
                 sessionRepository,
                 modelInfoRepository,
                 dialogueRepository,
                 sessionProperties,
                 datasourceGateway,
-                agentFactory
+                agentFactory,
+                runningAnalysisRegistry
         );
     }
 
@@ -229,6 +235,25 @@ class SessionApplicationServiceTest {
         // then
         assertNotNull(result);
         assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void should_markRunningSessions_when_listSessions_given_someRunningInRegistry() {
+        // given
+        List<AgentSession> sessions = List.of(
+                createAgentSession("session-1", "会话1", 1L, 100L, 200L, SessionStatus.ACTIVE),
+                createAgentSession("session-2", "会话2", 1L, 101L, 201L, SessionStatus.ACTIVE)
+        );
+        when(sessionRepository.findActiveSessions()).thenReturn(sessions);
+        registerRunning("session-1");
+
+        // when
+        List<SessionListItemDTO> result = service.listSessions(null, null);
+
+        // then
+        assertEquals(2, result.size());
+        assertTrue(result.get(0).running());
+        assertFalse(result.get(1).running());
     }
 
     // ==================== closeSession ====================
@@ -456,5 +481,20 @@ class SessionApplicationServiceTest {
 
     private AgentSession createAgentSession(String id, String title, Long userId, Long datasourceId, Long modelConfigId, SessionStatus status) {
         return new AgentSession(id, title, userId, datasourceId, modelConfigId, status);
+    }
+
+    /**
+     * 在注册表中登记一个运行中的会话执行句柄
+     *
+     * @param sessionId 会话 ID
+     * @return 该会话对应的分析事件缓冲（用于测试回放行为）
+     */
+    private AnalysisEventBuffer registerRunning(String sessionId) {
+        AnalysisEventBuffer buffer = new AnalysisEventBuffer();
+        runningAnalysisRegistry.register(sessionId,
+                new com.linkroa.deepdataagent.agent.application.context.RunningExecution(
+                        1L, mock(io.agentscope.harness.agent.HarnessAgent.class),
+                        mock(reactor.core.Disposable.class), null, buffer));
+        return buffer;
     }
 }

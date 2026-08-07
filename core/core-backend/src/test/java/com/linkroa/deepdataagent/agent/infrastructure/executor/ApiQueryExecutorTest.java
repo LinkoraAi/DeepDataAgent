@@ -71,7 +71,7 @@ class ApiQueryExecutorTest {
                 Map.of("id", 1, "name", "张三"),
                 Map.of("id", 2, "name", "李四")
         );
-        when(datasourceGateway.executeApiQuery(1L, apiSchemaName, 1000)).thenReturn(expectedResults);
+        when(datasourceGateway.executeApiQuery(1L, apiSchemaName, 500)).thenReturn(expectedResults);
 
         // when
         List<Map<String, Object>> results = apiQueryExecutor.execute(apiDatasource, apiSchemaName);
@@ -79,7 +79,7 @@ class ApiQueryExecutorTest {
         // then
         assertEquals(2, results.size());
         assertEquals("张三", results.get(0).get("name"));
-        verify(datasourceGateway).executeApiQuery(1L, apiSchemaName, 1000);
+        verify(datasourceGateway).executeApiQuery(1L, apiSchemaName, 500);
     }
 
     @Test
@@ -87,14 +87,14 @@ class ApiQueryExecutorTest {
         // given
         DatasourceInfo apiDatasource = createApiDatasourceInfo(2L, "empty-api");
         String apiSchemaName = "empty_api";
-        when(datasourceGateway.executeApiQuery(2L, apiSchemaName, 1000)).thenReturn(List.of());
+        when(datasourceGateway.executeApiQuery(2L, apiSchemaName, 500)).thenReturn(List.of());
 
         // when
         List<Map<String, Object>> results = apiQueryExecutor.execute(apiDatasource, apiSchemaName);
 
         // then
         assertTrue(results.isEmpty());
-        verify(datasourceGateway).executeApiQuery(2L, apiSchemaName, 1000);
+        verify(datasourceGateway).executeApiQuery(2L, apiSchemaName, 500);
     }
 
     @Test
@@ -102,13 +102,13 @@ class ApiQueryExecutorTest {
         // given
         DatasourceInfo apiDatasource = createApiDatasourceInfo(3L, "api-test");
         String apiSchemaName = "order_api";
-        when(datasourceGateway.executeApiQuery(3L, apiSchemaName, 1000)).thenReturn(List.of());
+        when(datasourceGateway.executeApiQuery(3L, apiSchemaName, 500)).thenReturn(List.of());
 
         // when
         apiQueryExecutor.execute(apiDatasource, apiSchemaName);
 
         // then
-        verify(datasourceGateway).executeApiQuery(3L, apiSchemaName, 1000);
+        verify(datasourceGateway).executeApiQuery(3L, apiSchemaName, 500);
     }
 
     @Test
@@ -116,7 +116,7 @@ class ApiQueryExecutorTest {
         // given
         DatasourceInfo apiDatasource = createApiDatasourceInfo(4L, "error-api");
         String apiSchemaName = "error_api";
-        when(datasourceGateway.executeApiQuery(4L, apiSchemaName, 1000))
+        when(datasourceGateway.executeApiQuery(4L, apiSchemaName, 500))
                 .thenThrow(new RuntimeException("API 查询失败"));
 
         // when & then

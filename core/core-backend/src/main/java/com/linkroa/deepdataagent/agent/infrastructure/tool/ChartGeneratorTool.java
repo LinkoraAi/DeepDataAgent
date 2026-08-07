@@ -2,8 +2,10 @@ package com.linkroa.deepdataagent.agent.infrastructure.tool;
 
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
+import com.linkroa.deepdataagent.agent.domain.exception.AnalysisCancelledException;
 import com.linkroa.deepdataagent.agent.domain.support.DataSummaryBuilder;
 import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
+import com.linkroa.deepdataagent.agent.infrastructure.util.AgentToolResponse;
 import com.linkroa.deepdataagent.agent.application.context.SessionToolContext;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolCallParam;
@@ -59,7 +61,7 @@ public class ChartGeneratorTool {
         try {
             if (sessionId == null || sessionId.isBlank()) {
                 log.error("ChartGeneratorTool: sessionId parameter is empty");
-                return "{}";
+                return AgentToolResponse.error("图表生成失败: sessionId 参数为空");
             }
             
             // 从 SessionToolContext 获取 modelConfigId
@@ -67,27 +69,37 @@ public class ChartGeneratorTool {
             if (modelConfigId == null) {
                 // 兜底：尝试从 RuntimeContext 获取
                 if (toolCallParam != null && toolCallParam.getRuntimeContext() != null) {
-                    modelConfigId = (Long) toolCallParam.getRuntimeContext().get(CTX_KEY_MODEL_CONFIG_ID);
+                    Object configId = toolCallParam.getRuntimeContext().get(CTX_KEY_MODEL_CONFIG_ID);
+                    if (configId instanceof Number number) {
+                        modelConfigId = number.longValue();
+                    }
                 }
             }
             if (modelConfigId == null) {
                 log.error("ChartGeneratorTool: modelConfigId not available for sessionId={}", sessionId);
-                return "{}";
+                return AgentToolResponse.error("图表生成失败: 未找到可用的模型配置");
             }
             
             String dataDescription = buildDataDescription(queryResult);
             String echartsJson = llmClient.generateChartConfig(modelConfigId, dataDescription, userQuestion, sessionId);
             log.info("ChartGeneratorTool: chart generated, length={}", echartsJson.length());
             return echartsJson;
+        } catch (AnalysisCancelledException e) {
+            log.info("ChartGeneratorTool: chart generation cancelled, sessionId={}", sessionId);
+            String reason = e.getMessage() != null ? e.getMessage() : "未知错误";
+            return AgentToolResponse.error("图表生成失败: " + reason);
         } catch (Exception e) {
             log.error("ChartGeneratorTool: failed to generate chart", e);
-            return "{}";
+            String reason = e.getMessage() != null ? e.getMessage() : "未知错误";
+            return AgentToolResponse.error("图表生成失败: " + reason);
         }
     }
 
     private String buildDataDescription(String queryResult) {
         try {
-            List<Map<String, Object>> data = objectMapper.readValue(queryResult, DATA_TYPE);
+            // 剥离 execute_sql / execute_api_query 返回的前缀及行数说明，仅保留 JSON 部分
+            String json = AgentToolResponse.stripPrefix(queryResult);
+            List<Map<String, Object>> data = objectMapper.readValue(json, DATA_TYPE);
             if (data.isEmpty()) {
                 return "[]";
             }

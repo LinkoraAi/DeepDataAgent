@@ -36,7 +36,9 @@ public class SqlValidator implements SqlValidationPort {
                 : Set.of(
                     "DROP", "ALTER", "CREATE", "TRUNCATE",
                     "GRANT", "REVOKE", "EXEC", "EXECUTE",
-                    "LOAD_FILE", "INTO OUTFILE", "INTO DUMPFILE"
+                    "DELETE", "UPDATE", "INSERT",
+                    "LOAD_FILE", "INTO OUTFILE", "INTO DUMPFILE",
+                    "REPLACE INTO"
                 );
     }
 
@@ -62,8 +64,11 @@ public class SqlValidator implements SqlValidationPort {
         }
 
         // 使用单词边界匹配危险关键字，避免列名误判（如 create_time 被误判为 CREATE）
+        // 仅在可执行代码区匹配：先屏蔽字符串/标识符/注释字面量，
+        // 避免其内容误伤（如 SELECT 'drop' 不应命中 DROP）
+        String maskedUpperSql = maskLiteralsAndComments(upperSql);
         for (String keyword : dangerousKeywords) {
-            if (containsKeyword(upperSql, keyword)) {
+            if (containsKeyword(maskedUpperSql, keyword)) {
                 throw new DeepDataAgentException("SQL 包含禁止的操作: " + keyword + "，SQL: " + sql);
             }
         }
@@ -174,6 +179,72 @@ public class SqlValidator implements SqlValidationPort {
             }
         }
         return -1;
+    }
+
+    /**
+     * 屏蔽字符串/标识符/注释字面量内字符，返回"可执行代码区"文本。
+     * <p>逐字符维护与 {@link #findFirstRealSemicolon} 相同的状态机，
+     * 将单引号字符串、双引号/反引号标识符、行注释（-- / #）与块注释内的
+     * 字符替换为空格占位，使危险关键字匹配不会命中字面量内容
+     * （如 {@code SELECT 'drop'} 不应触发 DROP，而 {@code WITH x AS (UPDATE ...)}
+     * 的 UPDATE 仍在可执行区，可被拦截）。</p>
+     *
+     * @param sql 待扫描的 SQL（建议传入已 strip 的文本）
+     * @return 仅含可执行代码字符的文本，字面量位置以空格占位
+     */
+    private String maskLiteralsAndComments(String sql) {
+        StringBuilder sb = new StringBuilder(sql.length());
+        int len = sql.length();
+        // 状态：0=普通，1=单引号字符串，2=双引号标识符，3=反引号标识符，4=行注释，5=块注释
+        int state = 0;
+        for (int i = 0; i < len; i++) {
+            char c = sql.charAt(i);
+            char next = i + 1 < len ? sql.charAt(i + 1) : (char) 0;
+            boolean masked = false;
+            switch (state) {
+                case 0: // 普通状态
+                    if (c == '\'') { state = 1; masked = true; }
+                    else if (c == '"') { state = 2; masked = true; }
+                    else if (c == '`') { state = 3; masked = true; }
+                    else if (c == '#') { state = 4; masked = true; }
+                    else if (c == '-' && next == '-') { state = 4; masked = true; i++; }
+                    else if (c == '/' && next == '*') { state = 5; masked = true; i++; }
+                    break;
+                case 1: // 单引号字符串，'' 转义不退出
+                    masked = true;
+                    if (c == '\'') {
+                        if (next == '\'') { i++; }
+                        else { state = 0; }
+                    }
+                    break;
+                case 2: // 双引号标识符，"" 转义不退出
+                    masked = true;
+                    if (c == '"') {
+                        if (next == '"') { i++; }
+                        else { state = 0; }
+                    }
+                    break;
+                case 3: // 反引号标识符，`` 转义不退出
+                    masked = true;
+                    if (c == '`') {
+                        if (next == '`') { i++; }
+                        else { state = 0; }
+                    }
+                    break;
+                case 4: // 行注释，遇换行结束
+                    masked = true;
+                    if (c == '\n') { state = 0; }
+                    break;
+                case 5: // 块注释，遇 */ 结束
+                    masked = true;
+                    if (c == '*' && next == '/') { state = 0; i++; }
+                    break;
+                default:
+                    break;
+            }
+            sb.append(masked ? ' ' : c);
+        }
+        return sb.toString();
     }
 
     /**

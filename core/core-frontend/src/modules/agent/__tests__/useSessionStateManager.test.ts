@@ -55,7 +55,8 @@ describe('useSessionStateManager', () => {
 
       // when：后台会话 B 的事件到达（当前会话仍是 A）
       const toolResultBuffers = new Map<string, string>();
-      ssm.updateState('B', thinkingEvent(1), 'A', toolResultBuffers);
+      const toolCallInputBuffers = new Map<string, string>();
+      ssm.updateState('B', thinkingEvent(1), 'A', toolResultBuffers, toolCallInputBuffers);
 
       // then：处理完 B 的事件后，analysisStore 应恢复为 A 的状态
       // 通过 saveState 后再 restoreState 校验 A 的状态未被 B 覆盖
@@ -74,9 +75,10 @@ describe('useSessionStateManager', () => {
 
       // when：后台会话 B 收到事件
       const toolResultBuffers = new Map<string, string>();
-      ssm.updateState('B', thinkingEvent(1), 'A', toolResultBuffers);
+      const toolCallInputBuffers = new Map<string, string>();
+      ssm.updateState('B', thinkingEvent(1), 'A', toolResultBuffers, toolCallInputBuffers);
       // 后台会话 C 收到事件
-      ssm.updateState('C', thinkingEvent(1), 'A', toolResultBuffers);
+      ssm.updateState('C', thinkingEvent(1), 'A', toolResultBuffers, toolCallInputBuffers);
 
       // then：A 与 B、C 的状态各自独立保存
       const stateA = ssm.getSavedState('A');
@@ -167,6 +169,50 @@ describe('useSessionStateManager', () => {
       expect(analysisStore.state.rounds).toHaveLength(2);
       expect(analysisStore.state.rounds[0].thinking.content).toBe('第一轮思考');
       expect(analysisStore.state.rounds[1].thinking.content).toBe('第二轮思考');
+    });
+  });
+
+  describe('工具入参累积与回填（需求 3）', () => {
+    it('累积 TOOL_CALL_DELTA 入参并在 TOOL_CALL_END 回填到同名运行中工具项', () => {
+      // given：会话 A 分析中，准备入参与结果缓冲区
+      analysisStore.startAnalysis('A');
+      analysisStore.startNewRound();
+      const toolResultBuffers = new Map<string, string>();
+      const toolCallInputBuffers = new Map<string, string>();
+
+      // when：TOOL_CALL_START 建立运行中工具项，随后多次 TOOL_CALL_DELTA 累积入参，TOOL_CALL_END 回填
+      ssm.updateState('A', { type: 'TOOL_CALL_START', toolCallName: 'generate_sql', toolCallId: 'tc1' } as any, 'A', toolResultBuffers, toolCallInputBuffers);
+      ssm.updateState('A', { type: 'TOOL_CALL_DELTA', toolCallId: 'tc1', delta: '{"sql":"SEL' } as any, 'A', toolResultBuffers, toolCallInputBuffers);
+      ssm.updateState('A', { type: 'TOOL_CALL_DELTA', toolCallId: 'tc1', delta: 'ECT 1"}' } as any, 'A', toolResultBuffers, toolCallInputBuffers);
+      ssm.updateState('A', { type: 'TOOL_CALL_END', toolCallId: 'tc1', toolCallName: 'generate_sql' } as any, 'A', toolResultBuffers, toolCallInputBuffers);
+
+      // then：工具项入参被完整回填，且缓冲区已清理
+      const toolCall = analysisStore.state.rounds[0].toolCalls[0];
+      expect(toolCall.toolName).toBe('generate_sql');
+      expect(toolCall.input).toBe('{"sql":"SELECT 1"}');
+      expect(toolCallInputBuffers.has('tc1')).toBe(false);
+    });
+
+    it('不同 toolCallId 的入参互不污染', () => {
+      // given
+      analysisStore.startAnalysis('A');
+      analysisStore.startNewRound();
+      const toolResultBuffers = new Map<string, string>();
+      const toolCallInputBuffers = new Map<string, string>();
+
+      // when：两个不同 toolCallId 的入参增量交错到达
+      ssm.updateState('A', { type: 'TOOL_CALL_START', toolCallName: 't1', toolCallId: 'tc1' } as any, 'A', toolResultBuffers, toolCallInputBuffers);
+      ssm.updateState('A', { type: 'TOOL_CALL_START', toolCallName: 't2', toolCallId: 'tc2' } as any, 'A', toolResultBuffers, toolCallInputBuffers);
+      ssm.updateState('A', { type: 'TOOL_CALL_DELTA', toolCallId: 'tc1', delta: 'A' } as any, 'A', toolResultBuffers, toolCallInputBuffers);
+      ssm.updateState('A', { type: 'TOOL_CALL_DELTA', toolCallId: 'tc2', delta: 'B' } as any, 'A', toolResultBuffers, toolCallInputBuffers);
+      ssm.updateState('A', { type: 'TOOL_CALL_END', toolCallId: 'tc1', toolCallName: 't1' } as any, 'A', toolResultBuffers, toolCallInputBuffers);
+      ssm.updateState('A', { type: 'TOOL_CALL_END', toolCallId: 'tc2', toolCallName: 't2' } as any, 'A', toolResultBuffers, toolCallInputBuffers);
+
+      // then：各自回填到对应工具项
+      const calls = analysisStore.state.rounds[0].toolCalls;
+      expect(calls).toHaveLength(2);
+      expect(calls[0].input).toBe('A');
+      expect(calls[1].input).toBe('B');
     });
   });
 });

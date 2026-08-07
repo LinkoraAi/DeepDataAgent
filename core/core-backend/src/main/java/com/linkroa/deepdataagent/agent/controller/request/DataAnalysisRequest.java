@@ -1,21 +1,22 @@
 package com.linkroa.deepdataagent.agent.controller.request;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 
 /**
  * 数据分析请求 DTO
+ * <p>当 {@code resumeOnly} 为 true 时，仅用于续流运行中会话，只需 {@code sessionId} 与 {@code clientId}，
+ * 其余分析参数字段（modelConfigId/connectionId/userQuestion/enableWebSearch）可省略；
+ * 由服务层校验非续流必填参数。enableWebSearch 与 resumeOnly 均使用可空 {@link Boolean}，
+ * 续流省略 enableWebSearch、正常启动省略 resumeOnly 时均为 null，不触发反序列化异常。</p>
  */
 public record DataAnalysisRequest(
     @NotBlank(message = "会话 ID 不能为空")
     String sessionId,
-    @NotNull(message = "模型配置 ID 不能为空")
     Long modelConfigId,
-    @NotBlank(message = "数据源 ID 不能为空")
     String connectionId,
-    @NotBlank(message = "用户问题不能为空")
     String userQuestion,
-    boolean enableWebSearch,
+    Boolean enableWebSearch,
+    Boolean resumeOnly,
     @NotBlank(message = "客户端 ID 不能为空")
     String clientId
 ) {}

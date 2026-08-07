@@ -3,8 +3,10 @@ package com.linkroa.deepdataagent.agent.controller.rest;
 import com.linkroa.deepdataagent.agent.application.command.DataAnalysisCommand;
 import com.linkroa.deepdataagent.agent.application.service.DataAnalysisApplicationService;
 import com.linkroa.deepdataagent.agent.controller.request.DataAnalysisRequest;
+import com.linkroa.deepdataagent.agent.controller.request.StopAnalysisRequest;
 import com.linkroa.deepdataagent.agent.controller.response.DataAnalysisResponse;
 import com.linkroa.deepdataagent.shared.exception.SSENotConnectedException;
+import com.linkroa.deepdataagent.shared.exception.SessionNotRunningException;
 import com.linkroa.deepdataagent.shared.exception.SystemBusyException;
 import com.linkroa.deepdataagent.shared.result.ApiResponse;
 import jakarta.validation.Valid;
@@ -48,9 +50,27 @@ public class DataAnalysisController {
             return ApiResponse.success(new DataAnalysisResponse(result.sessionId(), result.message()));
         } catch (SSENotConnectedException e) {
             return ApiResponse.error("400", e.getMessage());
+        } catch (SessionNotRunningException e) {
+            return ApiResponse.error("404", e.getMessage());
         } catch (SystemBusyException e) {
             return ApiResponse.error("400", e.getMessage());
         }
+    }
+
+    /**
+     * 停止数据分析
+     * <p>根据会话 ID 停止进行中的分析，后端真正取消 agent 运行并强制写库（CANCELLED）。
+     * 无进行中的分析时返回提示。</p>
+     *
+     * @param request 停止请求
+     * @return 停止结果
+     */
+    @PostMapping("/stop")
+    public ApiResponse<Void> stop(@Valid @RequestBody StopAnalysisRequest request) {
+        boolean stopped = applicationService.stopAnalysis(request.sessionId());
+        return stopped
+                ? ApiResponse.success(null)
+                : ApiResponse.error("404", "没有进行中的分析");
     }
 
     /**
@@ -66,7 +86,8 @@ public class DataAnalysisController {
                 request.modelConfigId(),
                 request.connectionId(),
                 request.userQuestion(),
-                request.enableWebSearch()
+                request.enableWebSearch(),
+                request.resumeOnly()
         );
     }
 }

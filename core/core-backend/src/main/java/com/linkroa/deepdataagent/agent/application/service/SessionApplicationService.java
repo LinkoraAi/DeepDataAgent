@@ -4,6 +4,7 @@ import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceGateway;
 import com.linkroa.deepdataagent.agent.application.assembler.MessageDTOAssembler;
 import com.linkroa.deepdataagent.agent.application.assembler.SessionDTOAssembler;
 import com.linkroa.deepdataagent.agent.application.assembler.SessionListItemDTOAssembler;
+import com.linkroa.deepdataagent.agent.application.context.RunningAnalysisRegistry;
 import com.linkroa.deepdataagent.agent.application.dto.MessageDTO;
 import com.linkroa.deepdataagent.agent.application.dto.SessionDTO;
 import com.linkroa.deepdataagent.agent.application.dto.SessionListItemDTO;
@@ -45,19 +46,22 @@ public class SessionApplicationService {
     private final SessionProperties sessionProperties;
     private final DatasourceGateway datasourceGateway;
     private final HarnessAgentFactory agentFactory;
+    private final RunningAnalysisRegistry runningAnalysisRegistry;
 
     public SessionApplicationService(AgentSessionRepository sessionRepository,
                                      AgentModelInfoRepository modelInfoRepository,
                                      DialogueRepository dialogueRepository,
                                      SessionProperties sessionProperties,
                                      DatasourceGateway datasourceGateway,
-                                     HarnessAgentFactory agentFactory) {
+                                     HarnessAgentFactory agentFactory,
+                                     RunningAnalysisRegistry runningAnalysisRegistry) {
         this.sessionRepository = sessionRepository;
         this.modelInfoRepository = modelInfoRepository;
         this.dialogueRepository = dialogueRepository;
         this.sessionProperties = sessionProperties;
         this.datasourceGateway = datasourceGateway;
         this.agentFactory = agentFactory;
+        this.runningAnalysisRegistry = runningAnalysisRegistry;
     }
 
     /**
@@ -124,7 +128,8 @@ public class SessionApplicationService {
             sessions = sessionRepository.findActiveSessions();
         }
         return sessions.stream()
-                .map(SessionListItemDTOAssembler::toDTO)
+                .map(session -> SessionListItemDTOAssembler.toDTO(session,
+                        runningAnalysisRegistry.isRunning(session.getId())))
                 .collect(Collectors.toList());
     }
 

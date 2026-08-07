@@ -16,11 +16,11 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /**
- * TextToSqlService 单元测试
- * <p>测试 Text-to-SQL 转换服务在成功、失败重试、达到上限抛异常等场景下的行为。</p>
+ * NL2SqlService 单元测试
+ * <p>测试 NL2SQL 转换服务在成功、失败重试、达到上限抛异常等场景下的行为。</p>
  */
 @ExtendWith(MockitoExtension.class)
-class TextToSqlServiceTest {
+class NL2SqlServiceTest {
 
     @Mock
     private SqlGenerationPort sqlGenerationPort;
@@ -28,11 +28,11 @@ class TextToSqlServiceTest {
     @Mock
     private SqlValidationPort sqlValidationPort;
 
-    private TextToSqlService service;
+    private NL2SqlService service;
 
     @BeforeEach
     void setUp() {
-        service = new TextToSqlService(sqlGenerationPort, sqlValidationPort, 3);
+        service = new NL2SqlService(sqlGenerationPort, sqlValidationPort, 3);
     }
 
     @Test

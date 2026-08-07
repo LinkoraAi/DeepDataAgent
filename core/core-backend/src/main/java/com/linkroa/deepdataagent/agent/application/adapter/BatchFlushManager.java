@@ -13,8 +13,11 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * 攒批持久化管理器
- * <p>基于单线程 {@link ScheduledExecutorService} 实现时间窗口（5 秒）触发的消息攒批写入，
+ * <p>基于单线程 {@link ScheduledExecutorService} 实现时间窗口触发的消息攒批写入，
  * 避免流式过程中频繁写库。单线程 FIFO 调度天然保序，消除定时 flush 与最终 flush 的竞态。</p>
+ *
+ * <p>写库节奏：首次 flush 延迟 {@code initialFlushDelaySeconds}（默认 1s，让前端尽早看到 RUNNING 内容），
+ * 之后按固定间隔 {@code flushIntervalSeconds}（默认 5s）周期 flush。</p>
  *
  * <p>线程安全：flush 时在 {@code synchronized (context)} 锁内复制消息列表快照，
  * 锁外执行序列化与数据库写入，不阻塞事件接收线程。</p>
@@ -23,8 +26,11 @@ public class BatchFlushManager {
 
     private static final Logger log = LoggerFactory.getLogger(BatchFlushManager.class);
 
-    /** 时间窗口：每 5 秒触发一次定时 flush */
-    private static final long FLUSH_INTERVAL_SECONDS = 5L;
+    /** 默认首次 flush 延迟（秒） */
+    private static final long DEFAULT_INITIAL_FLUSH_DELAY_SECONDS = 1L;
+
+    /** 默认 flush 间隔（秒） */
+    private static final long DEFAULT_FLUSH_INTERVAL_SECONDS = 5L;
 
     /** 单线程调度器，FIFO 保序 */
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
@@ -34,19 +40,40 @@ public class BatchFlushManager {
 
     private final DialogueRepository dialogueRepository;
 
+    /** 首次 flush 延迟（秒） */
+    private final long initialFlushDelaySeconds;
+
+    /** 固定 flush 间隔（秒） */
+    private final long flushIntervalSeconds;
+
     /**
-     * 构造方法
+     * 构造方法（使用默认写库节奏）
      *
      * @param dialogueRepository 对话轮次仓储
      */
     public BatchFlushManager(DialogueRepository dialogueRepository) {
+        this(dialogueRepository, DEFAULT_INITIAL_FLUSH_DELAY_SECONDS, DEFAULT_FLUSH_INTERVAL_SECONDS);
+    }
+
+    /**
+     * 构造方法（自定义写库节奏）
+     *
+     * @param dialogueRepository      对话轮次仓储
+     * @param initialFlushDelaySeconds 首次 flush 延迟（秒）
+     * @param flushIntervalSeconds    固定 flush 间隔（秒）
+     */
+    public BatchFlushManager(DialogueRepository dialogueRepository,
+                             long initialFlushDelaySeconds,
+                             long flushIntervalSeconds) {
         this.dialogueRepository = dialogueRepository;
+        this.initialFlushDelaySeconds = initialFlushDelaySeconds;
+        this.flushIntervalSeconds = flushIntervalSeconds;
     }
 
     /**
      * 启动定时 flush
-     * <p>每 5 秒将当前消息列表写入数据库（状态保持 RUNNING），
-     * 若已停止（最终 flush 后）则不再调度新任务。</p>
+     * <p>首次 flush 延迟 {@code initialFlushDelaySeconds}，之后按 {@code flushIntervalSeconds} 周期 flush，
+     * 将当前消息列表写入数据库（状态保持 RUNNING），若已停止（最终 flush 后）则不再调度新任务。</p>
      *
      * @param dialogueId 对话轮次 ID
      * @param sessionId  会话 ID（仅用于日志）
@@ -59,7 +86,7 @@ public class BatchFlushManager {
                         flush(dialogueId, sessionId, context, DialogueStatus.RUNNING);
                     }
                 },
-                FLUSH_INTERVAL_SECONDS, FLUSH_INTERVAL_SECONDS, TimeUnit.SECONDS);
+                initialFlushDelaySeconds, flushIntervalSeconds, TimeUnit.SECONDS);
     }
 
     /**

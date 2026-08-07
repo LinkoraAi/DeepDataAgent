@@ -17,8 +17,8 @@ export function useDataAnalysis() {
   const datasourceStore = useDatasourceStore();
   const modelStore = useModelStore();
   const analysisStore = useAnalysisStore();
-  const { startAnalysis, stopAnalysis, setCallbacks, reconnectClient } = useSSE();
-  const { connect: connectSSE, getClientId, setOnReconnect } = useSSEConnection();
+  const { startAnalysis, stopAnalysis, setCallbacks, reconnectClient, resumeRunningSession } = useSSE();
+  const { connect: connectSSE, getClientId, setOnReconnect, setOnAutoReconnect } = useSSEConnection();
   const sessionStateManager = useSessionStateManager();
 
   const userQuestion = ref('');
@@ -86,6 +86,15 @@ export function useDataAnalysis() {
       enableWebSearch: request.enableWebSearch,
       clientId: newClientId,
     });
+  });
+
+  // 注册 SSE 自动重连成功回调：连接断开后自动重连取得新 clientId 时，
+  // 重新恢复所有运行中会话的订阅（重新绑定 clientId + 回放断线期间事件）。
+  // 与 setOnReconnect 不同：该路径不依赖 lastRequest，适用于页面刷新后
+  // 无待提交请求但仍有运行中会话（后台分析）的场景，避免映射停留在死连接。
+  setOnAutoReconnect(() => {
+    console.log('[DataAnalysis] SSE auto-reconnected, resuming running sessions...');
+    resumeAllRunningSessions();
   });
 
   /**
@@ -309,12 +318,135 @@ export function useDataAnalysis() {
     userQuestion.value = '';
   }
 
+  /**
+   * 刷新页面后恢复所有运行中会话的分析订阅
+   * <p>先确保 SSE 连接已建立并获取 clientId，再遍历 sessionStore.runningSessions，
+   * 为每个会话注册完成/出错回调并逐个调用 resumeRunningSession，将新 clientId
+   * 重新绑定到仍在运行中的会话。整体用 try/catch 包裹，失败仅打印错误，不影响后续流程。</p>
+   */
+  async function resumeAllRunningSessions() {
+    try {
+      // 诊断日志：确认刷新后会话对齐（排查「SSE 有输出但渲染停止」）
+      console.log('[DataAnalysis][diag] resume start:', {
+        currentSessionId: sessionStore.currentSessionId,
+        runningSessions: sessionStore.runningSessions,
+        firstSession: sessionStore.sessions[0]?.id,
+        sessionsCount: sessionStore.sessions.length,
+      });
+      // 确保当前视图对齐到运行中的会话：若当前选中会话不是运行中会话，
+      // 则切换到第一个运行中会话，使该会话的事件走 updateState 的「当前分支」直接渲染。
+      // 否则事件会走后台分支（只存 stateMap 不写 chatMessages），导致刷新后消息停止渲染。
+      if (
+        sessionStore.runningSessions.length > 0 &&
+        (!sessionStore.currentSessionId ||
+          !sessionStore.runningSessions.includes(sessionStore.currentSessionId))
+      ) {
+        sessionStore.currentSessionId = sessionStore.runningSessions[0];
+      }
+
+      // 确保 SSE 已连接，获取 clientId
+      let clientId = getClientId();
+      if (!clientId) {
+        await connectSSE();
+        clientId = getClientId();
+      }
+      if (!clientId) {
+        console.warn('[DataAnalysis] Cannot resume sessions: no clientId available');
+        return;
+      }
+      // 遍历运行中会话逐个恢复订阅
+      for (const sessionId of sessionStore.runningSessions) {
+        // 该会话最近一次的用户问题（用于完成后打包 agent 消息），从已加载消息或缓存中取
+        const capturedQuestion = getLastUserQuestion(sessionId);
+
+        // 若当前会话的 chatMessages 缺少本次提问的 user 消息，则补充为配对锚点。
+        // 否则 groupedMessages 无法把「本次提问 → 分析过程/结果」配对，刷新后内容不渲染。
+        if (sessionId === sessionStore.currentSessionId && capturedQuestion) {
+          const hasQuestion = sessionStore.chatMessages.some(
+            m => m.role === 'user' && m.content === capturedQuestion
+          );
+          if (!hasQuestion) {
+            sessionStore.addMessageToSession(sessionId, {
+              id: `user-recovered-${sessionId}`,
+              role: 'user',
+              content: capturedQuestion,
+              timestamp: Date.now(),
+            });
+          }
+        }
+        setCallbacks(
+          sessionId,
+          (sid: string) => {
+            const snapshot = getSnapshotForSession(sid);
+            // 诊断日志：确认 AGENT_END 打包是否执行、快照是否有内容、消息是否入列
+            console.log('[SSE][diag] pack agent:', {
+              sid,
+              rounds: snapshot?.rounds?.length,
+              hasReport: !!snapshot?.analysisReport,
+              current: sessionStore.currentSessionId,
+              chatLenBefore: sessionStore.chatMessages.length,
+            });
+            const agentMsg: ChatMessage = {
+              id: `agent-${Date.now()}`,
+              role: 'agent',
+              content: capturedQuestion,
+              timestamp: Date.now(),
+              analysisState: snapshot,
+            };
+            sessionStore.addMessageToSession(sid, agentMsg);
+          },
+          (sid: string, errorMessage: string) => {
+            const snapshot = getSnapshotForSession(sid);
+            const agentMsg: ChatMessage = {
+              id: `agent-${Date.now()}`,
+              role: 'agent',
+              content: capturedQuestion,
+              timestamp: Date.now(),
+              analysisState: snapshot,
+            };
+            sessionStore.addMessageToSession(sid, agentMsg);
+          }
+        );
+        await resumeRunningSession({ sessionId, clientId });
+      }
+    } catch (error) {
+      console.error('[DataAnalysis] Failed to resume running sessions:', error);
+    }
+  }
+
+  /**
+   * 获取指定会话最近一次用户提问
+   * <p>优先从已加载的会话消息中取最后一条 role=user 的内容（刷新后消息已从后端回放），
+   * 兜底使用 sessionStore 缓存的上次问题。</p>
+   *
+   * @param sessionId 会话 ID
+   * @returns 最近一次用户提问文本
+   */
+  function getLastUserQuestion(sessionId: string): string {
+    // 优先取「本次分析」缓存的问题（分析发起时记录），
+    // 避免刷新后 sessionMessagesMap 只有历史旧问题而取到上一次提问。
+    const cachedQuestion = sessionStore.getSessionLastQuestion(sessionId);
+    if (cachedQuestion) {
+      return cachedQuestion;
+    }
+    const messages = sessionStore.sessionMessagesMap.get(sessionId);
+    if (messages && messages.length > 0) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          return messages[i].content;
+        }
+      }
+    }
+    return '';
+  }
+
   return {
     userQuestion,
     isAnalyzing: computed(() => analysisStore.state.isAnalyzing),
     submitQuestion,
     retryAnalysis,
     stopAnalysis,
+    resumeAllRunningSessions,
     resetSelection,
   };
 }

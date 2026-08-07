@@ -3,7 +3,10 @@ package com.linkroa.deepdataagent.agent.infrastructure.tool;
 import tools.jackson.databind.ObjectMapper;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceGateway;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceInfo;
+import com.linkroa.deepdataagent.agent.domain.service.port.SqlValidationPort;
+import com.linkroa.deepdataagent.agent.infrastructure.config.DataAnalysisProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.executor.QueryExecutor;
+import com.linkroa.deepdataagent.agent.infrastructure.util.AgentToolResponse;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -25,11 +28,17 @@ public class SqlExecutorTool {
     private final DatasourceGateway datasourceGateway;
     private final List<QueryExecutor> queryExecutors;
     private final ObjectMapper objectMapper;
+    private final SqlValidationPort sqlValidator;
+    private final DataAnalysisProperties properties;
 
-    public SqlExecutorTool(DatasourceGateway datasourceGateway, List<QueryExecutor> queryExecutors, ObjectMapper objectMapper) {
+    public SqlExecutorTool(DatasourceGateway datasourceGateway, List<QueryExecutor> queryExecutors,
+                           ObjectMapper objectMapper, SqlValidationPort sqlValidator,
+                           DataAnalysisProperties properties) {
         this.datasourceGateway = datasourceGateway;
         this.queryExecutors = queryExecutors;
         this.objectMapper = objectMapper;
+        this.sqlValidator = sqlValidator;
+        this.properties = properties;
     }
 
     @Tool(name = "execute_sql",
@@ -44,6 +53,9 @@ public class SqlExecutorTool {
     ) {
         log.info("SqlExecutorTool: executing SQL on datasource={}", datasourceId);
         try {
+            // 二次安全校验：即使绕过 generate_sql 直接调用，也拦截危险/写操作 SQL
+            sqlValidator.validate(sql);
+
             DatasourceInfo datasource = datasourceGateway.findDatasource(datasourceId)
                     .orElseThrow(() -> new RuntimeException("数据源不存在: " + datasourceId));
 
@@ -56,15 +68,22 @@ public class SqlExecutorTool {
             log.info("SqlExecutorTool: query returned {} rows", results.size());
 
             if (results.isEmpty()) {
-                return "查询结果为空。可能原因：1) 查询条件过于严格 2) 数据表中确实没有匹配数据";
+                return AgentToolResponse.empty("查询成功，但无数据。");
             }
 
             // 返回完整 JSON 数据，供下游工具（generate_chart、generate_analysis）使用
             String json = objectMapper.writeValueAsString(results);
-            return String.format("查询返回 %d 行数据：\n%s", results.size(), json);
+            int maxRows = properties.getQuery().getMaxRows();
+            String result = AgentToolResponse.data(String.format("查询成功，共 %d 行：\n%s", results.size(), json));
+
+            // 结果集大小兜底：达到单次上限时提示已截断，并引导 LLM 用聚合/缩小范围，而非拉全量
+            if (results.size() >= maxRows) {
+                result += AgentToolResponse.pagingHint(maxRows);
+            }
+            return result;
         } catch (Exception e) {
             log.error("SqlExecutorTool: failed to execute SQL", e);
-            return "SQL 执行失败: " + e.getMessage();
+            return AgentToolResponse.error("SQL 执行失败: " + e.getMessage());
         }
     }
 }

@@ -7,21 +7,21 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Text-to-SQL 转换服务
+ * NL2SQL 转换服务
  * <p>将用户自然语言转换为 SQL 查询，支持自动重试修正机制。
  * 依赖领域层端口接口 {@link SqlGenerationPort} 与 {@link SqlValidationPort}，实现与具体实现的解耦。
  * 该领域服务由基础设施层 {@code DomainServiceConfig} 通过 {@code @Bean} 装配。</p>
  */
-public class TextToSqlService {
+public class NL2SqlService {
 
-    private static final Logger log = LoggerFactory.getLogger(TextToSqlService.class);
+    private static final Logger log = LoggerFactory.getLogger(NL2SqlService.class);
 
     private final SqlGenerationPort sqlGenerationPort;
     private final SqlValidationPort sqlValidationPort;
     private final int maxRetryCount;
 
-    public TextToSqlService(SqlGenerationPort sqlGenerationPort, SqlValidationPort sqlValidationPort,
-                            int maxRetryCount) {
+    public NL2SqlService(SqlGenerationPort sqlGenerationPort, SqlValidationPort sqlValidationPort,
+                         int maxRetryCount) {
         this.sqlGenerationPort = sqlGenerationPort;
         this.sqlValidationPort = sqlValidationPort;
         this.maxRetryCount = maxRetryCount;
@@ -60,7 +60,7 @@ public class TextToSqlService {
             try {
                 sql = sqlGenerationPort.generate(modelConfigId, userQuestion, context, sqlDialect, sessionId);
                 sqlValidationPort.validate(sql);
-                log.info("Text-to-SQL 成功 (尝试 {} 次): {}", attempt, sql);
+                log.info("NL2SQL 成功 (尝试 {} 次): {}", attempt, sql);
                 return sql;
             } catch (Exception e) {
                 // sql 非空表示 LLM 已生成 SQL 但校验未通过：把违规 SQL 与原因回传给 LLM，便于其自纠
@@ -71,10 +71,10 @@ public class TextToSqlService {
                           + "\n修正要求: 只输出单条 SELECT 语句；分号（;）最多一个且只能出现在语句末尾；不要输出任何解释、注释或 markdown 标记。"
                         : "生成失败: " + e.getMessage();
                 context = schemaInfo + "\n\n" + guidance;
-                log.warn("Text-to-SQL 失败 (尝试 {}/{}): {}", attempt, maxRetryCount, e.getMessage());
+                log.warn("NL2SQL 失败 (尝试 {}/{}): {}", attempt, maxRetryCount, e.getMessage());
             }
         }
 
-        throw new DeepDataAgentException("Text-to-SQL 转换失败，已重试 " + maxRetryCount + " 次");
+        throw new DeepDataAgentException("NL2SQL 转换失败，已重试 " + maxRetryCount + " 次");
     }
 }

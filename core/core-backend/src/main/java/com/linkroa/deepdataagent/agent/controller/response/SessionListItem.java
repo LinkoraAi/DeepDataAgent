@@ -11,6 +11,7 @@ package com.linkroa.deepdataagent.agent.controller.response;
  * @param status         会话状态
  * @param lastMessageAt  最后消息时间
  * @param createdAt      创建时间
+ * @param running        会话是否正在分析中
  */
 public record SessionListItem(
     String id,
@@ -19,5 +20,6 @@ public record SessionListItem(
     Long modelConfigId,
     String status,
     String lastMessageAt,
-    String createdAt
+    String createdAt,
+    Boolean running
 ) {}

@@ -119,7 +119,7 @@ public class SessionController {
     private SessionListItem toSessionListItem(SessionListItemDTO dto) {
         return new SessionListItem(
                 dto.id(), dto.title(), dto.datasourceId(), dto.modelConfigId(),
-                dto.status(), dto.lastMessageAt(), dto.createdAt());
+                dto.status(), dto.lastMessageAt(), dto.createdAt(), dto.running());
     }
 
     /**

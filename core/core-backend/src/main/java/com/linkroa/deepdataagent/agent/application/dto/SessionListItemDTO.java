@@ -11,6 +11,7 @@ package com.linkroa.deepdataagent.agent.application.dto;
  * @param status        会话状态
  * @param lastMessageAt 最后消息时间（已格式化）
  * @param createdAt     创建时间（已格式化）
+ * @param running       会话是否正在分析中（用于前端展示转圈等待）
  */
 public record SessionListItemDTO(
         String id,
@@ -19,6 +20,7 @@ public record SessionListItemDTO(
         Long modelConfigId,
         String status,
         String lastMessageAt,
-        String createdAt
+        String createdAt,
+        Boolean running
 ) {
 }

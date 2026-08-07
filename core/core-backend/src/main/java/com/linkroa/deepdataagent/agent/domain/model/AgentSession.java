@@ -35,6 +35,8 @@ public class AgentSession {
         this.deleted = 0;
         this.createdTime = LocalDateTime.now();
         this.updatedTime = LocalDateTime.now();
+        // 初始化最后消息时间，确保新会话按创建即排最前（会话未发消息时也视为最新）
+        this.lastMessageTime = LocalDateTime.now();
     }
 
     public String getId() {

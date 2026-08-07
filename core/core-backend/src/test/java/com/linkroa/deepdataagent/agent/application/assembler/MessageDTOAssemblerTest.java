@@ -52,13 +52,13 @@ class MessageDTOAssemblerTest {
     }
 
     /**
-     * 覆盖：TOOL_CALL 类型且 input 不为 null
+     * 覆盖：TOOL_CALL 类型且同时携带入参与结果（合并后的单条消息）
      */
     @Test
-    public void should_mapToolCallFields_when_toDTO_given_toolCallWithInput() {
+    public void should_mapToolCallWithInputAndResult_when_toDTO_given_mergedToolMessage() {
         // given
         LocalDateTime startTime = LocalDateTime.of(2026, 8, 3, 10, 30, 0);
-        DialogueContent content = DialogueContent.toolCall("sql_executor", "{\"sql\":\"select 1\"}", "result");
+        DialogueContent content = DialogueContent.toolCall("sql_executor", "{\"sql\":\"select 1\"}", "执行成功");
         DialogueMessage message = buildMessage(MessageRole.TOOL, MessageType.TOOL_CALL, content, startTime, 1L);
 
         // when
@@ -70,11 +70,11 @@ class MessageDTOAssemblerTest {
         assertEquals("tool", result.role());
         assertEquals("{\"sql\":\"select 1\"}", result.content());
         assertEquals("sql_executor", result.toolCalls());
-        assertNull(result.toolResult());
+        assertEquals("执行成功", result.toolResult());
     }
 
     /**
-     * 覆盖：TOOL_CALL 类型且 input 为 null 时 content 为空串
+     * 覆盖：TOOL_CALL 类型且 input 为 null 时 content 为空串，result 仍输出
      */
     @Test
     public void should_mapToolCallWithEmptyContent_when_toDTO_given_toolCallWithoutInput() {
@@ -89,7 +89,7 @@ class MessageDTOAssemblerTest {
         // then
         assertEquals("", result.content());
         assertEquals("sql_executor", result.toolCalls());
-        assertNull(result.toolResult());
+        assertEquals("result", result.toolResult());
     }
 
     /**

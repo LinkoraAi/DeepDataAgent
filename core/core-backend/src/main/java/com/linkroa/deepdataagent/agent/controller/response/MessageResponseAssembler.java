@@ -43,9 +43,10 @@ public final class MessageResponseAssembler {
         if (content != null && type != null) {
             switch (type) {
                 case TOOL_CALL -> {
-                    // TOOL_CALL: title 为工具名，input 为入参
+                    // TOOL_CALL: title 为工具名，input 为入参，result 为结果（合并后同一条消息携带）
                     toolCalls = content.title();
                     textContent = content.input() != null ? content.input() : "";
+                    toolResult = content.result();
                 }
                 case TOOL_RESULT -> {
                     // TOOL_RESULT: title 为工具名，result 为返回结果 JSON

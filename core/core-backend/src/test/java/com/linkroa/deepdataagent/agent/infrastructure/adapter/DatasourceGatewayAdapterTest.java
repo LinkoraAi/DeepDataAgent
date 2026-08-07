@@ -4,13 +4,22 @@ import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceCategory;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceInfo;
 import com.linkroa.deepdataagent.datasource.domain.model.ApiField;
 import com.linkroa.deepdataagent.datasource.domain.model.ApiSchema;
+import com.linkroa.deepdataagent.datasource.domain.model.ColumnInfo;
+import com.linkroa.deepdataagent.datasource.domain.model.DatabaseSchema;
 import com.linkroa.deepdataagent.datasource.domain.model.DatasourceConnection;
+import com.linkroa.deepdataagent.datasource.domain.model.JdbcConnectionConfig;
+import com.linkroa.deepdataagent.datasource.domain.model.TableInfo;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceStatus;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceType;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.HttpMethod;
+import com.linkroa.deepdataagent.datasource.domain.model.enums.JdbcType;
 import com.linkroa.deepdataagent.datasource.domain.repository.ApiFieldRepository;
 import com.linkroa.deepdataagent.datasource.domain.repository.ApiSchemaRepository;
+import com.linkroa.deepdataagent.datasource.domain.repository.ColumnInfoRepository;
+import com.linkroa.deepdataagent.datasource.domain.repository.DatabaseSchemaRepository;
 import com.linkroa.deepdataagent.datasource.domain.repository.DatasourceConnectionRepository;
+import com.linkroa.deepdataagent.datasource.domain.repository.TableInfoRepository;
+import com.linkroa.deepdataagent.datasource.domain.strategy.DatasourceConnectionStrategy;
 import com.linkroa.deepdataagent.datasource.domain.strategy.DatasourceConnectionStrategyFactory;
 import com.linkroa.deepdataagent.datasource.infrastructure.client.ApiPaginationHandler;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
@@ -24,6 +33,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -42,6 +53,9 @@ class DatasourceGatewayAdapterTest {
     private DatasourceConnectionStrategyFactory strategyFactory;
 
     @Mock
+    private DatasourceConnectionStrategy strategy;
+
+    @Mock
     private ApiSchemaRepository apiSchemaRepository;
 
     @Mock
@@ -50,12 +64,22 @@ class DatasourceGatewayAdapterTest {
     @Mock
     private ApiPaginationHandler paginationHandler;
 
+    @Mock
+    private DatabaseSchemaRepository databaseSchemaRepository;
+
+    @Mock
+    private TableInfoRepository tableInfoRepository;
+
+    @Mock
+    private ColumnInfoRepository columnInfoRepository;
+
     private DatasourceGatewayAdapter adapter;
 
     @BeforeEach
     void setUp() {
         adapter = new DatasourceGatewayAdapter(
-                repository, strategyFactory, apiSchemaRepository, apiFieldRepository, paginationHandler
+                repository, strategyFactory, apiSchemaRepository, apiFieldRepository, paginationHandler,
+                databaseSchemaRepository, tableInfoRepository, columnInfoRepository
         );
     }
 
@@ -155,6 +179,127 @@ class DatasourceGatewayAdapterTest {
         assertTrue(exception.getMessage().contains("数据源不存在"));
     }
 
+    // ==================== extractSchema (JDBC 类型 + 缓存/裁剪) ====================
+
+    @Test
+    void should_returnCachedSchema_when_extractSchema_given_secondCallWithinTtl() {
+        // given - JDBC 数据源，首次提取成功
+        Long connectionId = 10L;
+        DatasourceConnection jdbcConnection = createJdbcConnection(connectionId, "jdbc-source");
+        when(repository.findById(connectionId)).thenReturn(Optional.of(jdbcConnection));
+        when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
+        when(strategy.extractSchemas(jdbcConnection)).thenReturn(List.of(createSchema("db")));
+        when(strategy.extractTables(jdbcConnection, "db")).thenReturn(List.of(createTable("orders")));
+        when(strategy.extractColumns(jdbcConnection, "db", "orders")).thenReturn(List.of(createColumn("order_id")));
+
+        // when - 连续两次调用
+        String first = adapter.extractSchema(connectionId);
+        String second = adapter.extractSchema(connectionId);
+
+        // then - 第二次命中缓存，repository 与 strategy 仅被访问一次
+        assertEquals(first, second);
+        verify(repository, times(1)).findById(connectionId);
+        verify(strategy, times(1)).extractSchemas(jdbcConnection);
+    }
+
+    @Test
+    void should_trimColumns_when_extractSchema_given_exceedingMaxTables() {
+        // given - JDBC 数据源，表数超过 50，只输出表清单不展开字段
+        Long connectionId = 11L;
+        DatasourceConnection jdbcConnection = createJdbcConnection(connectionId, "jdbc-big");
+        when(repository.findById(connectionId)).thenReturn(Optional.of(jdbcConnection));
+        when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
+        when(strategy.extractSchemas(jdbcConnection)).thenReturn(List.of(createSchema("db")));
+        List<TableInfo> manyTables = IntStream.rangeClosed(1, 51)
+                .mapToObj(i -> createTable("tbl_" + i))
+                .collect(Collectors.toList());
+        when(strategy.extractTables(jdbcConnection, "db")).thenReturn(manyTables);
+
+        // when
+        String result = adapter.extractSchema(connectionId);
+
+        // then - 表清单保留，但未展开字段（extractColumns 未被调用）
+        assertTrue(result.contains("表: tbl_1"));
+        assertTrue(result.contains("表: tbl_51"));
+        assertTrue(result.contains("表数超过"));
+        verify(strategy, never()).extractColumns(any(), any(), any());
+    }
+
+    // ==================== extractSchema (JDBC 本地优先) ====================
+
+    @Test
+    void should_readLocalMetadata_when_extractSchema_given_localSchemaPresent() {
+        // given - JDBC 数据源，本地已同步元数据，应直接读本地而非连远程
+        Long connectionId = 20L;
+        DatasourceConnection jdbcConnection = createJdbcConnection(connectionId, "jdbc-local");
+        when(repository.findById(connectionId)).thenReturn(Optional.of(jdbcConnection));
+
+        DatabaseSchema localSchema = new DatabaseSchema(1L, connectionId, "db", null, null, null);
+        TableInfo localTable = new TableInfo(10L, 1L, "orders", "订单表", null, null, null);
+        ColumnInfo localColumn = new ColumnInfo(100L, 10L, "order_id", "INT", "订单ID", null, null, null);
+        when(databaseSchemaRepository.findByConnectionId(connectionId)).thenReturn(List.of(localSchema));
+        when(tableInfoRepository.findByDatabaseSchemaId(1L)).thenReturn(List.of(localTable));
+        when(columnInfoRepository.findByTableId(10L)).thenReturn(List.of(localColumn));
+
+        // when
+        String result = adapter.extractSchema(connectionId);
+
+        // then - 输出本地元数据，且不触发远程 strategy
+        assertTrue(result.contains("表: orders"));
+        assertTrue(result.contains("订单表"));
+        assertTrue(result.contains("order_id"));
+        assertTrue(result.contains("INT"));
+        assertTrue(result.contains("订单ID"));
+        verify(strategyFactory, never()).getStrategy(any(), any());
+        verify(strategy, never()).extractSchemas(any());
+    }
+
+    @Test
+    void should_fallbackToRemote_when_extractSchema_given_noLocalSchema() {
+        // given - JDBC 数据源，本地无元数据，应兜底连远程
+        Long connectionId = 21L;
+        DatasourceConnection jdbcConnection = createJdbcConnection(connectionId, "jdbc-no-local");
+        when(repository.findById(connectionId)).thenReturn(Optional.of(jdbcConnection));
+        when(databaseSchemaRepository.findByConnectionId(connectionId)).thenReturn(List.of());
+        when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
+        when(strategy.extractSchemas(jdbcConnection)).thenReturn(List.of(createSchema("db")));
+        when(strategy.extractTables(jdbcConnection, "db")).thenReturn(List.of(createTable("orders")));
+        when(strategy.extractColumns(jdbcConnection, "db", "orders")).thenReturn(List.of(createColumn("order_id")));
+
+        // when
+        String result = adapter.extractSchema(connectionId);
+
+        // then - 兜底连远程提取
+        assertTrue(result.contains("表: orders"));
+        assertTrue(result.contains("order_id"));
+        verify(strategy).extractSchemas(jdbcConnection);
+        verify(strategy).extractTables(jdbcConnection, "db");
+    }
+
+    @Test
+    void should_trimColumnsOnLocal_when_extractSchema_given_localExceedingMaxTables() {
+        // given - JDBC 数据源，本地表数超过 50，仅输出表清单不展开字段
+        Long connectionId = 22L;
+        DatasourceConnection jdbcConnection = createJdbcConnection(connectionId, "jdbc-local-big");
+        when(repository.findById(connectionId)).thenReturn(Optional.of(jdbcConnection));
+
+        DatabaseSchema localSchema = new DatabaseSchema(2L, connectionId, "db", null, null, null);
+        List<TableInfo> manyTables = IntStream.rangeClosed(1, 51)
+                .mapToObj(i -> new TableInfo((long) i, 2L, "tbl_" + i, null, null, null, null))
+                .collect(Collectors.toList());
+        when(databaseSchemaRepository.findByConnectionId(connectionId)).thenReturn(List.of(localSchema));
+        when(tableInfoRepository.findByDatabaseSchemaId(2L)).thenReturn(manyTables);
+
+        // when
+        String result = adapter.extractSchema(connectionId);
+
+        // then - 表清单保留，但未展开字段（本地 columnInfoRepository 未被调用）
+        assertTrue(result.contains("表: tbl_1"));
+        assertTrue(result.contains("表: tbl_51"));
+        assertTrue(result.contains("表数超过"));
+        verify(columnInfoRepository, never()).findByTableId(any());
+    }
+
     // ==================== executeApiQuery ====================
 
     @Test
@@ -213,19 +358,19 @@ class DatasourceGatewayAdapterTest {
     }
 
     @Test
-    void should_clampLimitToMax1000_when_executeApiQuery_given_limitExceedsMax() {
+    void should_clampLimitToMax500_when_executeApiQuery_given_limitExceedsMax() {
         // given
         Long datasourceId = 4L;
         String apiSchemaName = "big_api";
         ApiSchema apiSchema = createApiSchema(40L, datasourceId, apiSchemaName, "https://api.example.com/big", HttpMethod.GET);
         when(apiSchemaRepository.findByConnectionIdAndName(datasourceId, apiSchemaName)).thenReturn(Optional.of(apiSchema));
-        when(paginationHandler.fetchAllPages(apiSchema, null, 1000)).thenReturn(List.of());
+        when(paginationHandler.fetchAllPages(apiSchema, null, 500)).thenReturn(List.of());
 
         // when
         adapter.executeApiQuery(datasourceId, apiSchemaName, 5000);
 
         // then
-        verify(paginationHandler).fetchAllPages(apiSchema, null, 1000);
+        verify(paginationHandler).fetchAllPages(apiSchema, null, 500);
     }
 
     // ==================== findDatasource (API 类型) ====================
@@ -301,6 +446,26 @@ class DatasourceGatewayAdapterTest {
                 DatasourceStatus.ENABLED, null, "测试API数据源",
                 LocalDateTime.now(), LocalDateTime.now(), "admin", "admin"
         );
+    }
+
+    private DatasourceConnection createJdbcConnection(Long id, String name) {
+        JdbcConnectionConfig config = new JdbcConnectionConfig("localhost", 3306, "testdb", "root", "pass", "testdb");
+        return new DatasourceConnection(
+                id, name, DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
+                config, null, null, null, null, null
+        );
+    }
+
+    private DatabaseSchema createSchema(String schemaName) {
+        return new DatabaseSchema(null, null, schemaName, null, null, null);
+    }
+
+    private TableInfo createTable(String tableName) {
+        return new TableInfo(null, null, tableName, null, null, null, null);
+    }
+
+    private ColumnInfo createColumn(String columnName) {
+        return new ColumnInfo(null, null, columnName, "VARCHAR", null, null, null, null);
     }
 
     private ApiSchema createApiSchema(Long id, Long connectionId, String name, String url, HttpMethod method) {

@@ -60,7 +60,6 @@ public class MessagePersistenceService {
             dialogueRepository.save(dialogue);
 
             DialogueMessage userMsg = DialogueMessage.userMessage(1, userQuestion);
-            userMsg.setDialogueId(dialogue.getId());
             userMsg.complete();
             dialogueRepository.updateMessages(dialogue.getId(), List.of(userMsg), DialogueStatus.RUNNING);
 

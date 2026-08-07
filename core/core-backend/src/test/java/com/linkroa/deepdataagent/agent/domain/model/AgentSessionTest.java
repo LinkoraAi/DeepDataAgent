@@ -4,6 +4,8 @@ import com.linkroa.deepdataagent.agent.domain.valueobject.SessionStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDateTime;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -33,6 +35,7 @@ class AgentSessionTest {
         assertEquals(0, session.getDeleted());
         assertNotNull(session.getCreatedTime());
         assertNotNull(session.getUpdatedTime());
+        assertNotNull(session.getLastMessageTime());
     }
 
     @Test
@@ -153,13 +156,16 @@ class AgentSessionTest {
     @Test
     void should_updateLastMessageTime_when_touchLastMessage() {
         // given
-        assertNull(session.getLastMessageTime());
+        LocalDateTime before = session.getLastMessageTime();
+        assertNotNull(before);
 
         // when
         session.touchLastMessage();
 
         // then
-        assertNotNull(session.getLastMessageTime());
+        LocalDateTime after = session.getLastMessageTime();
+        assertNotNull(after);
+        assertFalse(after.isBefore(before));
         assertNotNull(session.getUpdatedTime());
     }
 

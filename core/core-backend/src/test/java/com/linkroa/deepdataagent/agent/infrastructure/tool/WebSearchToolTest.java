@@ -74,7 +74,7 @@ class WebSearchToolTest {
         String result = webSearchTool.search(query, maxResults);
 
         // then
-        assertThat(result).isEqualTo("搜索查询为空，无法执行搜索。");
+        assertThat(result).isEqualTo("[ERROR] 搜索查询为空，无法执行搜索。");
         verify(webSearchService, never()).search(anyString(), anyInt());
     }
 
@@ -88,7 +88,7 @@ class WebSearchToolTest {
         String result = webSearchTool.search(query, maxResults);
 
         // then
-        assertThat(result).isEqualTo("搜索查询为空，无法执行搜索。");
+        assertThat(result).isEqualTo("[ERROR] 搜索查询为空，无法执行搜索。");
         verify(webSearchService, never()).search(anyString(), anyInt());
     }
 
@@ -119,7 +119,7 @@ class WebSearchToolTest {
         String result = webSearchTool.search(query, maxResults);
 
         // then
-        assertThat(result).isEqualTo("搜索失败: API error");
+        assertThat(result).isEqualTo("[ERROR] 搜索失败: API error");
         verify(webSearchService, times(1)).search(query, maxResults);
     }
 
@@ -155,18 +155,18 @@ class WebSearchToolTest {
     }
 
     @Test
-    void should_useProvidedMaxResults_when_search_given_positiveMaxResults() {
-        // given
+    void should_capMaxResultsToConfiguredLimit_when_search_given_oversizedMaxResults() {
+        // given - 传入的 maxResults 超过配置上限，应被钳制到配置值
         String query = "test query";
         Integer maxResults = 10;
         List<SearchResult> mockResults = List.of();
-        when(webSearchService.search(query, maxResults)).thenReturn(mockResults);
+        when(webSearchService.search(query, 5)).thenReturn(mockResults);
 
         // when
         webSearchTool.search(query, maxResults);
 
         // then
-        verify(webSearchService, times(1)).search(query, maxResults);
+        verify(webSearchService, times(1)).search(query, 5);
     }
 
     @Test
@@ -211,7 +211,7 @@ class WebSearchToolTest {
         String result = webSearchTool.search(query, maxResults);
 
         // then
-        assertThat(result).isEqualTo("未找到相关搜索结果。");
+        assertThat(result).isEqualTo("[EMPTY] 未找到相关搜索结果。");
         verify(webSearchService, times(1)).search(query, maxResults);
     }
 
@@ -225,7 +225,7 @@ class WebSearchToolTest {
         String result = webSearchTool.search(query, maxResults);
 
         // then
-        assertThat(result).isEqualTo("搜索查询为空，无法执行搜索。");
+        assertThat(result).isEqualTo("[ERROR] 搜索查询为空，无法执行搜索。");
         verify(webSearchService, never()).search(anyString(), anyInt());
     }
 
@@ -240,7 +240,7 @@ class WebSearchToolTest {
         String result = webSearchTool.search(query, maxResults);
 
         // then
-        assertThat(result).isEqualTo("搜索失败: 未知错误");
+        assertThat(result).isEqualTo("[ERROR] 搜索失败: 未知错误");
         verify(webSearchService, times(1)).search(query, maxResults);
     }
 
@@ -257,7 +257,7 @@ class WebSearchToolTest {
         String result = tool.search(query, 5);
 
         // then
-        assertThat(result).isEqualTo("{\"results\": []}");
+        assertThat(result).isEqualTo("[DATA] {\"results\": []}");
         verify(webSearchService, times(1)).search(query, 5);
     }
 }

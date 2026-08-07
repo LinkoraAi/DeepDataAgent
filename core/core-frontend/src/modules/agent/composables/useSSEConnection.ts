@@ -31,6 +31,8 @@ class SSEConnectionManager {
   private callbacks: Map<string, SSEEventCallbacks> = new Map();
   /** 重连成功回调：SSE 连接重连后通知调用方更新 clientId */
   private onReconnectCallback: (() => void) | null = null;
+  /** 自动重连成功回调：SSE 连接自动重连（onclose 触发）后通知调用方重新恢复运行中会话订阅 */
+  private onAutoReconnectCallback: (() => void) | null = null;
   
   private constructor() {}
   
@@ -102,6 +104,8 @@ class SSEConnectionManager {
             }
           } else if (ev.event === 'ANALYSIS_EVENT' && ev.data) {
             this.handleAnalysisEvent(ev.data);
+          } else if (ev.event === 'STATE_REPLAY' && ev.data) {
+            this.handleStateReplay(ev.data);
           }
         },
         onerror: (err) => {
@@ -122,7 +126,13 @@ class SSEConnectionManager {
           if (this.callbacks.size > 0) {
             console.log('[SSE] Connection closed with active callbacks, attempting to reconnect...');
             setTimeout(() => {
-              this.connect().catch(err => {
+              this.connect().then(() => {
+                // 自动重连成功后，通知调用方重新恢复运行中会话的订阅（绑定新 clientId）
+                if (this.onAutoReconnectCallback) {
+                  console.log('[SSE] Auto-reconnect complete, notifying auto-reconnect callback');
+                  this.onAutoReconnectCallback();
+                }
+              }).catch(err => {
                 console.error('[SSE] Auto-reconnect failed:', err);
               });
             }, 1000);
@@ -155,13 +165,48 @@ class SSEConnectionManager {
       if (callbacks) {
         callbacks.onEvent(sessionId, event);
       } else {
-        console.warn('[SSE] No callbacks registered for sessionId:', sessionId);
+        // 诊断日志：记录被丢弃的事件类型，判断是分析完成后的尾部事件还是分析中的实时事件
+        console.warn('[SSE] No callbacks registered for sessionId:', sessionId, 'eventType:', event?.type);
       }
     } catch (err) {
       console.error('[SSE] Failed to parse ANALYSIS_EVENT:', err, 'Raw:', data);
     }
   }
   
+  /**
+   * 处理状态回放事件（STATE_REPLAY）
+   * <p>刷新恢复（resume）时后端一次性推送断线期间累积的分析事件列表。
+   * 这里逐个事件按原处理路径重建该会话的分析状态，弥补断线窗口内事件的丢失。</p>
+   *
+   * @param data STATE_REPLAY 的原始数据（{"sessionId": "...", "events": [...]}）
+   */
+  private handleStateReplay(data: string) {
+    try {
+      const payload = JSON.parse(data);
+      const sessionId = payload.sessionId;
+      const events: AgentEvent[] = payload.events || [];
+      const callbacks = this.callbacks.get(sessionId);
+      if (!callbacks) {
+        console.warn('[SSE] No callbacks registered for sessionId:', sessionId);
+        return;
+      }
+      // 诊断日志：确认回放事件是否含结束事件类型（排查「回放后回调被删导致后续事件丢失」）
+      const endTypes = events.filter(e => e && ['AGENT_END', 'EXCEED_MAX_ITERS', 'ERROR'].includes(e.type));
+      console.log('[SSE][diag] replay:', {
+        count: events.length,
+        firstType: events[0]?.type,
+        lastType: events[events.length - 1]?.type,
+        endEvents: endTypes.map(e => e.type),
+      });
+      for (const event of events) {
+        callbacks.onEvent(sessionId, event);
+      }
+      console.log('[SSE] Replayed', events.length, 'buffered events for sessionId:', sessionId);
+    } catch (err) {
+      console.error('[SSE] Failed to parse STATE_REPLAY:', err, 'Raw:', data);
+    }
+  }
+
   /**
    * 注册会话事件回调
    */
@@ -205,6 +250,16 @@ class SSEConnectionManager {
   }
 
   /**
+   * 设置自动重连成功回调
+   * <p>SSE 连接断开后自动重连成功时调用，通知调用方重新恢复运行中会话的订阅
+   * （将新 clientId 重新绑定到各会话）。区别于 {@link setOnReconnect}：
+   * 该回调不依赖 lastRequest，适用于页面刷新后无待提交请求但仍有运行中会话的场景。</p>
+   */
+  setOnAutoReconnect(callback: () => void) {
+    this.onAutoReconnectCallback = callback;
+  }
+
+  /**
    * 断开连接
    */
   disconnect() {
@@ -232,5 +287,6 @@ export function useSSEConnection() {
     registerCallbacks: manager.registerCallbacks.bind(manager),
     getCallbacksCount: manager.getCallbacksCount.bind(manager),
     setOnReconnect: manager.setOnReconnect.bind(manager),
+    setOnAutoReconnect: manager.setOnAutoReconnect.bind(manager),
   };
 }

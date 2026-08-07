@@ -21,9 +21,20 @@ public final class SessionListItemDTOAssembler {
      * 将 AgentSession 领域模型转换为 SessionListItemDTO
      *
      * @param session 会话聚合根
-     * @return 会话列表项 DTO
+     * @return 会话列表项 DTO（running 默认 false）
      */
     public static SessionListItemDTO toDTO(AgentSession session) {
+        return toDTO(session, false);
+    }
+
+    /**
+     * 将 AgentSession 领域模型转换为 SessionListItemDTO，并指定其运行状态
+     *
+     * @param session 会话聚合根
+     * @param running 会话是否正在分析中
+     * @return 会话列表项 DTO
+     */
+    public static SessionListItemDTO toDTO(AgentSession session, boolean running) {
         return new SessionListItemDTO(
                 session.getId(),
                 session.getTitle(),
@@ -31,7 +42,8 @@ public final class SessionListItemDTOAssembler {
                 session.getModelConfigId(),
                 session.getStatus().name(),
                 session.getLastMessageTime() != null ? session.getLastMessageTime().format(FORMATTER) : null,
-                session.getCreatedTime() != null ? session.getCreatedTime().format(FORMATTER) : null
+                session.getCreatedTime() != null ? session.getCreatedTime().format(FORMATTER) : null,
+                running
         );
     }
 }

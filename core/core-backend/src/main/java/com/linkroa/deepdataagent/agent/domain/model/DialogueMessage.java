@@ -8,12 +8,11 @@ import java.time.LocalDateTime;
 
 /**
  * 对话消息实体
- * <p>属于 Dialogue 聚合内的实体，通过 dialogueId 关联父聚合根。</p>
+ * <p>属于 Dialogue 聚合内的实体，消息整体以 JSON 数组序列化存储于聚合根行内。</p>
  * <p>不对单条消息进行编辑或删除，只支持按轮次整体删除或重新生成。</p>
  */
 public class DialogueMessage {
 
-    private Long dialogueId;
     private Long sequenceNumber;
     private MessageRole role;
     private MessageType messageType;
@@ -49,14 +48,6 @@ public class DialogueMessage {
         return new DialogueMessage(seq, role, type,
                 DialogueContent.text(""), MessageStatus.IN_PROGRESS,
                 LocalDateTime.now(), null);
-    }
-
-    public Long getDialogueId() {
-        return dialogueId;
-    }
-
-    public void setDialogueId(Long dialogueId) {
-        this.dialogueId = dialogueId;
     }
 
     public Long getSequenceNumber() {

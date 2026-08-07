@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.linkroa.deepdataagent.agent.domain.model.SearchResult;
 import com.linkroa.deepdataagent.agent.domain.service.WebSearchService;
 import com.linkroa.deepdataagent.agent.infrastructure.config.WebSearchProperties;
+import com.linkroa.deepdataagent.agent.infrastructure.util.AgentToolResponse;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -49,28 +50,42 @@ public class WebSearchTool {
             @ToolParam(name = "maxResults", required = false,
                        description = "Maximum number of results to return, default 5") Integer maxResults
     ) {
-        log.info("WebSearchTool: searching for query='{}'", query);
-
-        // Sanitize query
+        // Sanitize query（先清理再记录日志，避免将原始超长/含敏感信息的 query 写入日志）
         String sanitizedQuery = sanitizeQuery(query);
+        log.info("WebSearchTool: searching for query='{}'", sanitizedQuery);
         if (sanitizedQuery.isEmpty()) {
-            return "搜索查询为空，无法执行搜索。";
+            return AgentToolResponse.error("搜索查询为空，无法执行搜索。");
         }
 
         try {
-            int effectiveMax = maxResults != null && maxResults > 0 ? maxResults : properties.getMaxResults();
+            int effectiveMax = resolveMaxResults(maxResults);
             List<SearchResult> results = webSearchService.search(sanitizedQuery, effectiveMax);
 
             if (results.isEmpty()) {
-                return "未找到相关搜索结果。";
+                return AgentToolResponse.empty("未找到相关搜索结果。");
             }
 
-            return formatResults(results);
+            return AgentToolResponse.data(formatResults(results));
         } catch (Exception e) {
             log.error("WebSearchTool: search failed", e);
             String errorMessage = e.getMessage() != null ? e.getMessage() : "未知错误";
-            return "搜索失败: " + errorMessage;
+            return AgentToolResponse.error("搜索失败: " + errorMessage);
         }
+    }
+
+    /**
+     * 解析并钳制最大返回结果数
+     * <p>LLM 可能传入超大值，统一钳制到配置上限，避免浪费调用配额；非法值（null/非正数）回退到配置默认。</p>
+     *
+     * @param maxResults 工具传入的最大结果数
+     * @return 钳制后的有效结果数
+     */
+    private int resolveMaxResults(Integer maxResults) {
+        int configured = properties.getMaxResults() > 0 ? properties.getMaxResults() : 5;
+        if (maxResults != null && maxResults > 0) {
+            return Math.min(maxResults, configured);
+        }
+        return configured;
     }
 
     /**

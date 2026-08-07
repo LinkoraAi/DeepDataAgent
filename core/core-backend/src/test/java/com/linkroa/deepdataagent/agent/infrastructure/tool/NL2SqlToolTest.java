@@ -4,7 +4,7 @@ import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceCategory;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceGateway;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceInfo;
 import com.linkroa.deepdataagent.agent.acl.datasource.JdbcCategory;
-import com.linkroa.deepdataagent.agent.domain.service.TextToSqlService;
+import com.linkroa.deepdataagent.agent.domain.service.NL2SqlService;
 import com.linkroa.deepdataagent.agent.application.context.SessionToolContext;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.tool.ToolCallParam;
@@ -23,20 +23,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * TextToSqlTool 单元测试
- * <p>测试 Text-to-SQL 工具的核心逻辑。</p>
+ * NL2SqlTool 单元测试
+ * <p>测试 NL2SQL 工具的核心逻辑。</p>
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
-class TextToSqlToolTest {
+class NL2SqlToolTest {
 
     @Mock
-    private TextToSqlService textToSqlService;
+    private NL2SqlService nl2SqlService;
 
     @Mock
     private DatasourceGateway datasourceGateway;
@@ -47,20 +47,41 @@ class TextToSqlToolTest {
     @Mock
     private SessionToolContext sessionToolContext;
 
-    private TextToSqlTool textToSqlTool;
+    private NL2SqlTool nl2SqlTool;
 
     @BeforeEach
     void setUp() {
-        textToSqlTool = new TextToSqlTool(textToSqlService, datasourceGateway, sessionToolContext);
+        nl2SqlTool = new NL2SqlTool(nl2SqlService, datasourceGateway, sessionToolContext);
     }
 
     @Test
     void generateSql_shouldReturnError_whenSessionIdIsBlank() {
-        String result = textToSqlTool.generateSql(
-                1L, "question", " ", toolCallParam
+        String result = nl2SqlTool.generateSql(
+                1L, "question", "schema-info", " ", toolCallParam
         );
 
+        assertTrue(result.startsWith("[ERROR]"));
         assertTrue(result.contains("sessionId is required"));
+    }
+
+    @Test
+    void generateSql_shouldReturnError_whenSessionIdIsNull() {
+        String result = nl2SqlTool.generateSql(
+                1L, "question", "schema-info", null, toolCallParam
+        );
+
+        assertTrue(result.startsWith("[ERROR]"));
+        assertTrue(result.contains("sessionId is required"));
+    }
+
+    @Test
+    void generateSql_shouldReturnError_whenSchemaInfoIsBlank() {
+        String result = nl2SqlTool.generateSql(
+                1L, "question", " ", "session-1", toolCallParam
+        );
+
+        assertTrue(result.startsWith("[ERROR]"));
+        assertTrue(result.contains("schemaInfo is required"));
     }
 
     @Test
@@ -73,10 +94,11 @@ class TextToSqlToolTest {
         // 显式 stub sessionToolContext.getModelConfigId 返回 null，确保从 RuntimeContext 获取
         when(sessionToolContext.getModelConfigId(anyString())).thenReturn(null);
 
-        String result = textToSqlTool.generateSql(
-                1L, "question", "session-1", toolCallParam
+        String result = nl2SqlTool.generateSql(
+                1L, "question", "schema-info", "session-1", toolCallParam
         );
 
+        assertTrue(result.startsWith("[ERROR]"));
         assertTrue(result.contains("modelConfigId not available"));
     }
 
@@ -85,28 +107,18 @@ class TextToSqlToolTest {
         RuntimeContext ctx = mock(RuntimeContext.class);
         when(ctx.get("model_config_id")).thenReturn(1L);
         when(toolCallParam.getRuntimeContext()).thenReturn(ctx);
-        when(datasourceGateway.extractSchema(1L)).thenReturn("CREATE TABLE t (id INT)");
         when(datasourceGateway.findDatasource(1L))
                 .thenReturn(Optional.of(new DatasourceInfo(
                         1L, "test", DatasourceCategory.JDBC, JdbcCategory.MYSQL,
                         true, null, null
                 )));
-        doReturn("SELECT * FROM t").when(textToSqlService).convert(anyLong(), anyString(), anyString(), anyString(), anyString());
+        doReturn("SELECT * FROM t").when(nl2SqlService).convert(anyLong(), anyString(), anyString(), anyString(), anyString());
 
-        String result = textToSqlTool.generateSql(
-                1L, "question", "session-1", toolCallParam
+        String result = nl2SqlTool.generateSql(
+                1L, "question", "schema-info", "session-1", toolCallParam
         );
 
         assertEquals("SELECT * FROM t", result);
-    }
-
-    @Test
-    void generateSql_shouldReturnError_whenSessionIdIsNull() {
-        String result = textToSqlTool.generateSql(
-                1L, "question", null, toolCallParam
-        );
-
-        assertTrue(result.contains("sessionId is required"));
     }
 
     @Test
@@ -114,16 +126,15 @@ class TextToSqlToolTest {
         RuntimeContext ctx = mock(RuntimeContext.class);
         when(ctx.get("model_config_id")).thenReturn(1L);
         when(toolCallParam.getRuntimeContext()).thenReturn(ctx);
-        when(datasourceGateway.extractSchema(1L)).thenReturn("CREATE TABLE t (id INT)");
         when(datasourceGateway.findDatasource(1L))
                 .thenReturn(Optional.of(new DatasourceInfo(
                         1L, "test", DatasourceCategory.JDBC, JdbcCategory.CLICKHOUSE,
                         true, null, null
                 )));
-        doReturn("SELECT * FROM t").when(textToSqlService).convert(anyLong(), anyString(), anyString(), anyString(), anyString());
+        doReturn("SELECT * FROM t").when(nl2SqlService).convert(anyLong(), anyString(), anyString(), anyString(), anyString());
 
-        String result = textToSqlTool.generateSql(
-                1L, "question", "session-1", toolCallParam
+        String result = nl2SqlTool.generateSql(
+                1L, "question", "schema-info", "session-1", toolCallParam
         );
 
         assertEquals("SELECT * FROM t", result);
@@ -134,12 +145,19 @@ class TextToSqlToolTest {
         RuntimeContext ctx = mock(RuntimeContext.class);
         when(ctx.get("model_config_id")).thenReturn(1L);
         when(toolCallParam.getRuntimeContext()).thenReturn(ctx);
-        when(datasourceGateway.extractSchema(1L)).thenThrow(new RuntimeException("DB connection failed"));
+        when(datasourceGateway.findDatasource(1L))
+                .thenReturn(Optional.of(new DatasourceInfo(
+                        1L, "test", DatasourceCategory.JDBC, JdbcCategory.MYSQL,
+                        true, null, null
+                )));
+        doThrow(new RuntimeException("DB connection failed")).when(nl2SqlService)
+                .convert(anyLong(), anyString(), anyString(), anyString(), anyString());
 
-        String result = textToSqlTool.generateSql(
-                1L, "question", "session-1", toolCallParam
+        String result = nl2SqlTool.generateSql(
+                1L, "question", "schema-info", "session-1", toolCallParam
         );
 
+        assertTrue(result.startsWith("[ERROR]"));
         assertTrue(result.contains("Failed to generate SQL"));
     }
 }

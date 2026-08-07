@@ -39,6 +39,7 @@ class SessionListItemAssemblerTest {
     void should_mapTimestampsAsNull_when_toListItem_given_nullTimestamps() {
         // given
         AgentSession session = new AgentSession("session-2", "新会话", 2L, 10L, 20L, SessionStatus.ACTIVE);
+        session.setLastMessageTime(null);
 
         // when
         SessionListItem result = SessionListItemAssembler.toListItem(session);

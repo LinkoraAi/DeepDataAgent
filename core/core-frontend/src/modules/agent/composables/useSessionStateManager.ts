@@ -150,6 +150,7 @@ function createSessionStateManager() {
    * @param event Agent 事件
    * @param currentSessionId 当前会话 ID
    * @param toolResultBuffers 工具结果缓冲区（由 useSSE 管理）
+   * @param toolCallInputBuffers 工具入参缓冲区（由 useSSE 管理）
    * @param onComplete 完成回调
    * @param onError 错误回调
    */
@@ -158,12 +159,13 @@ function createSessionStateManager() {
     event: AgentEvent,
     currentSessionId: string | null,
     toolResultBuffers: Map<string, string>,
+    toolCallInputBuffers: Map<string, string>,
     onComplete?: (sessionId: string) => void,
     onError?: (sessionId: string, message: string) => void,
   ) {
     if (sessionId === currentSessionId) {
       // 当前会话 - 直接处理事件（触发渲染）
-      processEvent(event, toolResultBuffers, sessionId, onComplete, onError);
+      processEvent(event, toolResultBuffers, toolCallInputBuffers, sessionId, onComplete, onError);
     } else {
       // 后台会话 - 临时保存当前状态，处理事件，保存到 Map，恢复当前状态
       const prevSessionId = currentSessionId;
@@ -180,7 +182,7 @@ function createSessionStateManager() {
         analysisStore.state.isAnalyzing = true;
       }
       // 处理事件（这会更新 analysisStore）
-      processEvent(event, toolResultBuffers, sessionId, (sid) => {
+      processEvent(event, toolResultBuffers, toolCallInputBuffers, sessionId, (sid) => {
         // 完成时保存到 Map
         saveState(sid);
         onComplete?.(sid);
@@ -193,6 +195,11 @@ function createSessionStateManager() {
       // 恢复之前会话的状态
       if (prevSessionId) {
         restoreState(prevSessionId);
+      } else {
+        // 无当前会话（如新建会话后 currentSessionId 为 null）：
+        // 处理完后台事件后恢复空态，避免后台会话的 isAnalyzing=true 残留在全局，
+        // 导致新会话发送按钮被禁用却迟迟无法恢复。
+        analysisStore.reset();
       }
     }
   }
@@ -203,6 +210,7 @@ function createSessionStateManager() {
   function processEvent(
     event: AgentEvent,
     toolResultBuffers: Map<string, string>,
+    toolCallInputBuffers: Map<string, string>,
     sessionId: string,
     onComplete?: (sessionId: string) => void,
     onError?: (sessionId: string, message: string) => void,
@@ -239,6 +247,8 @@ function createSessionStateManager() {
         break;
 
       case 'TOOL_CALL_START':
+        // 工具调用开始。按用户决策，TEXT_BLOCK_DELTA 一律实时渲染进报告区、不搬移叙述，
+        // 故此处无需搬移待定文本到 thinking。
         if (!event.toolCallName) return;
         // toolCallId 是 AgentScope 内部标识符（如 chatcmpl-tool-xxx），不是用户可见的输入参数
         // 真正的输入参数通过 TOOL_CALL_DELTA 事件累积，此处不传入无意义的 toolCallId
@@ -246,9 +256,22 @@ function createSessionStateManager() {
         break;
 
       case 'TOOL_CALL_DELTA':
+        // 按 toolCallId 累积工具入参增量，供 TOOL_CALL_END 回填
+        if (event.toolCallId && event.delta) {
+          const existing = toolCallInputBuffers.get(event.toolCallId) || '';
+          toolCallInputBuffers.set(event.toolCallId, existing + event.delta);
+        }
         break;
 
       case 'TOOL_CALL_END':
+        // 取回累积入参并回填到当前工具调用项
+        if (event.toolCallName) {
+          const input = event.toolCallId ? toolCallInputBuffers.get(event.toolCallId) : undefined;
+          analysisStore.addToolCallToCurrentRound(event.toolCallName, input);
+          if (event.toolCallId) {
+            toolCallInputBuffers.delete(event.toolCallId);
+          }
+        }
         break;
 
       case 'TOOL_RESULT_TEXT_DELTA':
@@ -277,6 +300,7 @@ function createSessionStateManager() {
 
       case 'TEXT_BLOCK_DELTA':
         if (!event.delta) return;
+        // 文本增量实时追加进报告区（真流式），报告随 agent 生成逐字增长，不缓冲、不搬移。
         analysisStore.upsertReportItem(event.delta, false);
         break;
 
@@ -284,12 +308,15 @@ function createSessionStateManager() {
         break;
 
       case 'AGENT_RESULT':
+        // 收尾/兜底：报告已由 TEXT_BLOCK_DELTA 实时追加，此处用权威最终文本覆盖（内容一致则无感）；
+        // 当某些 provider 不发增量、仅此处携带全文时，作为兜底填充报告。
         if (event.result?.textContent) {
           analysisStore.upsertReportItem(event.result.textContent, true);
         }
         break;
 
       case 'AGENT_END':
+        // Agent 结束：报告已由 TEXT_BLOCK_DELTA 实时渲染，完成收尾
         analysisStore.completeAnalysis();
         saveState(sessionId);
         onComplete?.(sessionId);
@@ -342,7 +369,9 @@ function createSessionStateManager() {
           const chartContent = tryUnescapeJson(resultContent);
           if (chartContent && chartContent.trim()) {
             const chartData = JSON.parse(chartContent);
-            const chartType = extractChartType(resultContent);
+            // 兼容二次序列化为字符串的情况，转成 option 对象以提取图表类型
+            const chartOption = typeof chartData === 'string' ? JSON.parse(chartData) : chartData;
+            const chartType = extractChartType(chartOption);
             const chartOptionStr = typeof chartData === 'string' ? chartData : JSON.stringify(chartData);
             analysisStore.setChart(chartType || 'TABLE', chartOptionStr);
           }
@@ -355,13 +384,6 @@ function createSessionStateManager() {
         const searchResults = parseWebSearchResults(resultContent);
         if (searchResults.length > 0) {
           analysisStore.setSearchResults(searchResults);
-        }
-        break;
-
-      case 'generate_analysis':
-        const analysisContent = tryUnescapeJson(resultContent);
-        if (analysisContent) {
-          analysisStore.upsertReportItem(analysisContent, true);
         }
         break;
 
@@ -548,15 +570,14 @@ function tryUnescapeJson(text: string): string | null {
 }
 
 /**
- * 从文本中提取图表类型
+ * 从图表数据中提取图表类型
+ * <p>兼容两种格式：旧格式顶层 chartType 字段；新格式纯 ECharts option（series[0].type）。</p>
  */
-function extractChartType(text: string): string | null {
-  if (!text) return null;
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed.chartType) return parsed.chartType;
-  } catch {
-    // ignore
-  }
+function extractChartType(data: any): string | null {
+  if (!data) return null;
+  // 旧格式：顶层 chartType 字段
+  if (data.chartType) return data.chartType;
+  // 新格式：纯 ECharts option，从 series[0].type 提取（如 line/bar/pie）
+  if (data.series?.[0]?.type) return data.series[0].type;
   return null;
 }

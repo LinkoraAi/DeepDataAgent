@@ -100,7 +100,7 @@ class SessionControllerTest {
     void should_returnSuccess_when_listSessions_given_activeSessions() {
         // given
         List<SessionListItemDTO> expectedList = List.of(
-                new SessionListItemDTO("session-1", "会话1", 1L, 1L, "ACTIVE", null, "2025-01-01 00:00:00"));
+                new SessionListItemDTO("session-1", "会话1", 1L, 1L, "ACTIVE", null, "2025-01-01 00:00:00", true));
         when(sessionApplicationService.listSessions(null, null)).thenReturn(expectedList);
 
         // when
@@ -109,6 +109,7 @@ class SessionControllerTest {
         // then
         assertTrue(result.success());
         assertEquals(1, result.data().size());
+        assertTrue(result.data().getFirst().running());
     }
 
     @Test
@@ -128,7 +129,7 @@ class SessionControllerTest {
     void should_passParams_when_listSessions_given_limitAndOffset() {
         // given
         List<SessionListItemDTO> expectedList = List.of(
-                new SessionListItemDTO("session-2", "会话2", 2L, 2L, "ACTIVE", null, "2025-01-01 00:00:00"));
+                new SessionListItemDTO("session-2", "会话2", 2L, 2L, "ACTIVE", null, "2025-01-01 00:00:00", false));
         when(sessionApplicationService.listSessions(20, 40)).thenReturn(expectedList);
 
         // when

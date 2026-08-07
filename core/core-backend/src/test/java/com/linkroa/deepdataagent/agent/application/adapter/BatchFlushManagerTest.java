@@ -69,6 +69,29 @@ class BatchFlushManagerTest {
     }
 
     @Test
+    void should_flushRunningImmediately_when_start_given_zeroInitialDelay() throws Exception {
+        // given
+        // 自定义写库节奏：首次延迟 0s，验证 initialFlushDelay 配置生效（立即触发 RUNNING flush）
+        BatchFlushManager customManager = new BatchFlushManager(dialogueRepository, 0L, 60L);
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<DialogueStatus> capturedStatus = new AtomicReference<>();
+        doAnswer(inv -> {
+            capturedStatus.set(inv.getArgument(2));
+            latch.countDown();
+            return null;
+        }).when(dialogueRepository).updateMessages(anyLong(), anyList(), any());
+
+        // when
+        customManager.start(1L, "session-1", context);
+
+        // then
+        assertTrue(latch.await(5, TimeUnit.SECONDS));
+        // 首次 flush 立即以 RUNNING 状态写入，前端可尽早看到内容
+        assertEquals(DialogueStatus.RUNNING, capturedStatus.get());
+        customManager.close();
+    }
+
+    @Test
     void should_preserveAllMessages_when_finalFlush_given_multipleAccumulatedMessages() throws Exception {
         // given
         // 上下文构造时已内置用户消息（seq=1），后续追加思考(seq=2)、工具调用(seq=3)

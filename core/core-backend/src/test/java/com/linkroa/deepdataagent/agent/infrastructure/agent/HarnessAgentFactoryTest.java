@@ -5,12 +5,11 @@ import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
 import com.linkroa.deepdataagent.agent.infrastructure.config.AgentMemoryProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.config.AgentProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.config.SessionProperties;
-import com.linkroa.deepdataagent.agent.infrastructure.tool.AnalysisGeneratorTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.ApiDataFetcherTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.ChartGeneratorTool;
+import com.linkroa.deepdataagent.agent.infrastructure.tool.NL2SqlTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.SchemaRetrieverTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.SqlExecutorTool;
-import com.linkroa.deepdataagent.agent.infrastructure.tool.TextToSqlTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.WebSearchTool;
 import io.agentscope.core.middleware.MiddlewareBase;
 import io.agentscope.core.model.ChatModelBase;
@@ -67,7 +66,7 @@ class HarnessAgentFactoryTest {
     private SchemaRetrieverTool schemaRetrieverTool;
 
     @Mock
-    private TextToSqlTool textToSqlTool;
+    private NL2SqlTool nl2SqlTool;
 
     @Mock
     private SqlExecutorTool sqlExecutorTool;
@@ -77,9 +76,6 @@ class HarnessAgentFactoryTest {
 
     @Mock
     private ChartGeneratorTool chartGeneratorTool;
-
-    @Mock
-    private AnalysisGeneratorTool analysisGeneratorTool;
 
     @Mock
     private WebSearchTool webSearchTool;
@@ -104,9 +100,8 @@ class HarnessAgentFactoryTest {
         lenient().when(sessionProperties.getMaxActiveSessions()).thenReturn(maxActiveSessions);
         return new HarnessAgentFactory(
                 llmClient, sessionProperties, agentProperties, agentMemoryProperties,
-                schemaRetrieverTool, textToSqlTool, sqlExecutorTool,
-                apiDataFetcherTool, chartGeneratorTool, analysisGeneratorTool,
-                webSearchTool);
+                schemaRetrieverTool, nl2SqlTool, sqlExecutorTool,
+                apiDataFetcherTool, chartGeneratorTool, webSearchTool);
     }
 
     /**
@@ -292,7 +287,7 @@ class HarnessAgentFactoryTest {
         // then
         Toolkit toolkit = captureToolkit(builder);
         assertThat(toolkit.getToolNames()).contains("retrieve_schema", "generate_sql", "execute_sql",
-                "generate_chart", "generate_analysis");
+                "generate_chart");
         assertThat(toolkit.getToolNames()).doesNotContain("execute_api_query");
     }
 
@@ -307,7 +302,7 @@ class HarnessAgentFactoryTest {
         // then
         Toolkit toolkit = captureToolkit(builder);
         assertThat(toolkit.getToolNames()).contains("retrieve_schema", "execute_api_query",
-                "generate_chart", "generate_analysis");
+                "generate_chart");
         assertThat(toolkit.getToolNames()).doesNotContain("generate_sql", "execute_sql");
     }
 

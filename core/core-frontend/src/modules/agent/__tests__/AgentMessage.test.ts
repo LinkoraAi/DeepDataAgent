@@ -357,3 +357,31 @@ describe('AgentMessage - ReAct 轮次渲染', () => {
     expect(wrapper.text()).not.toContain('你可能还想了解');
   });
 });
+
+describe('AgentMessage - 报告与图表渲染顺序', () => {
+  it('分析完成后报告应渲染在图表之前（报告为主内容）', () => {
+    const message = createMockMessage({
+      analysisReport: '## 分析结果\n本月销售额增长 15%。',
+      chartConfig: {
+        title: '销售额',
+        series: [{ type: 'bar', data: [10, 20, 5] }],
+      },
+      chartType: 'bar',
+    });
+    const wrapper = mount(AgentMessage, {
+      props: { message, isAnalyzing: false },
+      global: {
+        stubs: {
+          ...tdesignStubs,
+          ReportSection: { template: '<div class="report-stub" />' },
+          ChartSection: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    const reportEl = wrapper.find('.report-stub').element;
+    const chartEl = wrapper.find('.chart-stub').element;
+    // 报告节点应位于图表节点之前（DOM 顺序）
+    expect(reportEl.compareDocumentPosition(chartEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});

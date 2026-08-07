@@ -36,7 +36,7 @@ const sessionStore = useSessionStore();
 const datasourceStore = useDatasourceStore();
 const modelStore = useModelStore();
 const analysisStore = useAnalysisStore();
-const { submitQuestion, retryAnalysis, stopAnalysis } = useDataAnalysis();
+const { submitQuestion, retryAnalysis, stopAnalysis, resumeAllRunningSessions } = useDataAnalysis();
 
 /**
  * 监听会话切换：切换会话时不中断 SSE 分析，让分析在后台继续执行
@@ -116,6 +116,9 @@ onMounted(async () => {
     datasourceStore.loadEnabled(),
     modelStore.loadConfigs(),
   ]);
+  // 加载完会话后恢复运行中会话的分析订阅（先回放消息，再通过 SSE 续流）
+  // 消息回放由 watch(currentSessionId) 在 loadSessions 设置 currentSessionId 后触发
+  await resumeAllRunningSessions();
   // 注：会话切换/加载由 watch(currentSessionId) 统一处理
   // onMounted 中不再调用，避免与 watch 竞态
 });

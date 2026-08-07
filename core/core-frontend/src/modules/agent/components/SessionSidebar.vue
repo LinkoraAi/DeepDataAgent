@@ -24,9 +24,13 @@
           @click="handleSelectSession(session.id)"
         >
           <div class="session-item__content">
-            <div class="session-item__title">{{ session.title }}</div>
+            <div class="session-item__title">
+              <span>{{ session.title }}</span>
+              <!-- 运行时显示转圈等待徽标 -->
+              <t-loading v-if="session.running" size="12px" class="session-item__running-badge" />
+            </div>
             <div class="session-item__meta">
-              <span>{{ formatRelativeTime(session.lastMessageAt || session.createdAt) }}</span>
+              <span>{{ formatSessionTime(session.lastMessageAt || session.createdAt) }}</span>
             </div>
           </div>
           <button
@@ -57,7 +61,7 @@ import { useSessionStore } from '../stores/session';
 import { useDatasourceStore } from '../stores/datasource';
 import { useModelStore } from '@/modules/model/stores/model';
 import { useAnalysisStore } from '../stores/analysis';
-import { formatRelativeTime } from '@/shared/utils/format';
+import { formatSessionTime } from '@/shared/utils/format';
 
 const sessionStore = useSessionStore();
 const datasourceStore = useDatasourceStore();
@@ -98,8 +102,10 @@ function handleNewSession() {
   }
   // 懒创建：仅清空当前状态，不调用后端 API
   // 会话将在用户首次发送消息时创建（useDataAnalysis.submitQuestion 已有此逻辑）
-  analysisStore.reset();
+  // 先 clearCurrentSession（内部会 saveState 当前会话到状态容器），再 reset 全局显示，
+  // 保证新建会话时后台/当前会话状态不丢失
   sessionStore.clearCurrentSession();
+  analysisStore.reset();
 }
 
 /** 切换会话 */
@@ -241,6 +247,9 @@ function handleCloseSession(sessionId: string) {
   }
 
   &__title {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     font-size: 13px;
     font-weight: 500;
     color: #0f172a;
@@ -248,6 +257,17 @@ function handleCloseSession(sessionId: string) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+
+    span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  &__running-badge {
+    flex-shrink: 0;
+    color: #0052d9;
   }
 
   &__meta {

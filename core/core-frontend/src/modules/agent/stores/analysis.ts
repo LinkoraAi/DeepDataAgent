@@ -278,32 +278,14 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
 
   /**
-   * 检测是否为叙述性前缀。
-   * <p>用于过滤 LLM 流式输出中的非报告内容。</p>
-   */
-  function isNarrativePrefix(text: string): boolean {
-    const prefixes = [
-      '我将帮您', '让我', '现在', '好的', '首先', '接下来', '我已经',
-      '我将', '我来', '请稍等', '正在分析', '我将为您', '我将进行'
-    ];
-    const trimmed = text.trim();
-    return prefixes.some(prefix => trimmed.startsWith(prefix));
-  }
-
-  /**
    * 更新时间线报告项
-  
-   * <p>用于 analysis SSE 事件的流式处理。增量时追加内容并标记为流式中，
-   * 完成时标记为非流式。</p>
+   * <p>报告现只由权威 REPORT/AGENT_RESULT 事件整段渲染（isComplete=true），
+   * 中间叙述不再进入报告，故不再需要叙述前缀过滤。</p>
    *
-   * @param delta 报告内容增量
+   * @param delta 报告内容
    * @param isComplete 是否为报告完成事件
    */
   function upsertReportItem(delta: string, isComplete: boolean = false) {
-    // 过滤明显的叙述性前缀（仅在报告为空且非完成事件时）
-    if (!isComplete && !state.value.report && isNarrativePrefix(delta)) {
-      return;
-    }
     if (!state.value.report && !isComplete) {
       // 创建新的流式报告（首次增量）
       const now = Date.now();
@@ -317,9 +299,6 @@ export const useAnalysisStore = defineStore('analysis', () => {
     } else if (state.value.report) {
       if (isComplete) {
         // 完成事件：用完整内容替换已流式输出的内容，避免重复
-        // （报告可能已通过 TEXT_BLOCK_DELTA 增量流式输出，
-        //  但 AGENT_RESULT 或 generate_analysis 工具结果会发送完整报告，
-        //  此处必须替换而不是追加，否则会出现重复内容）
         state.value.report = {
           ...state.value.report,
           content: delta,

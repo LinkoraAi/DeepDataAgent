@@ -1,5 +1,6 @@
 package com.linkroa.deepdataagent.agent.infrastructure.client;
 
+import com.linkroa.deepdataagent.agent.domain.exception.AnalysisCancelledException;
 import com.linkroa.deepdataagent.agent.domain.model.AgentModelInfo;
 import com.linkroa.deepdataagent.agent.domain.model.TestConnectionResult;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentModelInfoRepository;
@@ -25,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * LLM 客户端
  * <p>封装 AgentScope ChatModel，根据 modelConfigId 动态获取对应的 ChatModel 实例，
- * 提供 prompt 构建和调用能力，支持 Text-to-SQL、分析结论生成、图表配置生成等场景。</p>
+ * 提供 prompt 构建和调用能力，支持 NL2SQL、分析结论生成、图表配置生成等场景。</p>
  * <p>实现领域层 {@link LLMGenerationPort} 和 {@link SqlGenerationPort} 端口接口。</p>
  */
 @Component
@@ -216,92 +217,6 @@ public class LLMClient implements LLMGenerationPort, SqlGenerationPort {
     }
 
     /**
-     * 生成分析报告
-     *
-     * @param modelConfigId 模型配置 ID
-     * @param userQuestion  用户问题
-     * @param sqlQuery      执行的 SQL 语句
-     * @param dataSummary   数据统计摘要
-     * @param chartSummary  图表描述或配置
-     */
-    public String generateAnalysis(Long modelConfigId, String userQuestion, String sqlQuery, String dataSummary, String chartSummary) {
-        return generateAnalysis(modelConfigId, userQuestion, sqlQuery, dataSummary, chartSummary, null);
-    }
-
-    /**
-     * 生成分析报告（带 sessionId 用于流式回调）
-     * <p>实现 {@link LLMGenerationPort} 端口接口。</p>
-     *
-     * @param modelConfigId 模型配置 ID
-     * @param userQuestion  用户问题
-     * @param sqlQuery      执行的 SQL 语句
-     * @param dataSummary   数据统计摘要
-     * @param chartSummary  图表描述或配置
-     * @param sessionId     会话 ID（用于获取 delta 回调，可为 null）
-     */
-    @Override
-    public String generateAnalysis(Long modelConfigId, String userQuestion, String sqlQuery, String dataSummary, String chartSummary, String sessionId) {
-        String systemPrompt = """
-                你是一个资深数据分析师，擅长从数据中提取洞察并生成结构化分析报告。
-
-                ## 报告结构要求
-                请生成一份完整的分析报告，必须包含以下章节：
-
-                ### 一、分析概述
-                - 用一句话总结分析的核心结论
-                - 说明分析的数据范围
-
-                ### 二、关键发现
-                - 使用 Markdown 表格呈现核心指标
-                - 对每个关键指标进行解读
-                - 使用**加粗**突出重要数据
-
-                ### 三、详细分析
-                - 趋势分析：数据随时间的变化规律
-                - 对比分析：不同维度的数据对比
-                - 异常识别：数据中的异常值或特殊现象
-                - 结合图表信息进行解读
-
-                ### 四、结论与建议
-                - 基于数据得出明确结论
-                - 给出 2-3 条可操作的建议
-                - 标注潜在风险或需关注的事项
-
-                ## 格式要求
-                1. 严格使用 Markdown 格式
-                2. 使用二级标题(##)分隔主要章节
-                3. 关键数据使用表格呈现
-                4. 数据精确到原始数据的精度，不要编造数据
-                5. 语言简洁专业，避免空话套话
-                6. 如果数据不足以支撑某章节，可简要说明或省略该章节
-
-                ## 严格禁止
-                1. 不要输出任何叙述性前缀（如「我将帮您...」「让我...」「现在...」「好的」「首先」）
-                2. 不要复述执行过程（如「我已经了解了数据库结构」「让我生成SQL...」）
-                3. 不要输出 SQL 语句，SQL 已在前面步骤执行
-                4. 直接以二级标题(##)开始报告，例如：## 一、分析概述
-                """;
-
-        String userPrompt = """
-                ## 用户问题
-                %s
-
-                ## 执行的 SQL
-                %s
-
-                ## 数据统计摘要
-                %s
-
-                ## 可视化图表信息
-                %s
-
-                请根据以上信息生成完整的分析报告。
-                """.formatted(userQuestion, sqlQuery, dataSummary, chartSummary);
-
-        return callLLM(modelConfigId, systemPrompt, userPrompt, sessionId);
-    }
-
-    /**
      * 生成图表配置（ECharts JSON）
      */
     public String generateChartConfig(Long modelConfigId, String dataDescription, String userQuestion) {
@@ -379,6 +294,7 @@ public class LLMClient implements LLMGenerationPort, SqlGenerationPort {
         );
 
         Exception lastException = null;
+        int retried = 0;
         for (int attempt = 1; attempt <= MAX_LLM_RETRIES; attempt++) {
             try {
                 // 每次重试都重新获取 model，瞬时错误后缓存已清除会重建新实例
@@ -410,10 +326,17 @@ public class LLMClient implements LLMGenerationPort, SqlGenerationPort {
             } catch (DeepDataAgentException e) {
                 throw e;
             } catch (Exception e) {
+                // 数据分析被用户主动取消：恢复中断标志，记录 info 日志，以取消语义抛出，不重试
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                    log.info("LLM 调用被用户取消，停止分析: {}", LogMasker.mask(e.getMessage()));
+                    throw new AnalysisCancelledException("LLM 调用被取消: " + e.getMessage());
+                }
                 lastException = e;
                 if (attempt < MAX_LLM_RETRIES && isTransientError(e)) {
                     // 清除缓存的 model 实例，下次重试时重建新连接
                     evictCache(modelConfigId);
+                    retried++;
                     long backoffMs = (long) Math.pow(2, attempt) * 1000L;
                     log.warn("LLM 调用失败（第 {}/{} 次尝试），清除缓存并重建连接，{}ms 后重试: {}",
                             attempt, MAX_LLM_RETRIES, backoffMs,
@@ -430,7 +353,7 @@ public class LLMClient implements LLMGenerationPort, SqlGenerationPort {
             }
         }
 
-        log.error("LLM 调用失败（已重试 {} 次）: {}", MAX_LLM_RETRIES,
+        log.warn("LLM 调用失败（已重试 {} 次）: {}", retried,
                 lastException != null ? LogMasker.mask(lastException.getMessage()) : "unknown");
         throw new DeepDataAgentException(
                 "LLM 调用失败: " + (lastException != null ? lastException.getMessage() : "unknown"));

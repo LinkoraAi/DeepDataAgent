@@ -5,12 +5,11 @@ import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
 import com.linkroa.deepdataagent.agent.infrastructure.config.AgentMemoryProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.config.AgentProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.config.SessionProperties;
-import com.linkroa.deepdataagent.agent.infrastructure.tool.AnalysisGeneratorTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.ApiDataFetcherTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.ChartGeneratorTool;
+import com.linkroa.deepdataagent.agent.infrastructure.tool.NL2SqlTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.SchemaRetrieverTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.SqlExecutorTool;
-import com.linkroa.deepdataagent.agent.infrastructure.tool.TextToSqlTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.WebSearchTool;
 import io.agentscope.harness.agent.HarnessAgent;
 import io.agentscope.harness.agent.memory.MemoryConfig;
@@ -58,11 +57,10 @@ public class HarnessAgentFactory {
     private final AgentProperties agentProperties;
     private final AgentMemoryProperties agentMemoryProperties;
     private final SchemaRetrieverTool schemaRetrieverTool;
-    private final TextToSqlTool textToSqlTool;
+    private final NL2SqlTool nl2SqlTool;
     private final SqlExecutorTool sqlExecutorTool;
     private final ApiDataFetcherTool apiDataFetcherTool;
     private final ChartGeneratorTool chartGeneratorTool;
-    private final AnalysisGeneratorTool analysisGeneratorTool;
     private final WebSearchTool webSearchTool;
 
     /** 系统提示词（JDBC 数据源） */
@@ -76,7 +74,8 @@ public class HarnessAgentFactory {
                - 根据用户问题，可使用 keyword 参数过滤相关表
             2. 调用 generate_sql 将用户问题转换为 SQL
                - 确保 SQL 能正确回答用户问题
-               - 使用 retrieve_schema 获取的 schema 信息
+               - 必须将 retrieve_schema 返回的 schema 信息作为 schemaInfo 参数传入 generate_sql
+               - 若 schemaInfo 为空，说明尚未调用 retrieve_schema，请先调用
             3. 调用 execute_sql 执行 SQL 查询
                - 如果执行失败，分析错误原因并修正 SQL
                - 最多重试 2 次，仍失败则报告错误
@@ -85,10 +84,9 @@ public class HarnessAgentFactory {
                - 判断依据：用户问题是否包含"图表/可视化/趋势/对比"等关键词
                - 数据特征：多维度对比、时间趋势、占比分布等适合图表展示
                - 如果数据为单一指标、纯文本结果或表格已足够清晰，可不调用
-               - 传入查询结果和用户问题
-            5. 调用 generate_analysis 生成完整分析报告
-               - 报告应包含：分析概述、关键发现、详细分析、结论建议
-               - 传入用户问题、SQL、数据摘要、图表信息
+            5. 按问题复杂度直接输出最终回答（最终输出即答案本身）
+               - 简单数据问答（如"某指标是多少""有多少条记录""表格已清晰呈现"）：直接给出简洁结论并附关键数据，不展开四段式，不调用图表
+               - 复杂分析（涉及趋势、对比、归因、多维度）：输出结构化 Markdown 分析报告，包含分析概述、关键发现、详细分析、结论建议
 
             ## 联网搜索使用指南
             ### 何时使用 web_search
@@ -113,13 +111,13 @@ public class HarnessAgentFactory {
             ## 重要规则
             - 工具应按顺序调用，但可根据需要调整
             - SQL 执行失败时，先分析错误再修正，不要盲目重试
-            - 生成分析报告前，确保已完成数据查询
+            - 生成最终回答前，确保已完成数据查询
             - 图表生成（generate_chart）是条件性调用，不是必须调用
             - 使用中文回复用户
-            - **禁止在工具调用之间输出叙述性文本**（如"我来帮您分析...""现在让我生成SQL...""让我补充查询..."等），这些内容会干扰分析报告的展示。所有分析内容应通过 generate_analysis 工具生成，不要在工具调用之外输出分析内容
-            - 最终输出应是一份结构化的 Markdown 分析报告，由 generate_analysis 工具负责生成
+            - **禁止在工具调用之间输出叙述性文本**（如"我来帮您分析...""现在让我生成SQL...""让我补充查询..."等），这些内容会干扰最终回答的展示。所有分析内容应在最终回答时输出，不要在工具调用之间输出
+            - 最终输出即答案本身，按问题复杂度选择简洁结论或四段式报告，禁止复述执行过程、禁止再对答案做额外概括
             - **联网搜索工具使用约束**：web_search 工具仅在用户明确启用"联网搜索"选项时才会被注册到可用工具集中。如果当前可用工具列表中没有 web_search 工具，说明用户未启用联网搜索功能，此时不得尝试调用该工具。请根据实际可用的工具列表来决定是否使用 web_search
-            - **会话ID传递规则**：调用 generate_sql、generate_chart、generate_analysis 工具时，必须将会话ID（从用户消息中的"会话ID"字段获取）作为 sessionId 参数传入
+            - **会话ID传递规则**：调用 generate_sql、generate_chart 工具时，必须将会话ID（从用户消息中的"会话ID"字段获取）作为 sessionId 参数传入
             """;
 
     /** 系统提示词（API 数据源） */
@@ -139,10 +137,9 @@ public class HarnessAgentFactory {
                - 判断依据：用户问题是否包含"图表/可视化/趋势/对比"等关键词
                - 数据特征：多维度对比、时间趋势、占比分布等适合图表展示
                - 如果数据为单一指标、纯文本结果或表格已足够清晰，可不调用
-               - 传入查询结果和用户问题
-            4. 调用 generate_analysis 生成完整分析报告
-               - 报告应包含：分析概述、关键发现、详细分析、结论建议
-               - 传入用户问题、数据摘要、图表信息
+            4. 按问题复杂度直接输出最终回答（最终输出即答案本身）
+               - 简单数据问答：直接给出简洁结论并附关键数据，不展开四段式，不调用图表
+               - 复杂分析：输出结构化 Markdown 分析报告，包含分析概述、关键发现、详细分析、结论建议
 
             ## 联网搜索使用指南
             ### 何时使用 web_search
@@ -166,13 +163,13 @@ public class HarnessAgentFactory {
 
             ## 重要规则
             - API 数据源不支持 SQL，请直接使用 execute_api_query 获取数据
-            - 生成分析报告前，确保已完成数据获取
+            - 生成最终回答前，确保已完成数据获取
             - 图表生成（generate_chart）是条件性调用，不是必须调用
             - 使用中文回复用户
-            - **禁止在工具调用之间输出叙述性文本**（如"我来帮您分析...""现在让我查询...""让我补充查询..."等），这些内容会干扰分析报告的展示。所有分析内容应通过 generate_analysis 工具生成，不要在工具调用之外输出分析内容
-            - 最终输出应是一份结构化的 Markdown 分析报告，由 generate_analysis 工具负责生成
+            - **禁止在工具调用之间输出叙述性文本**（如"我来帮您分析...""现在让我查询...""让我补充查询..."等），这些内容会干扰最终回答的展示。所有分析内容应在最终回答时输出，不要在工具调用之间输出
+            - 最终输出即答案本身，按问题复杂度选择简洁结论或四段式报告，禁止复述执行过程、禁止再对答案做额外概括
             - **联网搜索工具使用约束**：web_search 工具仅在用户明确启用"联网搜索"选项时才会被注册到可用工具集中。如果当前可用工具列表中没有 web_search 工具，说明用户未启用联网搜索功能，此时不得尝试调用该工具。请根据实际可用的工具列表来决定是否使用 web_search
-            - **会话ID传递规则**：调用 generate_chart、generate_analysis 工具时，必须将会话ID（从用户消息中的"会话ID"字段获取）作为 sessionId 参数传入
+            - **会话ID传递规则**：调用 generate_chart 工具时，必须将会话ID（从用户消息中的"会话ID"字段获取）作为 sessionId 参数传入
             """;
 
     /**
@@ -183,11 +180,10 @@ public class HarnessAgentFactory {
      * @param agentProperties Agent 配置
      * @param agentMemoryProperties Agent 记忆配置
      * @param schemaRetrieverTool Schema 检索工具
-     * @param textToSqlTool 文本转 SQL 工具
+     * @param nl2SqlTool NL2SQL 工具
      * @param sqlExecutorTool SQL 执行工具
      * @param apiDataFetcherTool API 数据获取工具
      * @param chartGeneratorTool 图表生成工具
-     * @param analysisGeneratorTool 分析报告生成工具
      * @param webSearchTool 网络搜索工具
      */
     public HarnessAgentFactory(
@@ -196,11 +192,10 @@ public class HarnessAgentFactory {
             AgentProperties agentProperties,
             AgentMemoryProperties agentMemoryProperties,
             SchemaRetrieverTool schemaRetrieverTool,
-            TextToSqlTool textToSqlTool,
+            NL2SqlTool nl2SqlTool,
             SqlExecutorTool sqlExecutorTool,
             ApiDataFetcherTool apiDataFetcherTool,
             ChartGeneratorTool chartGeneratorTool,
-            AnalysisGeneratorTool analysisGeneratorTool,
             WebSearchTool webSearchTool) {
         this.llmClient = llmClient;
         this.sessionProperties = sessionProperties;
@@ -208,11 +203,10 @@ public class HarnessAgentFactory {
         this.agentMemoryProperties = agentMemoryProperties;
         this.maxActiveSessions = sessionProperties.getMaxActiveSessions();
         this.schemaRetrieverTool = schemaRetrieverTool;
-        this.textToSqlTool = textToSqlTool;
+        this.nl2SqlTool = nl2SqlTool;
         this.sqlExecutorTool = sqlExecutorTool;
         this.apiDataFetcherTool = apiDataFetcherTool;
         this.chartGeneratorTool = chartGeneratorTool;
-        this.analysisGeneratorTool = analysisGeneratorTool;
         this.webSearchTool = webSearchTool;
     }
 
@@ -383,14 +377,13 @@ public class HarnessAgentFactory {
         toolkit.registerTool(schemaRetrieverTool);
 
         if (category == DatasourceCategory.JDBC) {
-            toolkit.registerTool(textToSqlTool);
+            toolkit.registerTool(nl2SqlTool);
             toolkit.registerTool(sqlExecutorTool);
         } else {
             toolkit.registerTool(apiDataFetcherTool);
         }
 
         toolkit.registerTool(chartGeneratorTool);
-        toolkit.registerTool(analysisGeneratorTool);
 
         // 条件化注册网络搜索工具
         if (enableWebSearch) {

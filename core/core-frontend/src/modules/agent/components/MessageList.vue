@@ -110,11 +110,12 @@ const groupedMessages = computed<MessageRound[]>(() => {
       let agentMsg: ChatMessage | null = null;
       let j = i + 1;
       
-      // 向后查找，直到遇到下一个 user 消息或列表结束
+      // 向后查找，直到遇到下一个 user 消息或列表结束；
+      // 取最后一个 agent 回复：刷新后运行中分析可能既有周期性落库的过期快照、
+      // 又有完成后打包的完整消息，应以最新回复为准
       while (j < messages.length && messages[j].role !== 'user') {
         if (messages[j].role === 'agent') {
           agentMsg = messages[j];
-          break; // 取第一个 agent 回复
         }
         j++;
       }
@@ -128,7 +129,19 @@ const groupedMessages = computed<MessageRound[]>(() => {
       // 跳过已处理的消息
       i = agentMsg ? messages.indexOf(agentMsg) + 1 : i + 1;
     } else {
-      // 跳过非用户消息（理论上不应该单独出现）
+      // 独立 agent 消息（前面没有匹配的 user，如刷新后配对锚点缺失）
+      // 用最近一条 user 消息作为配对锚点，保证已完成的分析结果仍能渲染
+      const prevUser = [...messages].slice(0, i).reverse().find(m => m.role === 'user');
+      rounds.push({
+        userMessage: prevUser ?? {
+          id: `placeholder-user-${i}`,
+          role: 'user',
+          content: '',
+          timestamp: msg.timestamp,
+        },
+        agentMessage: msg,
+        isAnalyzing: false,
+      });
       i++;
     }
   }
@@ -137,22 +150,24 @@ const groupedMessages = computed<MessageRound[]>(() => {
   if (shouldShowAnalyzingMessage.value && currentAnalysisMessage.value) {
     const analysisMsg = currentAnalysisMessage.value;
     
-    // 检查最后一轮是否已经有 agent 回复
-    if (rounds.length > 0 && !rounds[rounds.length - 1].agentMessage) {
-      // 最后一轮没有 agent 回复，更新为正在分析中
+    if (rounds.length > 0) {
+      // 最后一轮即为本次运行中的分析：刷新后后端可能已周期性落库了该轮的
+      // 部分快照 agent 消息，用实时消息覆盖过期快照，避免同一问题渲染成两轮。
       rounds[rounds.length - 1].agentMessage = analysisMsg;
       rounds[rounds.length - 1].isAnalyzing = true;
     } else {
-      // 创建新的一轮（用户消息还未添加到 chatMessages 时的边界情况）
-      // 查找最后一个用户消息作为这一轮的问题
+      // chatMessages 为空时创建新的一轮兜底渲染
       const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
-      if (lastUserMsg && !rounds.find(r => r.userMessage.id === lastUserMsg.id)) {
-        rounds.push({
-          userMessage: lastUserMsg,
-          agentMessage: analysisMsg,
-          isAnalyzing: true,
-        });
-      }
+      rounds.push({
+        userMessage: lastUserMsg ?? {
+          id: `placeholder-analysis-${Date.now()}`,
+          role: 'user',
+          content: '',
+          timestamp: Date.now(),
+        },
+        agentMessage: analysisMsg,
+        isAnalyzing: true,
+      });
     }
   }
   
@@ -203,11 +218,6 @@ function scrollToBottom(force: boolean = false) {
   });
 }
 
-/** 强制滚动到底部（不受 shouldAutoScroll 限制） */
-function forceScrollToBottom() {
-  scrollToBottom(true);
-}
-
 function handleRetry() {
   emit('retry');
 }
@@ -242,13 +252,16 @@ watch(
   }
 );
 
-// 分析完成或报告更新时，强制滚动到底部
+// 分析完成或报告更新时，若用户未上滚则滚动到底部
+// <p>后台分析会话的每个事件都会在 stateMap 分支临时切换 isAnalyzing/analysisReport，
+// 触发本 watch；若此处无条件强制滚动（force=true 绕过 shouldAutoScroll），
+// 会把用户在当前会话上滚查看历史的位置强制拉到底。因此必须尊重 shouldAutoScroll。</p>
 watch(
   () => [analysisStore.state.isAnalyzing, analysisStore.state.analysisReport],
   () => {
-    if (!analysisStore.state.isAnalyzing) {
+    if (!analysisStore.state.isAnalyzing && shouldAutoScroll.value) {
       nextTick(() => {
-        forceScrollToBottom();
+        scrollToBottom();
       });
     }
   }

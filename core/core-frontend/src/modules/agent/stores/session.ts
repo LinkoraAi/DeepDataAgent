@@ -77,7 +77,7 @@ function countRounds(messages: Message[]): number {
  * @param messages 同一 dialogueId 的一组消息（无需预先排序）
  * @returns 重建的分析状态；若消息为空则返回 undefined
  */
-function buildAnalysisStateFromMessages(messages: Message[]): AnalysisSnapshot | undefined {
+export function buildAnalysisStateFromMessages(messages: Message[]): AnalysisSnapshot | undefined {
   if (!messages || messages.length === 0) {
     return undefined;
   }
@@ -93,8 +93,6 @@ function buildAnalysisStateFromMessages(messages: Message[]): AnalysisSnapshot |
     result?: string;
     timestamp: number;
   }> = [];
-  // 记录上一个 TOOL_CALL 的工具名，用于 TOOL_RESULT 关联（后端 TOOL_RESULT 消息不再携带 toolCalls 字段）
-  let lastToolCallName: string | null = null;
   let currentSQL: string | null = null;
   let queryData: Record<string, any>[] = [];
   let chartConfig: any = null;
@@ -112,32 +110,25 @@ function buildAnalysisStateFromMessages(messages: Message[]): AnalysisSnapshot |
       }
     } else if (msg.role === 'tool') {
       if (msg.toolCalls) {
-        // TOOL_CALL 消息：记录工具调用（含入参），并保存工具名供后续 TOOL_RESULT 使用
-        lastToolCallName = msg.toolCalls;
+        // 合并后的单条工具消息：同时携带入参（content）与结果（toolResult），一次成型，无需跨消息配对
         toolCalls.push({
           name: msg.toolCalls,
-          status: 'running',
+          status: msg.toolResult ? 'success' : 'running',
           startTime: ts,
+          endTime: msg.toolResult ? ts : undefined,
           input: msg.content || undefined,
+          result: msg.toolResult || undefined,
           timestamp: ts,
         });
-      } else if (msg.toolResult) {
-        // TOOL_RESULT 消息：关联到最后一个未完成且同名的工具调用
-        const target = [...toolCalls].reverse().find(t => !t.result && t.result !== '');
-        if (target) {
-          target.status = 'success';
-          target.result = msg.toolResult;
-          target.endTime = ts;
+        // 若同一条消息带有结果，则提取到分析状态对应字段
+        if (msg.toolResult) {
+          applyToolResultToState(msg.toolCalls, msg.toolResult, {
+            setSQL: (v) => { currentSQL = v; },
+            setQueryData: (v) => { queryData = v; },
+            setChart: (type, option) => { chartType = type; chartConfig = option; },
+            setSearchResults: (v) => { searchResults = v; },
+          });
         }
-        // 使用最后一个 TOOL_CALL 记录的工具名
-        applyToolResultToState(lastToolCallName ?? '', msg.toolResult, {
-          setSQL: (v) => { currentSQL = v; },
-          setQueryData: (v) => { queryData = v; },
-          setChart: (type, option) => { chartType = type; chartConfig = option; },
-          setSearchResults: (v) => { searchResults = v; },
-          setAnalysisReport: (v) => { analysisReport = v; },
-        });
-        lastToolCallName = null;
       }
     } else if (msg.role === 'assistant') {
       if (msg.content && !analysisReport) {
@@ -179,7 +170,6 @@ function applyToolResultToState(
     setQueryData: (v: any[]) => void;
     setChart: (type: string, option: any) => void;
     setSearchResults: (v: SearchResultItem[]) => void;
-    setAnalysisReport: (v: string) => void;
   },
 ) {
   switch (toolName) {
@@ -201,7 +191,9 @@ function applyToolResultToState(
       if (chartContent && chartContent.trim()) {
         try {
           const chartData = JSON.parse(chartContent);
-          const chartType = extractChartType(resultContent);
+          // 兼容二次序列化为字符串的情况，转成 option 对象以提取图表类型
+          const chartOption = typeof chartData === 'string' ? JSON.parse(chartData) : chartData;
+          const chartType = extractChartType(chartOption);
           const chartOptionStr = typeof chartData === 'string' ? chartData : JSON.stringify(chartData);
           setters.setChart(chartType || 'TABLE', chartOptionStr);
         } catch (err) {
@@ -214,13 +206,6 @@ function applyToolResultToState(
       const results = parseWebSearchResults(resultContent);
       if (results.length > 0) {
         setters.setSearchResults(results);
-      }
-      break;
-    }
-    case 'generate_analysis': {
-      const analysisContent = tryUnescapeJson(resultContent);
-      if (analysisContent) {
-        setters.setAnalysisReport(analysisContent);
       }
       break;
     }
@@ -278,16 +263,15 @@ function tryUnescapeJson(text: string): string | null {
 }
 
 /**
- * 从文本中提取图表类型
+ * 从图表数据中提取图表类型
+ * <p>兼容两种格式：旧格式顶层 chartType 字段；新格式纯 ECharts option（series[0].type）。</p>
  */
-function extractChartType(text: string): string | null {
-  if (!text) return null;
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed.chartType) return parsed.chartType;
-  } catch {
-    // ignore
-  }
+function extractChartType(data: any): string | null {
+  if (!data) return null;
+  // 旧格式：顶层 chartType 字段
+  if (data.chartType) return data.chartType;
+  // 新格式：纯 ECharts option，从 series[0].type 提取（如 line/bar/pie）
+  if (data.series?.[0]?.type) return data.series[0].type;
   return null;
 }
 
@@ -319,6 +303,7 @@ function rebuildRoundsFromFlatData(thinkingSteps: Array<{ content: string; times
       status: tc.status || 'success',
       startTime: tc.startTime || Date.now(),
       endTime: tc.endTime,
+      input: tc.input,
       result: tc.result,
       timestamp: tc.startTime || Date.now(),
     });
@@ -370,6 +355,8 @@ function rebuildRoundsFromFlatData(thinkingSteps: Array<{ content: string; times
 export const useSessionStore = defineStore('session', () => {
   const sessions = ref<SessionListItem[]>([]);
   const currentSessionId = ref<string | null>(null);
+  /** 正在后端分析中的会话 ID 列表（刷新恢复订阅时据此遍历） */
+  const runningSessions = ref<string[]>([]);
   const messages = ref<Message[]>([]);
   const chatMessages = ref<ChatMessage[]>([]);
   // 会话消息缓存：存储每个会话的消息列表，避免会话切换时丢失
@@ -401,9 +388,17 @@ export const useSessionStore = defineStore('session', () => {
     try {
       sessions.value = await apiListSessions();
 
-      // 自动恢复：如果当前没有选中会话，且有会话列表，自动选择第一个
+      // 同步维护运行中会话列表（刷新恢复订阅时据此判断哪些会话需要 resume）
+      runningSessions.value = sessions.value
+        .filter(s => s.running)
+        .map(s => s.id);
+
+      // 自动恢复：如果当前没有选中会话，且有会话列表，自动选择
+      // 优先选运行中的会话（刷新后把视图对齐到正在分析中的会话，使其事件走当前分支直接渲染），
+      // 否则才回退到第一个会话，避免选中非运行会话导致事件只进后台分支而不渲染。
       if (currentSessionId.value === null && sessions.value.length > 0) {
-        const firstSession = sessions.value[0];
+        const runningSession = sessions.value.find(s => s.running);
+        const firstSession = runningSession ?? sessions.value[0];
         currentSessionId.value = firstSession.id;
       }
     } catch (err) {
@@ -641,6 +636,12 @@ export const useSessionStore = defineStore('session', () => {
    */
   function clearCurrentSession() {
     console.debug('[session] clearCurrentSession called');
+    // 保存当前会话的分析状态，避免后续 analysisStore.reset() 清空后丢失。
+    // 若不保存，新建会话时后台会话状态缺失，切回时从空重建导致内容丢失。
+    const sessionStateManager = useSessionStateManager();
+    if (currentSessionId.value) {
+      sessionStateManager.saveState(currentSessionId.value);
+    }
     currentSessionId.value = null;
     messages.value = [];
     chatMessages.value = [];
@@ -685,9 +686,45 @@ export const useSessionStore = defineStore('session', () => {
     return sessionLastQuestionMap.value.get(sessionId) || '';
   }
 
+  /**
+   * 判断指定会话是否正在后端分析中
+   *
+   * @param sessionId 会话 ID
+   * @returns 是否运行中
+   */
+  function isSessionRunning(sessionId: string): boolean {
+    return runningSessions.value.includes(sessionId);
+  }
+
+  /**
+   * 标记会话的运行状态
+   * <p>用于 SSE 事件驱动时更新运行状态：running 为 true 且不在数组中则加入，
+   * 否则从数组中移除。</p>
+   *
+   * @param sessionId 会话 ID
+   * @param running 是否运行中
+   */
+  function markSessionRunning(sessionId: string, running: boolean) {
+    // 同步更新侧边栏渲染所依赖的 session.running 字段（来自后端 listSessions 的静态字段，
+    // 仅靠 loadSessions 刷新会导致分析完成后转圈不停）
+    const session = sessions.value.find(s => s.id === sessionId);
+    if (session) {
+      session.running = running;
+    }
+    // 同步维护运行中会话 ID 列表（刷新恢复订阅时据此判断）
+    if (running) {
+      if (!runningSessions.value.includes(sessionId)) {
+        runningSessions.value.push(sessionId);
+      }
+    } else {
+      runningSessions.value = runningSessions.value.filter(id => id !== sessionId);
+    }
+  }
+
   return {
     sessions,
     currentSessionId,
+    runningSessions,
     messages,
     chatMessages,
     sessionMessagesMap,
@@ -710,5 +747,7 @@ export const useSessionStore = defineStore('session', () => {
     updateSessionTitle,
     setSessionLastQuestion,
     getSessionLastQuestion,
+    isSessionRunning,
+    markSessionRunning,
   };
 });

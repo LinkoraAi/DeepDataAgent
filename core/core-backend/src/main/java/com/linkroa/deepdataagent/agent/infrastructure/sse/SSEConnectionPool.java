@@ -5,9 +5,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
@@ -27,7 +29,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>sendEvent(clientId, sessionId, event) — 通过连接发送事件，携带 sessionId</li>
  *   <li>isConnected(clientId) — 检查连接是否活跃</li>
  *   <li>getActiveConnectionCount() — 获取活跃连接数</li>
- *   <li>30 秒空闲回收 — 使用 ScheduledExecutorService 定期检查空闲连接</li>
+ *   <li>无容器级超时 — 连接以 SseEmitter(0L) 创建，不设置容器异步超时，连接生命周期由应用层空闲回收控制</li>
+ *   <li>空闲回收 — 使用 ScheduledExecutorService 定期检查超过 keepAliveMs 无活跃事件的连接并回收</li>
+ *   <li>心跳探测 — 每 15 秒发送一次心跳，用于活跃标记与断连探测，不承担抗容器超时职责</li>
  *   <li>maxActive 上限检查 — 达到上限时拒绝新连接</li>
  * </ul>
  */
@@ -58,7 +62,7 @@ public class SSEConnectionPool {
         return t;
     });
 
-    /** 心跳定时器：每 15 秒发送一次心跳，保持连接活跃 */
+    /** 心跳定时器：每 15 秒发送一次心跳，用于活跃标记与断连探测（不承担抗容器超时） */
     private final ScheduledExecutorService heartbeatScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "sse-heartbeat");
         t.setDaemon(true);
@@ -74,7 +78,7 @@ public class SSEConnectionPool {
         this.properties = properties;
         // 每 10 秒检查一次空闲连接
         this.scheduler.scheduleAtFixedRate(this::reapIdleConnections, 10, 10, TimeUnit.SECONDS);
-        // 每 15 秒发送一次心跳，保持连接活跃（小于 keepAliveMs 30秒）
+        // 每 15 秒发送一次心跳，用于活跃标记与断连探测
         this.heartbeatScheduler.scheduleAtFixedRate(this::sendHeartbeats, 15, 15, TimeUnit.SECONDS);
         log.info("SSEConnectionPool initialized: maxActive={}, keepAliveMs={}",
                 properties.maxActive(), properties.keepAliveMs());
@@ -102,8 +106,10 @@ public class SSEConnectionPool {
             return null;
         }
 
-        // 创建新连接
-        SseEmitter emitter = new SseEmitter(properties.keepAliveMs());
+        // 创建新连接：超时传 0 表示不设置容器级异步超时（Servlet 规范：0 或负值表示不超时）。
+        // 容器异步超时是固定倒计时，写入/心跳无法重置，旧实现以 keepAliveMs 作为超时会导致连接在第 30 秒被强制断开。
+        // 连接生命周期改由应用层空闲回收（reapIdleConnections）统一管理。
+        SseEmitter emitter = new SseEmitter(0L);
         connections.put(clientId, emitter);
         activeCount.incrementAndGet();
         updateLastActiveTime(clientId);
@@ -120,8 +126,17 @@ public class SSEConnectionPool {
         });
 
         emitter.onError(e -> {
-            log.error("SSE connection error for clientId={}", clientId, e);
-            removeConnection(clientId);
+            // 客户端主动断开（如前端终止会话、强制刷新页面等）时，容器会通过 AsyncListener.onError
+            // 异步投递 AsyncRequestNotUsableException / IOException。这类异常属于预期行为，
+            // 仅由真正移除连接的那次入口记录 info，避免重复日志刷屏。
+            if (isClientDisconnection(e)) {
+                if (removeConnectionIfPresent(clientId)) {
+                    log.info("SSE client disconnected, connection cleaned for clientId={}", clientId);
+                }
+            } else {
+                log.error("SSE connection error for clientId={}", clientId, e);
+                removeConnection(clientId);
+            }
         });
 
         log.info("SSE connection acquired for clientId={}, activeCount={}", clientId, activeCount.get());
@@ -159,7 +174,9 @@ public class SSEConnectionPool {
     public boolean sendEvent(String clientId, String sessionId, AgentEvent event) {
         SseEmitter emitter = connections.get(clientId);
         if (emitter == null) {
-            log.warn("No SSE connection found for clientId={}", clientId);
+            // 客户端连接已断开（正常关闭/超时/异常/空闲回收），事件无法投递属预期行为。
+            // 清理过期的会话映射，避免后续事件重复尝试投递产生告警噪音，并防止映射泄漏。
+            sessionClientIdMap.remove(sessionId);
             return false;
         }
 
@@ -173,9 +190,62 @@ public class SSEConnectionPool {
                     .data(wrappedEvent, MediaType.APPLICATION_JSON));
             updateLastActiveTime(clientId);
             return true;
+        } catch (AsyncRequestNotUsableException e) {
+            // 客户端已断开连接，写入失败属预期行为，仅由真正移除连接的那次记录 info
+            if (removeConnectionIfPresent(clientId)) {
+                log.info("SSE client disconnected during send, connection cleaned for clientId={}", clientId);
+            }
+            // 清理过期的会话映射，避免后续事件反复投递到死连接
+            sessionClientIdMap.remove(sessionId);
+            return false;
         } catch (IOException e) {
             log.error("Failed to send SSE event to clientId={}", clientId, e);
             removeConnection(clientId);
+            // 清理过期的会话映射，避免后续事件反复投递到死连接
+            sessionClientIdMap.remove(sessionId);
+            return false;
+        }
+    }
+
+    /**
+     * 通过连接回放已累积的分析事件（STATE_REPLAY）
+     * <p>刷新恢复（resume）时调用：一次将缓冲中累积的 {@link AgentEvent} 列表发送给新连接，
+     * 前端收到后逐个按原事件处理路径重建分析状态，弥补断线窗口内事件的丢失。
+     * 事件格式：event: STATE_REPLAY, data: {"sessionId": "xxx", "events": [...]}</p>
+     *
+     * @param clientId  客户端 ID
+     * @param sessionId 会话 ID
+     * @param events    待回放的事件列表（按产生顺序）
+     * @return true 如果发送成功，false 如果连接不存在或发送失败
+     */
+    public boolean sendReplay(String clientId, String sessionId, List<AgentEvent> events) {
+        SseEmitter emitter = connections.get(clientId);
+        if (emitter == null) {
+            // 客户端连接已断开，回放无法投递属预期行为，清理过期的会话映射
+            sessionClientIdMap.remove(sessionId);
+            return false;
+        }
+        try {
+            Map<String, Object> payload = Map.of(
+                    "sessionId", sessionId,
+                    "events", events
+            );
+            emitter.send(SseEmitter.event()
+                    .name("STATE_REPLAY")
+                    .data(payload, MediaType.APPLICATION_JSON));
+            updateLastActiveTime(clientId);
+            return true;
+        } catch (AsyncRequestNotUsableException e) {
+            // 客户端已断开连接，写入失败属预期行为，仅由真正移除连接的那次记录 info
+            if (removeConnectionIfPresent(clientId)) {
+                log.info("SSE client disconnected during send, connection cleaned for clientId={}", clientId);
+            }
+            sessionClientIdMap.remove(sessionId);
+            return false;
+        } catch (IOException e) {
+            log.error("Failed to send SSE replay to clientId={}", clientId, e);
+            removeConnection(clientId);
+            sessionClientIdMap.remove(sessionId);
             return false;
         }
     }
@@ -209,7 +279,6 @@ public class SSEConnectionPool {
      */
     public void updateSessionClientId(String sessionId, String clientId) {
         sessionClientIdMap.put(sessionId, clientId);
-        log.debug("Session clientId updated: sessionId={}, clientId={}", sessionId, clientId);
     }
 
     /**
@@ -230,7 +299,6 @@ public class SSEConnectionPool {
      */
     public void removeSessionClientId(String sessionId) {
         sessionClientIdMap.remove(sessionId);
-        log.debug("Session clientId removed: sessionId={}", sessionId);
     }
 
     /**
@@ -243,17 +311,51 @@ public class SSEConnectionPool {
     }
 
     /**
+     * 判断异常是否为客户端断开的预期异常
+     * <p>客户端主动中止连接（如前端终止会话、强制刷新页面）时，发送事件会抛出
+     * {@link AsyncRequestNotUsableException} 或容器包装的 {@link IOException}，属预期行为，
+     * 不应作为服务端错误记录。</p>
+     *
+     * @param throwable 待判断的异常
+     * @return true 表示客户端断开类异常
+     */
+    private boolean isClientDisconnection(Throwable throwable) {
+        if (throwable instanceof AsyncRequestNotUsableException || throwable instanceof IOException) {
+            return true;
+        }
+        // 兜底：个别容器以其他包装类型抛出，按连接中断特征消息判断
+        String message = throwable.getMessage();
+        return message != null && (message.contains("disconnected")
+                || message.contains("Connection reset")
+                || message.contains("中止"));
+    }
+
+    /**
+     * 移除连接并释放资源，返回本次是否真正移除了连接
+     * <p>作为断连日志的唯一记录点：只有真正移除连接的那次调用返回 true。
+     * onError / sendEvent / 心跳等多个断连入口共享此方法，实现同一次断连去重，
+     * 避免重复记日志造成刷屏。</p>
+     *
+     * @param clientId 客户端 ID
+     * @return true 表示本次真正移除了连接
+     */
+    private boolean removeConnectionIfPresent(String clientId) {
+        SseEmitter removed = connections.remove(clientId);
+        if (removed != null) {
+            lastActiveTimes.remove(clientId);
+            activeCount.decrementAndGet();
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * 移除连接并释放资源
      *
      * @param clientId 客户端 ID
      */
     private void removeConnection(String clientId) {
-        SseEmitter removed = connections.remove(clientId);
-        if (removed != null) {
-            lastActiveTimes.remove(clientId);
-            activeCount.decrementAndGet();
-            log.debug("SSE connection removed for clientId={}, activeCount={}", clientId, activeCount.get());
-        }
+        removeConnectionIfPresent(clientId);
     }
 
     /**
@@ -277,8 +379,13 @@ public class SSEConnectionPool {
 
     /**
      * 发送心跳
-     * <p>定期向所有活跃连接发送心跳事件，保持连接活跃，防止因长时间无数据传输导致连接超时断开</p>
-     * <p>心跳发送成功后更新 lastActiveTime，避免连接被误判为空闲而回收</p>
+     * <p>周期性向所有活跃连接发送心跳，仅用于两件事：</p>
+     * <ul>
+     *   <li>活跃标记：发送成功即更新 lastActiveTime，标记客户端仍在线，避免被空闲回收误杀（分析中存在 LLM 静默期，合法空闲不应回收）</li>
+     *   <li>断连探测：发送失败通常意味着客户端已断开，据此清理死连接，避免资源泄漏</li>
+     * </ul>
+     * <p>注意：心跳不承担「抗容器超时」的职责——连接已通过 {@code SseEmitter(0L)} 关闭容器级超时，
+     * 心跳在此仅作为存活探测与活跃标记手段。</p>
      */
     private void sendHeartbeats() {
         for (String clientId : connections.keySet()) {
@@ -286,14 +393,15 @@ public class SSEConnectionPool {
             if (emitter != null) {
                 try {
                     // 发送 SSE 注释作为心跳，格式：: heartbeat\n\n
-                    // 这种格式会被客户端忽略，但能保持连接活跃
+                    // 这种格式会被客户端忽略，客户端能据此感知连接存活
                     emitter.send(SseEmitter.event().comment("heartbeat"));
-                    // 心跳发送成功后更新活跃时间，避免连接被误判为空闲
+                    // 标记该客户端活跃，避免被空闲回收误判为超时
                     updateLastActiveTime(clientId);
-                    log.debug("Heartbeat sent to clientId={}", clientId);
                 } catch (Exception e) {
-                    log.warn("Failed to send heartbeat to clientId={}, removing connection", clientId, e);
-                    removeConnection(clientId);
+                    // 心跳失败说明客户端已断开，仅由真正移除连接的那次记录 info
+                    if (removeConnectionIfPresent(clientId)) {
+                        log.info("Failed to send heartbeat, client disconnected for clientId={}", clientId);
+                    }
                 }
             }
         }

@@ -13,13 +13,19 @@ import com.linkroa.deepdataagent.agent.domain.valueobject.MessageType;
 import com.linkroa.deepdataagent.agent.domain.valueobject.SessionStatus;
 import com.linkroa.deepdataagent.agent.infrastructure.agent.HarnessAgentFactory;
 import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
+import com.linkroa.deepdataagent.agent.infrastructure.collector.AnalysisEventBuffer;
 import com.linkroa.deepdataagent.agent.infrastructure.config.AgentProperties;
+import com.linkroa.deepdataagent.agent.infrastructure.config.DataAnalysisProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.config.SessionProperties;
+import com.linkroa.deepdataagent.agent.application.context.RunningAnalysisRegistry;
+import com.linkroa.deepdataagent.agent.application.context.RunningExecution;
 import com.linkroa.deepdataagent.agent.application.context.SessionToolContext;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.MessagePersistenceService;
 import com.linkroa.deepdataagent.agent.infrastructure.sse.SSEConnectionPool;
 import com.linkroa.deepdataagent.agent.infrastructure.sse.SessionEventBus;
 import com.linkroa.deepdataagent.agent.infrastructure.sse.agent.AgentExecutionPool;
+import com.linkroa.deepdataagent.shared.exception.SSENotConnectedException;
+import com.linkroa.deepdataagent.shared.exception.SessionNotRunningException;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.harness.agent.HarnessAgent;
@@ -28,7 +34,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Sinks;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -75,6 +83,9 @@ class DataAnalysisApplicationServiceTest {
     private AgentProperties agentProperties;
 
     @Mock
+    private DataAnalysisProperties dataAnalysisProperties;
+
+    @Mock
     private SessionToolContext sessionToolContext;
 
     @Mock
@@ -89,12 +100,16 @@ class DataAnalysisApplicationServiceTest {
     @Mock
     private HarnessAgent agent;
 
+    private RunningAnalysisRegistry runningAnalysisRegistry;
+
     private DataAnalysisApplicationService service;
 
     @BeforeEach
     void setUp() {
         // 使用真实 EventAdapter：registerContext 需返回真实 CollectorContext，供 BatchFlushManager 复制快照
         eventAdapter = new EventAdapter();
+        // 使用真实 RunningAnalysisRegistry：停止与重连判定依赖其真实行为
+        runningAnalysisRegistry = new RunningAnalysisRegistry();
 
         service = new DataAnalysisApplicationService(
                 datasourceGateway,
@@ -106,10 +121,12 @@ class DataAnalysisApplicationServiceTest {
                 dialogueRepository,
                 sessionProperties,
                 agentProperties,
+                dataAnalysisProperties,
                 sessionToolContext,
                 sseConnectionPool,
                 sessionEventBus,
-                agentExecutionPool
+                agentExecutionPool,
+                runningAnalysisRegistry
         );
     }
 
@@ -138,6 +155,9 @@ class DataAnalysisApplicationServiceTest {
 
         when(messagePersistenceService.persistUserMessageSync(anyString(), anyString())).thenReturn(dialogueId);
         when(agentFactory.getOrCreateAgent(any(), any(), any(), anyBoolean(), anyList())).thenReturn(agent);
+        // 写库节奏：首次延迟 1s、间隔 5s（scheduleAtFixedRate 要求周期必须 > 0）
+        when(dataAnalysisProperties.getInitialFlushDelaySeconds()).thenReturn(1L);
+        when(dataAnalysisProperties.getFlushIntervalSeconds()).thenReturn(5L);
     }
 
     @Test
@@ -154,7 +174,7 @@ class DataAnalysisApplicationServiceTest {
             return null;
         }).when(dialogueRepository).updateMessages(any(), any(), any());
 
-        DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false);
+        DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false, false);
 
         // when
         service.executeStream(command).blockLast();
@@ -181,7 +201,7 @@ class DataAnalysisApplicationServiceTest {
             return null;
         }).when(dialogueRepository).updateMessages(any(), any(), any());
 
-        DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false);
+        DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false, false);
 
         // when & then
         assertThrows(RuntimeException.class, () -> service.executeStream(command).blockLast());
@@ -209,7 +229,7 @@ class DataAnalysisApplicationServiceTest {
             return null;
         }).when(dialogueRepository).updateMessages(any(), any(), any());
 
-        DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false);
+        DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false, false);
 
         // when
         var disposable = service.executeStream(command).subscribe();
@@ -220,5 +240,196 @@ class DataAnalysisApplicationServiceTest {
         // then
         assertTrue(flushLatch.await(5, TimeUnit.SECONDS));
         assertEquals(DialogueStatus.CANCELLED, capturedStatus.get());
+    }
+
+    // ==================== 停止分析 ====================
+
+    @Test
+    void should_returnFalse_when_stopAnalysis_given_noRunningAnalysis() {
+        // when
+        boolean stopped = service.stopAnalysis("session-none");
+
+        // then
+        assertFalse(stopped);
+    }
+
+    @Test
+    void should_disposeSubscriptionAndInterruptAgent_when_stopAnalysis_given_runningAnalysis() {
+        // given
+        Disposable subscription = mock(Disposable.class);
+        DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false, false);
+        runningAnalysisRegistry.register("session-1",
+                new RunningExecution(1L, agent, subscription, command, new AnalysisEventBuffer()));
+
+        // when
+        boolean stopped = service.stopAnalysis("session-1");
+
+        // then
+        assertTrue(stopped);
+        verify(subscription).dispose();
+        verify(agent).interrupt();
+        verify(sessionEventBus).unregister("session-1");
+        verify(sseConnectionPool).removeSessionClientId("session-1");
+        assertFalse(runningAnalysisRegistry.isRunning("session-1"));
+    }
+
+    @Test
+    void should_notDispose_when_stopAnalysis_given_alreadyDisposedSubscription() {
+        // given
+        Disposable subscription = mock(Disposable.class);
+        when(subscription.isDisposed()).thenReturn(true);
+        DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false, false);
+        runningAnalysisRegistry.register("session-1",
+                new RunningExecution(1L, agent, subscription, command, new AnalysisEventBuffer()));
+
+        // when
+        boolean stopped = service.stopAnalysis("session-1");
+
+        // then
+        assertTrue(stopped);
+        verify(subscription, never()).dispose();
+        verify(agent).interrupt();
+        assertFalse(runningAnalysisRegistry.isRunning("session-1"));
+    }
+
+    @Test
+    void should_registerRunningExecution_when_executeStream_given_subscriptionHolder() throws Exception {
+        // given
+        Long dialogueId = 1L;
+        prepareStreamCommonMocks(dialogueId);
+        CountDownLatch subscribedLatch = new CountDownLatch(1);
+        when(agent.streamEvents(anyList(), any(RuntimeContext.class)))
+                .thenAnswer(inv -> Flux.<AgentEvent>never().doOnSubscribe(s -> subscribedLatch.countDown()));
+        DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false, false);
+
+        // when
+        DataAnalysisApplicationService.DelegatedDisposable holder =
+                new DataAnalysisApplicationService.DelegatedDisposable();
+        var disposable = service.executeStream(command, holder).subscribe();
+        assertTrue(subscribedLatch.await(5, TimeUnit.SECONDS));
+
+        // then 注册表应包含该会话
+        assertTrue(runningAnalysisRegistry.isRunning("session-1"));
+        var execution = runningAnalysisRegistry.get("session-1");
+        assertNotNull(execution);
+        assertEquals(dialogueId, execution.dialogueId());
+        assertSame(agent, execution.agent());
+
+        // when 停止：注册表移除并中断 agent
+        boolean stopped = service.stopAnalysis("session-1");
+        assertTrue(stopped);
+        verify(agent).interrupt();
+        assertFalse(runningAnalysisRegistry.isRunning("session-1"));
+    }
+
+    // ==================== 三态分发（启动/续流/404） ====================
+
+    @Test
+    void should_updateClientIdAndReplayEvents_when_executeAnalysis_given_runningSessionAndResumeOnly() {
+        // given：会话运行中且缓冲已累积事件
+        String sessionId = "session-1";
+        String clientId = "client-A";
+        when(sseConnectionPool.isConnected(clientId)).thenReturn(true);
+        AnalysisEventBuffer buffer = new AnalysisEventBuffer();
+        AgentEvent event1 = mock(AgentEvent.class);
+        AgentEvent event2 = mock(AgentEvent.class);
+        buffer.add(event1);
+        buffer.add(event2);
+        runningAnalysisRegistry.register(sessionId,
+                new RunningExecution(1L, agent, mock(Disposable.class),
+                        new DataAnalysisCommand(sessionId, 200L, "100", "分析销量", false, false), buffer));
+        DataAnalysisCommand resumeCommand = new DataAnalysisCommand(sessionId, null, null, null, false, true);
+
+        // when
+        DataAnalysisApplicationService.AnalysisExecutionResult result = service.executeAnalysis(resumeCommand, clientId);
+
+        // then：仅续流，不启动新分析，回放缓冲事件到新连接
+        assertEquals(sessionId, result.sessionId());
+        verify(sseConnectionPool).updateSessionClientId(sessionId, clientId);
+        verify(sseConnectionPool).sendReplay(clientId, sessionId, List.of(event1, event2));
+        // 续流绝不启动新分析
+        verify(messagePersistenceService, never()).persistUserMessageSync(anyString(), anyString());
+        verify(agentExecutionPool, never()).execute(anyString(), any());
+    }
+
+    @Test
+    void should_updateClientIdWithoutReplay_when_executeAnalysis_given_runningSessionEmptyBuffer() {
+        // given：会话运行中但缓冲为空
+        String sessionId = "session-1";
+        String clientId = "client-A";
+        when(sseConnectionPool.isConnected(clientId)).thenReturn(true);
+        AnalysisEventBuffer buffer = new AnalysisEventBuffer();
+        runningAnalysisRegistry.register(sessionId,
+                new RunningExecution(1L, agent, mock(Disposable.class),
+                        new DataAnalysisCommand(sessionId, 200L, "100", "分析销量", false, false), buffer));
+        DataAnalysisCommand resumeCommand = new DataAnalysisCommand(sessionId, null, null, null, false, true);
+
+        // when
+        DataAnalysisApplicationService.AnalysisExecutionResult result = service.executeAnalysis(resumeCommand, clientId);
+
+        // then
+        assertEquals(sessionId, result.sessionId());
+        verify(sseConnectionPool).updateSessionClientId(sessionId, clientId);
+        verify(sseConnectionPool, never()).sendReplay(anyString(), anyString(), anyList());
+    }
+
+    @Test
+    void should_throwSessionNotRunning_when_executeAnalysis_given_notRunningSessionAndResumeOnly() {
+        // given：会话未在运行中，resumeOnly 请求
+        String sessionId = "session-1";
+        String clientId = "client-A";
+        when(sseConnectionPool.isConnected(clientId)).thenReturn(true);
+        DataAnalysisCommand resumeCommand = new DataAnalysisCommand(sessionId, null, null, null, false, true);
+
+        // when & then：抛出 404 语义异常且无任何副作用
+        assertThrows(SessionNotRunningException.class, () -> service.executeAnalysis(resumeCommand, clientId));
+        verify(sseConnectionPool, never()).updateSessionClientId(anyString(), anyString());
+        verify(messagePersistenceService, never()).persistUserMessageSync(anyString(), anyString());
+        verify(agentExecutionPool, never()).execute(anyString(), any());
+    }
+
+    @Test
+    void should_throwSSENotConnected_when_executeAnalysis_given_notConnectedClient() {
+        // given：客户端未建立 SSE 连接
+        String sessionId = "session-1";
+        String clientId = "client-A";
+        when(sseConnectionPool.isConnected(clientId)).thenReturn(false);
+        DataAnalysisCommand command = new DataAnalysisCommand(sessionId, 200L, "100", "分析销量", false, false);
+
+        // when & then
+        assertThrows(SSENotConnectedException.class, () -> service.executeAnalysis(command, clientId));
+    }
+
+    @Test
+    void should_throwIllegalArgument_when_executeAnalysis_given_missingStartupParams() {
+        // given：会话未运行、非续流，但启动参数缺失
+        String sessionId = "session-1";
+        String clientId = "client-A";
+        when(sseConnectionPool.isConnected(clientId)).thenReturn(true);
+        DataAnalysisCommand invalidCommand = new DataAnalysisCommand(sessionId, null, null, null, false, false);
+
+        // when & then
+        assertThrows(IllegalArgumentException.class, () -> service.executeAnalysis(invalidCommand, clientId));
+    }
+
+    @Test
+    void should_startNewAnalysis_when_executeAnalysis_given_notRunningSessionAndNotResumeOnly() throws Exception {
+        // given：会话未运行、非续流，参数完整
+        String sessionId = "session-1";
+        String clientId = "client-A";
+        when(sseConnectionPool.isConnected(clientId)).thenReturn(true);
+        Sinks.Many<AgentEvent> sink = Sinks.many().unicast().onBackpressureBuffer();
+        when(sessionEventBus.register(sessionId)).thenReturn(sink);
+        when(agentExecutionPool.execute(eq(sessionId), any())).thenReturn(true);
+        DataAnalysisCommand command = new DataAnalysisCommand(sessionId, 200L, "100", "分析销量", false, false);
+
+        // when
+        DataAnalysisApplicationService.AnalysisExecutionResult result = service.executeAnalysis(command, clientId);
+
+        // then：正常启动新分析
+        assertEquals(sessionId, result.sessionId());
+        verify(sseConnectionPool).updateSessionClientId(sessionId, clientId);
+        verify(sessionEventBus).register(sessionId);
+        verify(agentExecutionPool).execute(eq(sessionId), any());
     }
 }

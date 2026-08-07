@@ -52,7 +52,7 @@ public class AgentSessionRepositoryImpl implements AgentSessionRepository {
         LambdaQueryWrapper<AgentSessionEntity> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(AgentSessionEntity::getStatus, SessionStatus.ACTIVE.name())
                 .eq(AgentSessionEntity::getIsDeleted, 0)
-                .orderByDesc(AgentSessionEntity::getUpdatedTime);
+                .orderByDesc(AgentSessionEntity::getLastMessageTime);
         return mapper.selectList(wrapper).stream()
                 .map(this::toDomain)
                 .collect(Collectors.toList());
@@ -63,7 +63,7 @@ public class AgentSessionRepositoryImpl implements AgentSessionRepository {
         LambdaQueryWrapper<AgentSessionEntity> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(AgentSessionEntity::getStatus, SessionStatus.ACTIVE.name())
                 .eq(AgentSessionEntity::getIsDeleted, 0)
-                .orderByDesc(AgentSessionEntity::getUpdatedTime)
+                .orderByDesc(AgentSessionEntity::getLastMessageTime)
                 .last("LIMIT " + limit + " OFFSET " + offset);
         return mapper.selectList(wrapper).stream()
                 .map(this::toDomain)

@@ -40,6 +40,8 @@ export interface SessionListItem {
   datasourceId: number;
   modelConfigId: number;
   status: string;
+  /** 后端是否正在分析中（刷新恢复订阅时据此判断） */
+  running: boolean;
   lastMessageAt: string;
   createdAt: string;
 }

@@ -72,7 +72,6 @@ public class SessionEventBus {
         // 检查是否已注册
         Sinks.Many<AgentEvent> existing = sinks.get(sessionId);
         if (existing != null) {
-            log.debug("Session already registered: sessionId={}", sessionId);
             return existing;
         }
 
