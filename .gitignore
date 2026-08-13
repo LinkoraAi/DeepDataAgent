@@ -44,8 +44,17 @@ openspec/
 
 # Runtime data
 data/sqlite/*.db
+data/memory/**
+# agnent scope memory data
+data/agentscope/**
 .env
 docs/
 
 # Git worktrees
 .worktrees/
+
+# graphify
+graphify-out/
+
+# AGETNS.MD
+AGENTS.md

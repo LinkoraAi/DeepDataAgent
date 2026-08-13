@@ -19,7 +19,6 @@ WORKDIR /app
 RUN apk add --no-cache wget \
     && addgroup -S app \
     && adduser -S app -G app \
-    && mkdir -p /app/data/sqlite \
     && chown -R app:app /app
 
 COPY --from=build /workspace/core/core-backend/target/core-backend-*.jar /app/app.jar
