@@ -26,13 +26,13 @@ class MessageDTOAssemblerTest {
      * 构造指定字段的 DialogueMessage
      */
     private DialogueMessage buildMessage(MessageRole role, MessageType type, DialogueContent content,
-                                         LocalDateTime startTime, Long sequenceNumber) {
+                                         LocalDateTime startTime, Long messageNumber) {
         DialogueMessage message = new DialogueMessage();
         message.setRole(role);
         message.setMessageType(type);
         message.setContent(content);
         message.setStartTime(startTime);
-        message.setSequenceNumber(sequenceNumber);
+        message.setMessageNumber(messageNumber);
         return message;
     }
 
@@ -52,13 +52,13 @@ class MessageDTOAssemblerTest {
     }
 
     /**
-     * 覆盖：TOOL_CALL 类型且同时携带入参与结果（合并后的单条消息）
+     * 覆盖：TOOL_CALL 类型仅透出工具名与入参（结果由独立 TOOL_RESULT 消息承载），并透出 toolCallId 供配对
      */
     @Test
-    public void should_mapToolCallWithInputAndResult_when_toDTO_given_mergedToolMessage() {
+    public void should_mapToolCall_when_toDTO_given_toolCallType() {
         // given
         LocalDateTime startTime = LocalDateTime.of(2026, 8, 3, 10, 30, 0);
-        DialogueContent content = DialogueContent.toolCall("sql_executor", "{\"sql\":\"select 1\"}", "执行成功");
+        DialogueContent content = DialogueContent.toolCall("sql_executor", "{\"sql\":\"select 1\"}", "执行成功", "call-1");
         DialogueMessage message = buildMessage(MessageRole.TOOL, MessageType.TOOL_CALL, content, startTime, 1L);
 
         // when
@@ -68,18 +68,20 @@ class MessageDTOAssemblerTest {
         assertEquals(1L, result.id());
         assertEquals("session-1", result.sessionId());
         assertEquals("tool", result.role());
+        assertEquals("TOOL_CALL", result.type());
         assertEquals("{\"sql\":\"select 1\"}", result.content());
         assertEquals("sql_executor", result.toolCalls());
-        assertEquals("执行成功", result.toolResult());
+        assertNull(result.toolResult());
+        assertEquals("call-1", result.toolCallId());
     }
 
     /**
-     * 覆盖：TOOL_CALL 类型且 input 为 null 时 content 为空串，result 仍输出
+     * 覆盖：TOOL_CALL 类型且 input 为 null 时 content 为空串，result 不再输出
      */
     @Test
     public void should_mapToolCallWithEmptyContent_when_toDTO_given_toolCallWithoutInput() {
         // given
-        DialogueContent content = new DialogueContent("sql_executor", null, "result");
+        DialogueContent content = new DialogueContent("sql_executor", null, "result", null);
         DialogueMessage message = buildMessage(MessageRole.TOOL, MessageType.TOOL_CALL, content,
                 LocalDateTime.now(), 1L);
 
@@ -89,16 +91,17 @@ class MessageDTOAssemblerTest {
         // then
         assertEquals("", result.content());
         assertEquals("sql_executor", result.toolCalls());
-        assertEquals("result", result.toolResult());
+        assertNull(result.toolResult());
+        assertNull(result.toolCallId());
     }
 
     /**
-     * 覆盖：TOOL_RESULT 类型映射 toolResult 字段
+     * 覆盖：TOOL_RESULT 类型透出工具名与返回结果，并透出 toolCallId 供配对
      */
     @Test
     public void should_mapToolResult_when_toDTO_given_toolResultType() {
         // given
-        DialogueContent content = DialogueContent.toolResult("{\"rows\":1}");
+        DialogueContent content = DialogueContent.toolResult("sql_executor", "{\"rows\":1}", "call-1");
         DialogueMessage message = buildMessage(MessageRole.TOOL, MessageType.TOOL_RESULT, content,
                 LocalDateTime.now(), 2L);
 
@@ -106,9 +109,11 @@ class MessageDTOAssemblerTest {
         MessageDTO result = MessageDTOAssembler.toDTO(message, "session-1", DIALOGUE_ID);
 
         // then
+        assertEquals("TOOL_RESULT", result.type());
+        assertEquals("sql_executor", result.toolCalls());
         assertEquals("{\"rows\":1}", result.toolResult());
-        assertNull(result.toolCalls());
         assertEquals("", result.content());
+        assertEquals("call-1", result.toolCallId());
     }
 
     /**
@@ -118,16 +123,18 @@ class MessageDTOAssemblerTest {
     public void should_mapThinkingText_when_toDTO_given_thinkingType() {
         // given
         DialogueContent content = DialogueContent.text("正在思考...");
-        DialogueMessage message = buildMessage(MessageRole.THINKING, MessageType.THINKING, content,
+        DialogueMessage message = buildMessage(MessageRole.ASSISTANT, MessageType.THINKING, content,
                 LocalDateTime.now(), 3L);
 
         // when
         MessageDTO result = MessageDTOAssembler.toDTO(message, "session-1", DIALOGUE_ID);
 
         // then
+        assertEquals("THINKING", result.type());
         assertEquals("正在思考...", result.content());
         assertNull(result.toolCalls());
         assertNull(result.toolResult());
+        assertNull(result.toolCallId());
     }
 
     /**
@@ -145,6 +152,7 @@ class MessageDTOAssemblerTest {
 
         // then
         assertEquals("assistant", result.role());
+        assertEquals("MESSAGE", result.type());
         assertEquals("分析结果", result.content());
         assertNull(result.toolCalls());
         assertNull(result.toolResult());
@@ -165,6 +173,7 @@ class MessageDTOAssemblerTest {
 
         // then
         assertEquals("user", result.role());
+        assertEquals("MESSAGE", result.type());
         assertEquals("请帮我分析", result.content());
     }
 
@@ -183,6 +192,7 @@ class MessageDTOAssemblerTest {
 
         // then
         assertEquals("system", result.role());
+        assertEquals("ERROR", result.type());
         assertEquals("查询失败", result.content());
     }
 
@@ -218,6 +228,7 @@ class MessageDTOAssemblerTest {
 
         // then
         assertEquals("", result.content());
+        assertNull(result.type());
         assertNull(result.toolCalls());
         assertNull(result.toolResult());
     }

@@ -32,8 +32,7 @@ public class SearchResultsMiddleware implements MiddlewareBase {
 
     /**
      * Acting 钩子：识别 web_search 工具调用并记录日志。
-     * <p>遍历 {@code input.toolCalls()}，识别名为 {@code web_search} 的工具调用并
-     * {@code log.debug}。异常 try-catch 不阻断 {@code next.apply(input)}。</p>
+     * <p>遍历 {@code input.toolCalls()}，识别名为 {@code web_search} 的工具调用</p>
      *
      * @param agent Agent 实例
      * @param rc    RuntimeContext（当前未使用，保留以符合接口签名）
@@ -44,17 +43,18 @@ public class SearchResultsMiddleware implements MiddlewareBase {
     @Override
     public Flux<AgentEvent> onActing(Agent agent, RuntimeContext rc, ActingInput input,
                                      Function<ActingInput, Flux<AgentEvent>> next) {
-        try {
-            List<ToolUseBlock> toolCalls = input.toolCalls();
-            if (toolCalls != null) {
-                for (ToolUseBlock toolUse : toolCalls) {
-                    if (toolUse != null && WEB_SEARCH_TOOL_NAME.equals(toolUse.getName())) {
-                        log.debug("web_search 工具即将执行");
+        // 遍历工具调用，识别 web_search 并记录日志（防御性处理 getName 异常，不影响主流程）
+        List<ToolUseBlock> toolCalls = input.toolCalls();
+        if (toolCalls != null) {
+            for (ToolUseBlock toolCall : toolCalls) {
+                try {
+                    if (WEB_SEARCH_TOOL_NAME.equals(toolCall.getName())) {
+                        log.info("检测到 web_search 工具调用，即将执行联网搜索");
                     }
+                } catch (Exception e) {
+                    log.warn("读取工具调用名称失败，已跳过", e);
                 }
             }
-        } catch (Exception e) {
-            log.warn("SearchResultsMiddleware: failed to inspect tool calls: {}", e.getMessage());
         }
         return next.apply(input);
     }

@@ -12,23 +12,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // 后端接口统一 /api 前缀，dev 环境统一代理到本地后端
       '/api': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-      '/agent/sessions': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-      '/agent/data-analysis': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-      '/agent/sse': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-      '/datasource': {
         target: 'http://localhost:8080',
         changeOrigin: true,
       },

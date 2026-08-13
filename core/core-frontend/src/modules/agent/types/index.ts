@@ -54,107 +54,53 @@ export interface Message {
   sessionId: string;
   /** 对话轮次 ID（用于按轮次分组，同一轮次的多条消息共享同一 dialogueId） */
   dialogueId?: number;
-  role: 'user' | 'assistant' | 'system' | 'thinking' | 'tool';
+  /** 消息角色：谁说的（user / assistant / system / tool） */
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  /** 消息类型：哪类内容（MESSAGE / THINKING / TOOL_CALL / TOOL_RESULT / ERROR），透出后端 messageType */
+  type?: 'MESSAGE' | 'THINKING' | 'TOOL_CALL' | 'TOOL_RESULT' | 'ERROR';
   content: string;
   toolCalls?: string;
   toolResult?: string;
+  /** 工具调用 ID（仅 TOOL_CALL / TOOL_RESULT 消息携带，同一调用的调用与结果两条消息取值一致，用于前端配对展示） */
+  toolCallId?: string;
+  /** 消息状态：COMPLETED / IN_PROGRESS / FAILED（老数据缺失时回退现有判定） */
+  status?: string;
   createdAt: string;
 }
 
 /**
- * Tool call item
+ * 统一内容流项状态
  */
-export interface ToolCallItem {
-  name: string;
-  status: 'running' | 'success' | 'error';
-  startTime: number;
-  endTime?: number;
-  /** 工具调用的输入参数(JSON字符串) */
-  input?: string;
-  result?: string;
-}
+export type ContentItemStatus = 'in_progress' | 'completed' | 'failed';
 
 /**
- * Timeline item base interface
- * 时间线项基础接口
+ * 统一内容流项
+ * <p>对话内所有消息内容（思考、工具调用、报告）的统一模型，严格按 seq 时序渲染，
+ * 以 status 驱动自动展开/折叠，不再通过差异化卡片区分类型。</p>
  */
-export interface BaseTimelineItem {
+export interface ContentItem {
   /** 唯一标识 */
   id: string;
-  /** 时间戳 */
-  timestamp: number;
-  /** 项类型 */
-  type: 'thinking' | 'tool_call' | 'report';
-}
-
-/**
- * Thinking timeline item
- * 思考时间线项
- */
-export interface ThinkingTimelineItem extends BaseTimelineItem {
-  type: 'thinking';
-  /** 思考内容 */
-  content: string;
-  /** 是否正在流式输出 */
-  isStreaming: boolean;
-}
-
-/**
- * Tool call timeline item
- * 工具调用时间线项
- */
-export interface ToolCallTimelineItem extends BaseTimelineItem {
-  type: 'tool_call';
-  /** 工具名称 */
-  toolName: string;
-  /** 执行状态 */
-  status: 'running' | 'success' | 'error';
-  /** 工具输入参数 */
+  /** 顺序号（自增，决定内容流渲染顺序） */
+  seq: number;
+  /** 项类型：思考 / 工具调用 / 工具结果 / 报告 */
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'report';
+  /** 状态：进行中 / 完成 / 失败 */
+  status: ContentItemStatus;
+  /** 文本内容（thinking/report 使用；tool_call 为输入参数） */
+  content?: string;
+  /** 工具名称（tool_call / tool_result 使用） */
+  toolName?: string;
+  /** 工具调用 ID（tool_call / tool_result 使用，用于交错事件时精确定位） */
+  toolCallId?: string;
+  /** 工具输入参数（tool_call，JSON 字符串） */
   input?: string;
-  /** 工具执行结果 */
+  /** 工具执行结果（tool_call / tool_result） */
   result?: string;
   /** 开始时间戳 */
   startTime: number;
   /** 结束时间戳 */
   endTime?: number;
-}
-
-/**
- * Report timeline item
- * 报告时间线项
- */
-export interface ReportTimelineItem extends BaseTimelineItem {
-  type: 'report';
-  /** 报告内容 */
-  content: string;
-  /** 是否正在流式输出 */
-  isStreaming: boolean;
-}
-
-/**
- * Timeline item union type
- * 时间线项联合类型
- */
-export type TimelineItem = ThinkingTimelineItem | ToolCallTimelineItem | ReportTimelineItem;
-
-/**
- * ReAct 轮次：一次"思考 + 后续工具调用"的完整决策循环
- */
-export interface ReActRound {
-  /** 唯一标识 */
-  id: string;
-  /** 轮次开始时间戳 */
-  startTime: number;
-  /** 轮次结束时间戳（最后一个工具完成时，或 completeAnalysis 时回填） */
-  endTime?: number;
-  /** 本轮思考项（content 可能为空，兜底轮次场景） */
-  thinking: ThinkingTimelineItem;
-  /** 本轮工具调用（按时间顺序，可能为空） */
-  toolCalls: ToolCallTimelineItem[];
-  /** 是否正在流式输出（thinking.isStreaming 或任意 toolCall.status=running） */
-  isActive: boolean;
-  /** 完成后是否折叠（默认 true，用户可手动展开回看） */
-  isCollapsed?: boolean;
 }
 
 /**
@@ -174,19 +120,16 @@ export interface DataAnalysisResponse {
  */
 export interface AnalysisState {
   isAnalyzing: boolean;
-  /** ReAct 轮次数组（替代扁平 timeline） */
-  rounds: ReActRound[];
-  /** 当前正在流式输出的轮次 ID */
-  currentRoundId: string | null;
-  /** 时间线是否展开 */
-  isTimelineExpanded: boolean;
+  /** 统一内容流（严格按接收时序） */
+  contentItems: ContentItem[];
+  /** 下一内容项序号（自增，保证渲染顺序） */
+  contentSeq: number;
   currentSQL: string | null;
   queryData: Record<string, any>[];
   chartConfig: any | null;
   chartType: string | null;
+  /** 分析报告全文（内容流中 report 项的派生汇总，兼容保留） */
   analysisReport: string | null;
-  /** 时间线内的报告项（流式状态） */
-  report: ReportTimelineItem | null;
   searchResults: SearchResultItem[] | null;
   isEmptyResult: boolean;
   errorMessage: string | null;
@@ -203,17 +146,13 @@ export interface AnalysisState {
 export interface AnalysisSnapshot {
   /** 是否正在分析中 */
   isAnalyzing?: boolean;
-  /** ReAct 轮次数组 */
-  rounds: ReActRound[];
-  /** 时间线是否展开 */
-  isTimelineExpanded?: boolean;
+  /** 统一内容流（按 seq 时序） */
+  contentItems: ContentItem[];
   currentSQL: string | null;
   queryData: Record<string, any>[];
   chartConfig: any | null;
   chartType: string | null;
   analysisReport: string | null;
-  /** 时间线内的报告项（可选，用于历史兼容） */
-  report?: ReportTimelineItem | null;
   searchResults: SearchResultItem[] | null;
   isEmptyResult: boolean;
   errorMessage: string | null;

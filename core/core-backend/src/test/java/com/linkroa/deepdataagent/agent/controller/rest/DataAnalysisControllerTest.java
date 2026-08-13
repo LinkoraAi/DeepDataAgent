@@ -4,14 +4,20 @@ import com.linkroa.deepdataagent.agent.application.command.DataAnalysisCommand;
 import com.linkroa.deepdataagent.agent.application.service.DataAnalysisApplicationService;
 import com.linkroa.deepdataagent.agent.controller.request.DataAnalysisRequest;
 import com.linkroa.deepdataagent.agent.controller.request.StopAnalysisRequest;
+import com.linkroa.deepdataagent.agent.domain.model.DataAnalysisQuery;
 import com.linkroa.deepdataagent.shared.exception.SSENotConnectedException;
 import com.linkroa.deepdataagent.shared.exception.SystemBusyException;
 import com.linkroa.deepdataagent.shared.result.ApiResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -175,6 +181,23 @@ class DataAnalysisControllerTest {
         assertNotNull(request);
         assertNull(request.resumeOnly());
         assertEquals(Boolean.FALSE, request.enableWebSearch());
+    }
+
+    @Test
+    void should_rejectOversizedText_given_textExceedsMaxLength() {
+        // given：text 长度超过 @Size(max=5000) 上限（controller 的 @Valid 入口会触发同一套 Bean Validation 校验）
+        String oversizedText = "分".repeat(DataAnalysisQuery.MAX_QUESTION_LENGTH + 1);
+        DataAnalysisRequest request = new DataAnalysisRequest(
+                "session-123", 1L, "1", oversizedText, false, false, "client-1");
+        Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
+
+        // when：对请求执行 Bean Validation 校验
+        Set<ConstraintViolation<DataAnalysisRequest>> violations = validator.validate(request);
+
+        // then：userQuestion 超长被拦截，产生校验错误（HTTP 层表现为 400）
+        assertFalse(violations.isEmpty());
+        assertTrue(violations.stream().anyMatch(v ->
+                "userQuestion".equals(v.getPropertyPath().toString()) && v.getMessage().contains("5000")));
     }
 
     @Test

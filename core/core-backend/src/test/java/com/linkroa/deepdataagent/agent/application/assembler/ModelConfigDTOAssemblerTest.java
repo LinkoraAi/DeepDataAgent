@@ -1,7 +1,7 @@
 package com.linkroa.deepdataagent.agent.application.assembler;
 
 import com.linkroa.deepdataagent.agent.application.dto.ModelConfigDTO;
-import com.linkroa.deepdataagent.agent.domain.model.AgentModelInfo;
+import com.linkroa.deepdataagent.agent.domain.model.ModelConfig;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
@@ -18,10 +18,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class ModelConfigDTOAssemblerTest {
 
-    private AgentModelInfo buildInfo(Long id, String providerName, String providerDisplayName,
+    private ModelConfig buildInfo(Long id, String providerName, String providerDisplayName,
                                      String modelId, String apiUrl, String apiKey, Integer defaultModel,
                                      LocalDateTime createdTime, LocalDateTime updatedTime) {
-        AgentModelInfo info = new AgentModelInfo();
+        ModelConfig info = new ModelConfig();
         info.setId(id);
         info.setProviderName(providerName);
         info.setProviderDisplayName(providerDisplayName);
@@ -48,7 +48,7 @@ class ModelConfigDTOAssemblerTest {
     @Test
     void should_maskApiKey_when_toDTO_given_normalLengthAndMaskTrue() {
         // given
-        AgentModelInfo info = buildInfo(1L, "dashscope", "通义千问", "qwen-plus",
+        ModelConfig info = buildInfo(1L, "dashscope", "通义千问", "qwen-plus",
                 "https://api.example.com", "sk-1234567890abcdef", 1,
                 LocalDateTime.of(2026, 1, 2, 3, 4, 5), LocalDateTime.of(2026, 2, 3, 4, 5, 6));
 
@@ -71,7 +71,7 @@ class ModelConfigDTOAssemblerTest {
     @Test
     void should_keepRawApiKey_when_toDTO_given_maskFalse() {
         // given
-        AgentModelInfo info = buildInfo(2L, "openai", "OpenAI", "gpt-4o",
+        ModelConfig info = buildInfo(2L, "openai", "OpenAI", "gpt-4o",
                 "https://api.openai.com", "sk-raw-key-1234567890", 0, null, null);
 
         // when
@@ -87,7 +87,7 @@ class ModelConfigDTOAssemblerTest {
     @Test
     void should_returnEmptyApiKey_when_toDTO_given_nullApiKey() {
         // given
-        AgentModelInfo info = buildInfo(3L, "custom", "自定义", "my-model", "http://localhost", null, 1, null, null);
+        ModelConfig info = buildInfo(3L, "custom", "自定义", "my-model", "http://localhost", null, 1, null, null);
 
         // when
         ModelConfigDTO dto = ModelConfigDTOAssembler.toDTO(info, true);
@@ -99,7 +99,7 @@ class ModelConfigDTOAssemblerTest {
     @Test
     void should_returnEmptyApiKey_when_toDTO_given_blankApiKey() {
         // given
-        AgentModelInfo info = buildInfo(4L, "custom", "自定义", "my-model", "http://localhost", "   ", 1, null, null);
+        ModelConfig info = buildInfo(4L, "custom", "自定义", "my-model", "http://localhost", "   ", 1, null, null);
 
         // when
         ModelConfigDTO dto = ModelConfigDTOAssembler.toDTO(info, true);
@@ -111,7 +111,7 @@ class ModelConfigDTOAssemblerTest {
     @Test
     void should_maskShortApiKey_when_toDTO_given_lengthEqualsFour() {
         // given
-        AgentModelInfo info = buildInfo(5L, "custom", "自定义", "m", "u", "abcd", 1, null, null);
+        ModelConfig info = buildInfo(5L, "custom", "自定义", "m", "u", "abcd", 1, null, null);
 
         // when
         ModelConfigDTO dto = ModelConfigDTOAssembler.toDTO(info, true);
@@ -123,7 +123,7 @@ class ModelConfigDTOAssemblerTest {
     @Test
     void should_maskShortApiKey_when_toDTO_given_lengthLessThanFour() {
         // given
-        AgentModelInfo info = buildInfo(6L, "custom", "自定义", "m", "u", "abc", 1, null, null);
+        ModelConfig info = buildInfo(6L, "custom", "自定义", "m", "u", "abc", 1, null, null);
 
         // when
         ModelConfigDTO dto = ModelConfigDTOAssembler.toDTO(info, true);
@@ -135,7 +135,7 @@ class ModelConfigDTOAssemblerTest {
     @Test
     void should_maskShortApiKey_when_toDTO_given_lengthEqualsEight() {
         // given
-        AgentModelInfo info = buildInfo(7L, "custom", "自定义", "m", "u", "abcdefgh", 1, null, null);
+        ModelConfig info = buildInfo(7L, "custom", "自定义", "m", "u", "abcdefgh", 1, null, null);
 
         // when
         ModelConfigDTO dto = ModelConfigDTOAssembler.toDTO(info, true);
@@ -147,7 +147,7 @@ class ModelConfigDTOAssemblerTest {
     @Test
     void should_flipDefaultFlag_when_toDTO_given_defaultModelNull() {
         // given
-        AgentModelInfo info = buildInfo(8L, "custom", "自定义", "m", "u", "sk-1234567890abc", null, null, null);
+        ModelConfig info = buildInfo(8L, "custom", "自定义", "m", "u", "sk-1234567890abc", null, null, null);
 
         // when
         ModelConfigDTO dto = ModelConfigDTOAssembler.toDTO(info, true);
@@ -170,7 +170,7 @@ class ModelConfigDTOAssemblerTest {
     @Test
     void should_maskByDefault_when_toDTO_given_singleArg() {
         // given
-        AgentModelInfo info = buildInfo(9L, "openai", "OpenAI", "gpt-4o", "u", "sk-1234567890abcdef", 0, null, null);
+        ModelConfig info = buildInfo(9L, "openai", "OpenAI", "gpt-4o", "u", "sk-1234567890abcdef", 0, null, null);
 
         // when
         ModelConfigDTO dto = ModelConfigDTOAssembler.toDTO(info);
@@ -193,8 +193,8 @@ class ModelConfigDTOAssemblerTest {
     @Test
     void should_convertAll_when_toDTOList_given_nonNullList() {
         // given
-        AgentModelInfo info1 = buildInfo(1L, "dashscope", "通义千问", "qwen", "u", "sk-1234567890abcdef", 1, null, null);
-        AgentModelInfo info2 = buildInfo(2L, "openai", "OpenAI", "gpt", "u", "sk-abcdefghijklmnop", 0, null, null);
+        ModelConfig info1 = buildInfo(1L, "dashscope", "通义千问", "qwen", "u", "sk-1234567890abcdef", 1, null, null);
+        ModelConfig info2 = buildInfo(2L, "openai", "OpenAI", "gpt", "u", "sk-abcdefghijklmnop", 0, null, null);
 
         // when
         List<ModelConfigDTO> list = ModelConfigDTOAssembler.toDTOList(List.of(info1, info2));

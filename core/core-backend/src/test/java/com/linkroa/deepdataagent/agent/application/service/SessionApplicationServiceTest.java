@@ -7,16 +7,15 @@ import com.linkroa.deepdataagent.agent.application.context.RunningAnalysisRegist
 import com.linkroa.deepdataagent.agent.application.dto.MessageDTO;
 import com.linkroa.deepdataagent.agent.application.dto.SessionDTO;
 import com.linkroa.deepdataagent.agent.application.dto.SessionListItemDTO;
-import com.linkroa.deepdataagent.agent.domain.model.AgentModelInfo;
 import com.linkroa.deepdataagent.agent.domain.model.AgentSession;
 import com.linkroa.deepdataagent.agent.domain.model.Dialogue;
 import com.linkroa.deepdataagent.agent.domain.model.DialogueMessage;
-import com.linkroa.deepdataagent.agent.domain.repository.AgentModelInfoRepository;
+import com.linkroa.deepdataagent.agent.domain.model.ModelConfig;
+import com.linkroa.deepdataagent.agent.domain.repository.ModelConfigRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentSessionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.DialogueRepository;
 import com.linkroa.deepdataagent.agent.domain.valueobject.MessageRole;
 import com.linkroa.deepdataagent.agent.domain.valueobject.SessionStatus;
-import com.linkroa.deepdataagent.agent.infrastructure.agent.HarnessAgentFactory;
 import com.linkroa.deepdataagent.agent.infrastructure.collector.AnalysisEventBuffer;
 import com.linkroa.deepdataagent.agent.infrastructure.config.SessionProperties;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,7 +44,7 @@ class SessionApplicationServiceTest {
     private AgentSessionRepository sessionRepository;
 
     @Mock
-    private AgentModelInfoRepository modelInfoRepository;
+    private ModelConfigRepository modelConfigRepository;
 
     @Mock
     private DialogueRepository dialogueRepository;
@@ -56,9 +55,6 @@ class SessionApplicationServiceTest {
     @Mock
     private SessionProperties sessionProperties;
 
-    @Mock
-    private HarnessAgentFactory agentFactory;
-
     private RunningAnalysisRegistry runningAnalysisRegistry;
 
     private SessionApplicationService service;
@@ -68,11 +64,10 @@ class SessionApplicationServiceTest {
         runningAnalysisRegistry = new RunningAnalysisRegistry();
         service = new SessionApplicationService(
                 sessionRepository,
-                modelInfoRepository,
+                modelConfigRepository,
                 dialogueRepository,
                 sessionProperties,
                 datasourceGateway,
-                agentFactory,
                 runningAnalysisRegistry
         );
     }
@@ -89,7 +84,7 @@ class SessionApplicationServiceTest {
 
         DatasourceInfo datasourceInfo = createDatasourceInfo(datasourceId);
         when(datasourceGateway.findDatasource(datasourceId)).thenReturn(Optional.of(datasourceInfo));
-        when(modelInfoRepository.findById(modelConfigId)).thenReturn(Optional.of(new AgentModelInfo()));
+        when(modelConfigRepository.findById(modelConfigId)).thenReturn(Optional.of(new ModelConfig()));
         when(sessionRepository.countActiveSessions()).thenReturn(0);
         when(sessionProperties.getMaxActiveSessions()).thenReturn(10);
         when(sessionRepository.save(any(AgentSession.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -135,7 +130,7 @@ class SessionApplicationServiceTest {
 
         DatasourceInfo datasourceInfo = createDatasourceInfo(datasourceId);
         when(datasourceGateway.findDatasource(datasourceId)).thenReturn(Optional.of(datasourceInfo));
-        when(modelInfoRepository.findById(modelConfigId)).thenReturn(Optional.empty());
+        when(modelConfigRepository.findById(modelConfigId)).thenReturn(Optional.empty());
 
         // when & then
         IllegalArgumentException exception = assertThrows(
@@ -269,8 +264,9 @@ class SessionApplicationServiceTest {
         service.closeSession(sessionId);
 
         // then
-        assertEquals(SessionStatus.CLOSED, session.getStatus());
-        verify(sessionRepository).updateStatus(sessionId, SessionStatus.CLOSED);
+        assertEquals(SessionStatus.DELETED, session.getStatus());
+        assertEquals(1, session.getDeleted());
+        verify(sessionRepository).softDelete(sessionId);
     }
 
     @Test
@@ -285,14 +281,14 @@ class SessionApplicationServiceTest {
                 () -> service.closeSession(sessionId)
         );
         assertTrue(exception.getMessage().contains("会话不存在"));
-        verify(sessionRepository, never()).updateStatus(any(), any());
+        verify(sessionRepository, never()).softDelete(any());
     }
 
     @Test
-    void should_throwException_when_closeSession_given_alreadyClosedSession() {
+    void should_throwException_when_closeSession_given_alreadyDeletedSession() {
         // given
         String sessionId = "session-123";
-        AgentSession session = createAgentSession(sessionId, "测试会话", 1L, 100L, 200L, SessionStatus.CLOSED);
+        AgentSession session = createAgentSession(sessionId, "测试会话", 1L, 100L, 200L, SessionStatus.DELETED);
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
 
         // when & then
@@ -300,8 +296,66 @@ class SessionApplicationServiceTest {
                 IllegalStateException.class,
                 () -> service.closeSession(sessionId)
         );
-        assertTrue(exception.getMessage().contains("已关闭") || exception.getMessage().contains("已删除"));
-        verify(sessionRepository, never()).updateStatus(any(), any());
+        assertTrue(exception.getMessage().contains("已删除"));
+        verify(sessionRepository, never()).softDelete(any());
+    }
+
+    // ==================== updateSessionTitle ====================
+
+    @Test
+    void should_updateTitle_when_updateSessionTitle_given_validSessionId() {
+        // given
+        String sessionId = "session-123";
+        AgentSession session = createAgentSession(sessionId, "旧标题", 1L, 100L, 200L, SessionStatus.ACTIVE);
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+
+        // when
+        service.updateSessionTitle(sessionId, " 新标题 ");
+
+        // then
+        verify(sessionRepository).updateTitle(sessionId, "新标题");
+    }
+
+    @Test
+    void should_throwException_when_updateSessionTitle_given_blankTitle() {
+        // when & then
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.updateSessionTitle("session-123", "   ")
+        );
+        assertTrue(exception.getMessage().contains("标题不能为空"));
+        verify(sessionRepository, never()).updateTitle(any(), any());
+    }
+
+    @Test
+    void should_throwException_when_updateSessionTitle_given_nonexistentSessionId() {
+        // given
+        String sessionId = "nonexistent-session";
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.empty());
+
+        // when & then
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.updateSessionTitle(sessionId, "新标题")
+        );
+        assertTrue(exception.getMessage().contains("会话不存在"));
+        verify(sessionRepository, never()).updateTitle(any(), any());
+    }
+
+    @Test
+    void should_throwException_when_updateSessionTitle_given_deletedSession() {
+        // given
+        String sessionId = "session-123";
+        AgentSession session = createAgentSession(sessionId, "旧标题", 1L, 100L, 200L, SessionStatus.DELETED);
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+
+        // when & then
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> service.updateSessionTitle(sessionId, "新标题")
+        );
+        assertTrue(exception.getMessage().contains("已删除"));
+        verify(sessionRepository, never()).updateTitle(any(), any());
     }
 
     // ==================== getMessages ====================
@@ -346,7 +400,7 @@ class SessionApplicationServiceTest {
         // then
         // 只返回最新 5 轮（id 2~6），每轮 3 条消息共 15 条，最旧的第 1 轮被排除
         assertEquals(15, result.size());
-        // 输出按 (dialogueId ASC, sequenceNumber ASC) 升序：从第 2 轮的用户消息开始
+        // 输出按 (dialogueId ASC, messageNumber ASC) 升序：从第 2 轮的用户消息开始
         assertEquals("问题2", result.get(0).content());
         assertEquals("user", result.get(0).role());
         assertEquals(2L, result.get(0).dialogueId());
@@ -416,7 +470,7 @@ class SessionApplicationServiceTest {
 
         // 历史脏数据：持久化消息缺少用户消息，只含思考消息
         DialogueMessage thinking = DialogueMessage.inProgressMessage(2L,
-                MessageRole.THINKING, com.linkroa.deepdataagent.agent.domain.valueobject.MessageType.THINKING);
+                MessageRole.ASSISTANT, com.linkroa.deepdataagent.agent.domain.valueobject.MessageType.THINKING);
         Dialogue dialogue = createDialogue(1L, sessionId, "分析数据库有什么内容", List.of(thinking));
         when(dialogueRepository.findRoundsBySessionId(sessionId, null, 5)).thenReturn(List.of(dialogue));
 
@@ -466,7 +520,7 @@ class SessionApplicationServiceTest {
         return List.of(
                 DialogueMessage.userMessage(1L, question),
                 DialogueMessage.inProgressMessage(2L,
-                        MessageRole.THINKING, com.linkroa.deepdataagent.agent.domain.valueobject.MessageType.THINKING),
+                        MessageRole.ASSISTANT, com.linkroa.deepdataagent.agent.domain.valueobject.MessageType.THINKING),
                 new DialogueMessage(3L, MessageRole.ASSISTANT,
                         com.linkroa.deepdataagent.agent.domain.valueobject.MessageType.MESSAGE,
                         com.linkroa.deepdataagent.agent.domain.model.DialogueContent.text(report),

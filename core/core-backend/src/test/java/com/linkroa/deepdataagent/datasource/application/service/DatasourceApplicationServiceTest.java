@@ -19,6 +19,7 @@ import com.linkroa.deepdataagent.datasource.domain.strategy.DatasourceConnection
 import com.linkroa.deepdataagent.datasource.infrastructure.adapter.ApiResponseParser;
 import com.linkroa.deepdataagent.datasource.infrastructure.client.ApiPaginationHandler;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
+import com.linkroa.deepdataagent.shared.infrastructure.redis.port.SchemaCachePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -51,6 +52,7 @@ class DatasourceApplicationServiceTest {
     @Mock private ApiResponseParser apiResponseParser;
     @Mock private ApiPaginationHandler apiPaginationHandler;
     @Mock private DatasourceConnectionStrategy strategy;
+    @Mock private SchemaCachePort schemaCachePort;
 
     private DatasourceApplicationService service;
 
@@ -60,7 +62,7 @@ class DatasourceApplicationServiceTest {
                 connectionRepository, strategyFactory, domainService,
                 transactionTemplate, databaseSchemaRepository, tableInfoRepository,
                 columnInfoRepository, apiSchemaRepository, apiFieldRepository,
-                apiResponseParser, apiPaginationHandler
+                apiResponseParser, apiPaginationHandler, schemaCachePort
         );
     }
 
@@ -169,6 +171,7 @@ class DatasourceApplicationServiceTest {
         service.deleteDatasource(1L);
         verify(apiSchemaRepository).deleteByConnectionId(1L);
         verify(connectionRepository).deleteById(1L);
+        verify(schemaCachePort).evict(1L);
     }
 
     @Test
@@ -185,6 +188,7 @@ class DatasourceApplicationServiceTest {
         when(databaseSchemaRepository.findByConnectionId(1L)).thenReturn(List.of());
         service.deleteDatasource(1L);
         verify(connectionRepository).deleteById(1L);
+        verify(schemaCachePort).evict(1L);
     }
 
     @Test
@@ -295,6 +299,7 @@ class DatasourceApplicationServiceTest {
         DatasourceConnection result = service.updateDatasource(command);
 
         verify(connectionRepository).update(any());
+        verify(schemaCachePort).evict(1L);
     }
 
     @Test
@@ -318,6 +323,7 @@ class DatasourceApplicationServiceTest {
 
         // then 更新后触发了元数据同步
         verify(strategy).extractSchemas(any());
+        verify(schemaCachePort).evict(1L);
     }
 
     @Test
@@ -399,6 +405,7 @@ class DatasourceApplicationServiceTest {
         service.syncMetadata(1L);
 
         verify(transactionTemplate).executeWithoutResult(any());
+        verify(schemaCachePort).evict(1L);
     }
 
     @Test
@@ -778,6 +785,7 @@ class DatasourceApplicationServiceTest {
         verify(databaseSchemaRepository).save(any());
         verify(tableInfoRepository).save(any());
         verify(columnInfoRepository).save(any());
+        verify(schemaCachePort).evict(1L);
     }
 
     @Test
@@ -809,6 +817,7 @@ class DatasourceApplicationServiceTest {
 
         verify(tableInfoRepository).save(any());
         verify(databaseSchemaRepository, never()).save(any());
+        verify(schemaCachePort).evict(1L);
     }
 
     @Test

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.linkroa.deepdataagent.agent.domain.model.DialogueMessage;
+import com.linkroa.deepdataagent.agent.domain.valueobject.MessageRole;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.DialogueEntity;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper.DialogueMapper;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.repository.DialogueRepositoryImpl;
@@ -49,7 +50,7 @@ class DialogueJsonSerializationTest {
         // given
         List<DialogueMessage> messages = List.of(
                 DialogueMessage.userMessage(1, "分析近30天销量"),
-                DialogueMessage.inProgressMessage(2, com.linkroa.deepdataagent.agent.domain.valueobject.MessageRole.THINKING,
+                DialogueMessage.inProgressMessage(2, MessageRole.ASSISTANT,
                         com.linkroa.deepdataagent.agent.domain.valueobject.MessageType.THINKING),
                 DialogueMessage.inProgressMessage(3, com.linkroa.deepdataagent.agent.domain.valueobject.MessageRole.TOOL,
                         com.linkroa.deepdataagent.agent.domain.valueobject.MessageType.TOOL_CALL)
@@ -145,9 +146,9 @@ class DialogueJsonSerializationTest {
         // then
         assertNotNull(result);
         assertEquals(2, result.size());
-        assertEquals(1L, result.get(0).getSequenceNumber());
+        assertEquals(1L, result.get(0).getMessageNumber());
         assertEquals(com.linkroa.deepdataagent.agent.domain.valueobject.MessageRole.USER, result.get(0).getRole());
         assertEquals("用户问题", result.get(0).getContent().result());
-        assertEquals(2L, result.get(1).getSequenceNumber());
+        assertEquals(2L, result.get(1).getMessageNumber());
     }
 }

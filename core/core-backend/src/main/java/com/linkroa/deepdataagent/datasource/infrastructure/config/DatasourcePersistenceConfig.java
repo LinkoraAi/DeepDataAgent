@@ -1,8 +1,8 @@
 package com.linkroa.deepdataagent.datasource.infrastructure.config;
 
-import com.linkroa.deepdataagent.shared.config.SqliteProperties;
-import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -12,34 +12,22 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 
+/**
+ * 持久层数据源配置。
+ * <p>基于 {@code spring.datasource.*} 标准配置构建 PostgreSQL Hikari 连接池，
+ * 池参数通过 {@code spring.datasource.hikari.*} 覆盖（默认 maximum-pool-size=10）。</p>
+ */
 @Configuration
 public class DatasourcePersistenceConfig {
 
     @Bean
     @Primary
-    public DataSource dataSource(SqliteProperties properties) {
-        Path databasePath = Path.of(properties.getPath()).toAbsolutePath().normalize();
-        try {
-            Path parent = databasePath.getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
-        } catch (IOException e) {
-            throw new IllegalStateException("Failed to create datasource directory: " + databasePath, e);
-        }
-
-        HikariConfig config = new HikariConfig();
-        config.setPoolName("datasource-sqlite");
-        config.setJdbcUrl("jdbc:sqlite:" + databasePath);
-        config.setMaximumPoolSize(1);
-        config.setConnectionTimeout(30000);
-        config.setIdleTimeout(600000);
-        config.setMaxLifetime(1800000);
-        return new HikariDataSource(config);
+    @ConfigurationProperties("spring.datasource.hikari")
+    public HikariDataSource dataSource(DataSourceProperties properties) {
+        return properties.initializeDataSourceBuilder()
+                .type(HikariDataSource.class)
+                .build();
     }
 
     @Bean

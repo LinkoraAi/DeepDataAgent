@@ -2,6 +2,7 @@ package com.linkroa.deepdataagent.agent.infrastructure.persistence.repository;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.linkroa.deepdataagent.agent.domain.model.AgentSession;
 import com.linkroa.deepdataagent.agent.domain.valueobject.SessionStatus;
@@ -23,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -102,6 +104,24 @@ class AgentSessionRepositoryImplTest {
         assertTrue(targetSql.contains("last_message_time"));
         assertTrue(targetSql.contains("DESC"));
         assertFalse(targetSql.contains("updated_time"));
+    }
+
+    @Test
+    void should_setStatusDeletedAndIsDeleted_when_softDelete() {
+        // when
+        repository.softDelete("session-1");
+
+        // then：status 置为 DELETED，且 is_deleted 置 1（与全局逻辑删除约定一致）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<LambdaUpdateWrapper<AgentSessionEntity>> captor =
+                ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(mapper).update(isNull(), captor.capture());
+        LambdaUpdateWrapper<AgentSessionEntity> wrapper = captor.getValue();
+        // 参数化 SQL 中值为占位符，需从参数值对中校验实际值；SET 片段通过 getSqlSet() 获取
+        assertTrue(wrapper.getParamNameValuePairs().containsValue(SessionStatus.DELETED.name()));
+        assertTrue(wrapper.getParamNameValuePairs().containsValue(1));
+        assertTrue(wrapper.getSqlSet().contains("is_deleted"));
+        assertTrue(wrapper.getSqlSet().contains("updated_time"));
     }
 
     /**

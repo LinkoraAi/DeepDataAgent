@@ -36,7 +36,7 @@ export async function analyzeStream(
   request: DataAnalysisRequest
 ): Promise<DataAnalysisResponse> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
-  const url = `${baseUrl}/agent/data-analysis/analyze`;
+  const url = `${baseUrl}/api/agent/data-analysis/analyze`;
 
   const response = await axios.post<DataAnalysisResponse>(url, request, {
     headers: {
@@ -55,7 +55,7 @@ export async function analyzeStream(
  */
 export async function stopAnalysis(sessionId: string): Promise<void> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
-  const url = `${baseUrl}/agent/data-analysis/stop`;
+  const url = `${baseUrl}/api/agent/data-analysis/stop`;
 
   await axios.post<void>(url, { sessionId }, {
     headers: {

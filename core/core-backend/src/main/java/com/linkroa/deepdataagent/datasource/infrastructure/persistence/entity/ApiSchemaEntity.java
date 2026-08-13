@@ -1,8 +1,10 @@
 package com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.linkroa.deepdataagent.shared.util.PostgresJsonbTypeHandler;
 import lombok.Data;
 
 /**
@@ -19,6 +21,8 @@ public class ApiSchemaEntity {
     private String name;
     private String url;
     private String method;
+    /** API 配置聚合 JSON（对应 PG jsonb 列） */
+    @TableField(typeHandler = PostgresJsonbTypeHandler.class)
     private String config;
     private String createdAt;
     private String updatedAt;

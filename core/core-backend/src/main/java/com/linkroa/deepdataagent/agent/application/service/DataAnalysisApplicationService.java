@@ -3,29 +3,26 @@ package com.linkroa.deepdataagent.agent.application.service;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceCategory;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceGateway;
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceInfo;
-import com.linkroa.deepdataagent.agent.application.adapter.BatchFlushManager;
 import com.linkroa.deepdataagent.agent.application.adapter.EventAdapter;
 import com.linkroa.deepdataagent.agent.application.command.DataAnalysisCommand;
 import com.linkroa.deepdataagent.agent.domain.model.AgentSession;
 import com.linkroa.deepdataagent.agent.domain.exception.AnalysisCancelledException;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentSessionRepository;
-import com.linkroa.deepdataagent.agent.domain.repository.DialogueRepository;
 import com.linkroa.deepdataagent.agent.domain.valueobject.DialogueStatus;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
-import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
+import com.linkroa.deepdataagent.agent.infrastructure.client.TitleGenerationClient;
 import com.linkroa.deepdataagent.agent.infrastructure.collector.AnalysisEventBuffer;
 import com.linkroa.deepdataagent.agent.infrastructure.agent.HarnessAgentFactory;
 import com.linkroa.deepdataagent.agent.infrastructure.config.AgentProperties;
-import com.linkroa.deepdataagent.agent.infrastructure.config.DataAnalysisProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.config.SessionProperties;
 import com.linkroa.deepdataagent.agent.application.context.RunningAnalysisRegistry;
 import com.linkroa.deepdataagent.agent.application.context.RunningExecution;
 import com.linkroa.deepdataagent.agent.application.context.SessionToolContext;
+import com.linkroa.deepdataagent.agent.domain.model.DialogueMessage;
 import com.linkroa.deepdataagent.agent.infrastructure.middleware.SearchResultsMiddleware;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.MessagePersistenceService;
 import com.linkroa.deepdataagent.agent.infrastructure.sse.agent.AgentExecutionPool;
 import com.linkroa.deepdataagent.agent.infrastructure.sse.SSEConnectionPool;
-import com.linkroa.deepdataagent.agent.infrastructure.sse.SessionEventBus;
 import com.linkroa.deepdataagent.datasource.infrastructure.util.LogMasker;
 import com.linkroa.deepdataagent.shared.exception.SSENotConnectedException;
 import com.linkroa.deepdataagent.shared.exception.SessionNotRunningException;
@@ -44,7 +41,6 @@ import org.springframework.util.ObjectUtils;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 import reactor.core.Disposable;
 
@@ -73,50 +69,41 @@ public class DataAnalysisApplicationService {
     private static final String CONV_LOG_PREFIX = "[DataAnalysis]";
 
     private final DatasourceGateway datasourceGateway;
-    private final LLMClient llmClient;
+    private final TitleGenerationClient titleGenerationClient;
     private final HarnessAgentFactory agentFactory;
     private final EventAdapter eventAdapter;
     private final MessagePersistenceService messagePersistenceService;
     private final AgentSessionRepository sessionRepository;
-    private final DialogueRepository dialogueRepository;
     private final SessionProperties sessionProperties;
     private final AgentProperties agentProperties;
-    private final DataAnalysisProperties dataAnalysisProperties;
     private final SessionToolContext sessionToolContext;
     private final SSEConnectionPool sseConnectionPool;
-    private final SessionEventBus sessionEventBus;
     private final AgentExecutionPool agentExecutionPool;
     private final RunningAnalysisRegistry runningAnalysisRegistry;
 
     public DataAnalysisApplicationService(
             DatasourceGateway datasourceGateway,
-            LLMClient llmClient,
+            TitleGenerationClient titleGenerationClient,
             HarnessAgentFactory agentFactory,
             EventAdapter eventAdapter,
             MessagePersistenceService messagePersistenceService,
             AgentSessionRepository sessionRepository,
-            DialogueRepository dialogueRepository,
             SessionProperties sessionProperties,
             AgentProperties agentProperties,
-            DataAnalysisProperties dataAnalysisProperties,
             SessionToolContext sessionToolContext,
             SSEConnectionPool sseConnectionPool,
-            SessionEventBus sessionEventBus,
             AgentExecutionPool agentExecutionPool,
             RunningAnalysisRegistry runningAnalysisRegistry) {
         this.datasourceGateway = datasourceGateway;
-        this.llmClient = llmClient;
+        this.titleGenerationClient = titleGenerationClient;
         this.agentFactory = agentFactory;
         this.eventAdapter = eventAdapter;
         this.messagePersistenceService = messagePersistenceService;
         this.sessionRepository = sessionRepository;
-        this.dialogueRepository = dialogueRepository;
         this.sessionProperties = sessionProperties;
         this.agentProperties = agentProperties;
-        this.dataAnalysisProperties = dataAnalysisProperties;
         this.sessionToolContext = sessionToolContext;
         this.sseConnectionPool = sseConnectionPool;
-        this.sessionEventBus = sessionEventBus;
         this.agentExecutionPool = agentExecutionPool;
         this.runningAnalysisRegistry = runningAnalysisRegistry;
     }
@@ -144,7 +131,7 @@ public class DataAnalysisApplicationService {
     /**
      * 流式执行数据分析（SSE），返回 Flux<AgentEvent>
      * <p>使用 AgentScope 的 streamEvents() API 订阅事件流，直接推送 AgentEvent。</p>
-     * <p>通过 EventAdapter 将 AgentEvent 适配为 DialogueMessage 用于持久化。</p>
+     * <p>通过 EventAdapter 将 AgentEvent 适配为 DialogueMessage，每次事件先落库（RUNNING）再推送。</p>
      *
      * @param command 分析命令
      * @return Flux<AgentEvent> 事件流
@@ -156,7 +143,7 @@ public class DataAnalysisApplicationService {
     /**
      * 流式执行数据分析（SSE），返回 Flux<AgentEvent>
      * <p>使用 AgentScope 的 streamEvents() API 订阅事件流，直接推送 AgentEvent。</p>
-     * <p>通过 EventAdapter 将 AgentEvent 适配为 DialogueMessage 用于持久化。</p>
+     * <p>通过 EventAdapter 将 AgentEvent 适配为 DialogueMessage，每次事件先落库（RUNNING）再推送。</p>
      * <p>当传入 {@code subscriptionHolder} 时，将运行中执行句柄注册到 {@link RunningAnalysisRegistry}，
      * 供停止操作通过其持有的 Disposable 触发取消。</p>
      *
@@ -206,7 +193,7 @@ public class DataAnalysisApplicationService {
 
             // 3.1 首次分析时尽早异步生成标题
             if (isFirstAnalysis) {
-                Mono.fromCallable(() -> llmClient.generateTitle(command.modelConfigId(), command.userQuestion()))
+                Mono.fromCallable(() -> titleGenerationClient.generateTitle(command.modelConfigId(), command.userQuestion()))
                         .subscribeOn(Schedulers.boundedElastic())
                         .subscribe(title -> {
                             if (title != null && !title.isBlank()) {
@@ -237,37 +224,36 @@ public class DataAnalysisApplicationService {
             // 5. 注册 EventAdapter 上下文，用于聚合 AgentEvent 为 DialogueMessage
             EventAdapter.CollectorContext collectorContext = eventAdapter.registerContext(sessionId, command.userQuestion());
 
-            // 6. 创建攒批持久化管理器（首次 1s 快速落库，之后按固定间隔 flush，终态时 final flush）
-            BatchFlushManager batchFlushManager = new BatchFlushManager(dialogueRepository,
-                    dataAnalysisProperties.getInitialFlushDelaySeconds(),
-                    dataAnalysisProperties.getFlushIntervalSeconds());
-            batchFlushManager.start(dialogueId, sessionId, collectorContext);
-
-            // 7. 注册运行中执行句柄（供停止操作取消，缓冲用于刷新恢复时回放）
+            // 6. 注册运行中执行句柄（供停止操作取消，缓冲用于刷新恢复时回放）
             if (subscriptionHolder != null) {
                 runningAnalysisRegistry.register(sessionId,
                         new RunningExecution(dialogueId, agent, subscriptionHolder, command,
                                 new AnalysisEventBuffer()));
             }
 
-            // 8. 使用 streamEvents() 订阅事件流，直接返回 Flux<AgentEvent>
+            // 7. 使用 streamEvents() 订阅事件流，直接返回 Flux<AgentEvent>
             return agent.streamEvents(List.of(userMsg), rc)
                     .doOnNext(event -> {
-                        // 使用 EventAdapter 处理 AgentEvent，追加 DialogueMessage 到消息列表
-                        eventAdapter.handleEvent(sessionId, event);
-
-                        // 日志记录
-                        if (log.isDebugEnabled()) {
-                            log.debug("{} agentEvent sessionId={} type={}", CONV_LOG_PREFIX, sessionId, event.getType());
+                        // 每次事件先落库再推送：handleEvent 返回受影响消息即实时写入（RUNNING 状态），
+                        // 写库异常不捕获，冒泡为 Flux error 终止分析
+                        List<DialogueMessage> affected = eventAdapter.handleEvent(sessionId, event);
+                        if (!affected.isEmpty()) {
+                            messagePersistenceService.updateMessagesSync(
+                                    dialogueId, collectorContext.getPersistenceSnapshot(), DialogueStatus.RUNNING);
                         }
+
                     })
                     .doOnComplete(() -> {
                         long duration = System.currentTimeMillis() - analysisStartTime;
                         log.info("{} complete sessionId={} durationMs={}", CONV_LOG_PREFIX, sessionId, duration);
 
-                        // 终态 flush：以 COMPLETED 状态持久化全部消息
-                        batchFlushManager.finalFlush(dialogueId, sessionId, collectorContext, DialogueStatus.COMPLETED);
-                        batchFlushManager.close();
+                        // 终态落库：以 COMPLETED 状态持久化全部消息（失败仅日志，不阻断流程）
+                        try {
+                            messagePersistenceService.updateMessagesSync(
+                                    dialogueId, collectorContext.getPersistenceSnapshot(), DialogueStatus.COMPLETED);
+                        } catch (Exception e) {
+                            log.error("{} final persist failed sessionId={}", CONV_LOG_PREFIX, sessionId, e);
+                        }
 
                         // 注销 SessionToolContext
                         sessionToolContext.unregister(sessionId);
@@ -285,10 +271,14 @@ public class DataAnalysisApplicationService {
                         log.info("{} error sessionId={} durationMs={} error='{}'",
                                 CONV_LOG_PREFIX, sessionId, duration, LogMasker.mask(e.getMessage()));
 
-                        // 追加错误消息并以 FAILED 状态终态 flush
+                        // 追加错误消息并以 FAILED 状态终态落库（失败仅日志，防止二次失败）
                         eventAdapter.addError(sessionId, e.getMessage());
-                        batchFlushManager.finalFlush(dialogueId, sessionId, collectorContext, DialogueStatus.FAILED);
-                        batchFlushManager.close();
+                        try {
+                            messagePersistenceService.updateMessagesSync(
+                                    dialogueId, collectorContext.getPersistenceSnapshot(), DialogueStatus.FAILED);
+                        } catch (Exception persistEx) {
+                            log.error("{} FAILED persist failed sessionId={}", CONV_LOG_PREFIX, sessionId, persistEx);
+                        }
 
                         // 注销 SessionToolContext
                         sessionToolContext.unregister(sessionId);
@@ -299,9 +289,13 @@ public class DataAnalysisApplicationService {
                     .doOnCancel(() -> {
                         log.info("数据分析被取消，持久化已输出的部分内容 sessionId={}", sessionId);
 
-                        // 以 CANCELLED 状态终态 flush
-                        batchFlushManager.finalFlush(dialogueId, sessionId, collectorContext, DialogueStatus.CANCELLED);
-                        batchFlushManager.close();
+                        // 以 CANCELLED 状态终态落库（失败仅日志）
+                        try {
+                            messagePersistenceService.updateMessagesSync(
+                                    dialogueId, collectorContext.getPersistenceSnapshot(), DialogueStatus.CANCELLED);
+                        } catch (Exception e) {
+                            log.error("{} CANCELLED persist failed sessionId={}", CONV_LOG_PREFIX, sessionId, e);
+                        }
 
                         // 注销 SessionToolContext
                         sessionToolContext.unregister(sessionId);
@@ -322,8 +316,8 @@ public class DataAnalysisApplicationService {
 
     /**
      * 执行数据分析（编排层）
-     * <p>接收分析命令，检查 SSE 连接与会话状态，注册会话事件流，通过 AgentExecutionPool 异步执行分析，
-     * 并将事件路由到对应的 SSE 连接及 SessionEventBus 广播。</p>
+     * <p>接收分析命令，检查 SSE 连接与会话状态，通过 AgentExecutionPool 异步执行分析，
+     * 并将事件路由到对应的 SSE 连接推送。</p>
      * <p>三态分发：会话运行中 → 仅续流（更新 clientId 并回放缓冲事件，绝不启动新分析）；
      * 会话未运行且 resumeOnly → 抛 {@link SessionNotRunningException}（404）；否则正常启动新分析。</p>
      *
@@ -332,7 +326,7 @@ public class DataAnalysisApplicationService {
      * @return 分析执行结果
      * @throws SSENotConnectedException   如果客户端未连接 SSE
      * @throws SessionNotRunningException 如果 resumeOnly 且会话未在运行中
-     * @throws SystemBusyException        如果事件总线或执行池达到上限
+     * @throws SystemBusyException        如果执行池达到上限
      */
     public AnalysisExecutionResult executeAnalysis(DataAnalysisCommand command, String clientId) {
         String sessionId = command.sessionId();
@@ -364,12 +358,6 @@ public class DataAnalysisApplicationService {
         // 非续流路径：校验启动分析的必要参数
         validateStartupParams(command);
 
-        // 注册会话事件流到 SessionEventBus
-        Sinks.Many<AgentEvent> sink = sessionEventBus.register(sessionId);
-        if (sink == null) {
-            throw new SystemBusyException("系统繁忙，请稍后重试");
-        }
-
         // 在分析开始前注册 clientId 映射（用于后续事件推送时的动态查找）
         sseConnectionPool.updateSessionClientId(sessionId, clientId);
 
@@ -394,8 +382,6 @@ public class DataAnalysisApplicationService {
                         if (runningExec != null) {
                             runningExec.eventBuffer().add(event);
                         }
-                        // 通过 SessionEventBus 广播事件
-                        sink.tryEmitNext(event);
                     },
                     error -> {
                         log.error("Data analysis error for sessionId={}", sessionId, error);
@@ -404,9 +390,6 @@ public class DataAnalysisApplicationService {
                         if (currentClientId != null) {
                             sseConnectionPool.sendEvent(currentClientId, sessionId, errorEvent);
                         }
-                        sink.tryEmitNext(errorEvent);
-                        sink.tryEmitComplete();
-                        sessionEventBus.unregister(sessionId);
                         sseConnectionPool.removeSessionClientId(sessionId);
                     },
                     () -> {
@@ -416,9 +399,6 @@ public class DataAnalysisApplicationService {
                         if (currentClientId != null) {
                             sseConnectionPool.sendEvent(currentClientId, sessionId, completeEvent);
                         }
-                        sink.tryEmitNext(completeEvent);
-                        sink.tryEmitComplete();
-                        sessionEventBus.unregister(sessionId);
                         sseConnectionPool.removeSessionClientId(sessionId);
                     }
                 );
@@ -426,13 +406,11 @@ public class DataAnalysisApplicationService {
                 subscriptionHolder.set(subscription);
             } catch (Exception e) {
                 log.error("Failed to execute analysis for sessionId={}", sessionId, e);
-                sessionEventBus.unregister(sessionId);
                 sseConnectionPool.removeSessionClientId(sessionId);
             }
         });
 
         if (!accepted) {
-            sessionEventBus.unregister(sessionId);
             sseConnectionPool.removeSessionClientId(sessionId);
             throw new SystemBusyException("系统繁忙，请稍后重试");
         }
@@ -462,8 +440,8 @@ public class DataAnalysisApplicationService {
 
     /**
      * 停止进行中的数据分析
-     * <p>从运行中注册表获取执行句柄，依次执行：dispose 订阅（触发 doOnCancel → finalFlush(CANCELLED)）、
-     * 中断 agent、清理 SSE 事件总线与 clientId 映射、移除注册表。</p>
+     * <p>从运行中注册表获取执行句柄，依次执行：dispose 订阅（触发 doOnCancel → CANCELLED 终态落库）、
+     * 中断 agent、清理 clientId 映射、移除注册表。</p>
      *
      * @param sessionId 会话 ID
      * @return true 表示找到了进行中的分析并已停止；false 表示无进行中的分析
@@ -475,7 +453,7 @@ public class DataAnalysisApplicationService {
             return false;
         }
 
-        // 1. dispose 订阅，触发 doOnCancel → finalFlush(CANCELLED)
+        // 1. dispose 订阅，触发 doOnCancel → CANCELLED 终态落库
         if (execution.subscription() != null && !execution.subscription().isDisposed()) {
             execution.subscription().dispose();
         }
@@ -490,7 +468,6 @@ public class DataAnalysisApplicationService {
         }
 
         // 3. 清理 SSE 资源与运行中注册表
-        sessionEventBus.unregister(sessionId);
         sseConnectionPool.removeSessionClientId(sessionId);
         runningAnalysisRegistry.remove(sessionId);
         log.info("Stopped analysis for sessionId={}", sessionId);

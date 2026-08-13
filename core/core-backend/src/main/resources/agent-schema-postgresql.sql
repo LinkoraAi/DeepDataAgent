@@ -7,7 +7,7 @@
 -- 第一部分：模型配置表
 -- ===========================================================
 
-CREATE TABLE IF NOT EXISTS agent_model_info (
+CREATE TABLE IF NOT EXISTS model_config (
     id                    BIGSERIAL     PRIMARY KEY,
     provider_display_name VARCHAR(100)  NOT NULL,
     provider_name         VARCHAR(50)   NOT NULL,
@@ -22,30 +22,30 @@ CREATE TABLE IF NOT EXISTS agent_model_info (
     is_deleted            SMALLINT      NOT NULL DEFAULT 0
 );
 
-COMMENT ON TABLE agent_model_info IS '模型信息表：存储可用的 LLM 模型配置（OpenAI/DashScope/DeepSeek 等）';
-COMMENT ON COLUMN agent_model_info.id IS '主键，自增';
-COMMENT ON COLUMN agent_model_info.provider_display_name IS '提供商展示名称（如 OpenAI）';
-COMMENT ON COLUMN agent_model_info.provider_name IS '提供商标识（如 openai）';
-COMMENT ON COLUMN agent_model_info.model_id IS '模型 ID（如 gpt-4o）';
-COMMENT ON COLUMN agent_model_info.api_url IS 'API 地址';
-COMMENT ON COLUMN agent_model_info.api_key IS 'API 密钥（加密存储）';
-COMMENT ON COLUMN agent_model_info.is_default IS '是否默认模型（1=是，0=否）';
-COMMENT ON COLUMN agent_model_info.is_enabled IS '是否启用（1=启用，0=停用）';
-COMMENT ON COLUMN agent_model_info.sort_order IS '排序权重';
-COMMENT ON COLUMN agent_model_info.created_time IS '创建时间';
-COMMENT ON COLUMN agent_model_info.updated_time IS '更新时间';
-COMMENT ON COLUMN agent_model_info.is_deleted IS '逻辑删除标记（1=已删除，0=未删除）';
+COMMENT ON TABLE model_config IS '模型配置表：存储可用的 LLM 模型配置（OpenAI/DashScope/DeepSeek 等）';
+COMMENT ON COLUMN model_config.id IS '主键，自增';
+COMMENT ON COLUMN model_config.provider_display_name IS '提供商展示名称（如 OpenAI）';
+COMMENT ON COLUMN model_config.provider_name IS '提供商标识（如 openai）';
+COMMENT ON COLUMN model_config.model_id IS '模型 ID（如 gpt-4o）';
+COMMENT ON COLUMN model_config.api_url IS 'API 地址';
+COMMENT ON COLUMN model_config.api_key IS 'API 密钥（加密存储）';
+COMMENT ON COLUMN model_config.is_default IS '是否默认模型（1=是，0=否）';
+COMMENT ON COLUMN model_config.is_enabled IS '是否启用（1=启用，0=停用）';
+COMMENT ON COLUMN model_config.sort_order IS '排序权重';
+COMMENT ON COLUMN model_config.created_time IS '创建时间';
+COMMENT ON COLUMN model_config.updated_time IS '更新时间';
+COMMENT ON COLUMN model_config.is_deleted IS '逻辑删除标记（1=已删除，0=未删除）';
 
-CREATE UNIQUE INDEX IF NOT EXISTS uk_provider_model ON agent_model_info(provider_name, model_id) WHERE is_deleted = 0;
-CREATE INDEX IF NOT EXISTS idx_is_default ON agent_model_info(is_default) WHERE is_deleted = 0 AND is_default = 1;
-CREATE INDEX IF NOT EXISTS idx_is_enabled ON agent_model_info(is_enabled) WHERE is_deleted = 0;
+CREATE UNIQUE INDEX IF NOT EXISTS uk_provider_model ON model_config(provider_name, model_id) WHERE is_deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_is_default ON model_config(is_default) WHERE is_deleted = 0 AND is_default = 1;
+CREATE INDEX IF NOT EXISTS idx_is_enabled ON model_config(is_enabled) WHERE is_deleted = 0;
 
 -- ===========================================================
 -- 第二部分：会话管理表
 -- ===========================================================
 
 CREATE TABLE IF NOT EXISTS agent_session (
-    id                VARCHAR(36)   PRIMARY KEY,
+    id                VARCHAR(128)   PRIMARY KEY,
     title             VARCHAR(200)  NOT NULL DEFAULT '新对话',
     user_id           BIGINT,
     datasource_id     BIGINT        NOT NULL,
@@ -80,7 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_session_last_msg ON agent_session(last_message_ti
 
 CREATE TABLE IF NOT EXISTS dialogue (
     id            BIGSERIAL   PRIMARY KEY,
-    session_id    VARCHAR(36) NOT NULL,
+    session_id    VARCHAR(128) NOT NULL,
     user_question TEXT        NOT NULL,
     messages      JSONB,
     status        VARCHAR(20) NOT NULL DEFAULT 'PENDING',

@@ -1,0 +1,136 @@
+# ===========================================================
+# DeepDataAgent - PostgreSQL 18 镜像
+# 预装三大插件：
+#   1. vector    - pgvector 向量检索插件（v0.8.6，支持 PostgreSQL 13+）
+#   2. zhparser  - 基于 SCWS 的中英文全文检索分词插件
+#   3. age       - Apache AGE 图谱插件（v1.7.0，支持 PostgreSQL 11-18）
+# ===========================================================
+
+ARG PG_VERSION=18
+
+# ---------- 构建阶段：编译并安装所有插件 ----------
+FROM postgres:${PG_VERSION}-bookworm AS builder
+
+ARG PG_VERSION=18
+ARG DEBIAN_FRONTEND=noninteractive
+
+# 将 PostgreSQL bin 加入 PATH，确保 pg_config 可被插件构建脚本找到
+ENV PATH=/usr/lib/postgresql/${PG_VERSION}/bin:${PATH}
+
+# 安装编译依赖
+# - build-essential            gcc/make 等基础编译工具
+# - autoconf/automake/libtool  生成 SCWS 的 configure 脚本
+# - bison/flex                 Apache AGE 解析器生成
+# - libreadline-dev/zlib1g-dev Apache AGE 构建所需
+# - postgresql-server-dev-18   扩展开发头文件与 PGXS
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        autoconf \
+        automake \
+        libtool \
+        pkg-config \
+        binutils \
+        bison \
+        flex \
+        libreadline-dev \
+        zlib1g-dev \
+        git \
+        ca-certificates \
+        postgresql-server-dev-${PG_VERSION} \
+    && rm -rf /var/lib/apt/lists/*
+
+# 1) 编译安装 SCWS（zhparser 依赖的中文分词引擎）
+RUN git clone --branch 1.2.3 --single-branch --depth 1 https://github.com/hightman/scws.git /tmp/scws \
+    && cd /tmp/scws \
+    && touch README \
+    && aclocal \
+    && autoconf \
+    && autoheader \
+    && libtoolize \
+    && automake --add-missing \
+    && ./configure \
+    && make install
+
+# 2) 编译安装 zhparser（中英文全文检索分词插件）
+RUN git clone --branch master --single-branch --depth 1 https://github.com/amutu/zhparser.git /tmp/zhparser \
+    && cd /tmp/zhparser \
+    && make install
+
+# 3) 编译安装 pgvector（向量检索插件）
+#    OPTFLAGS="" 忽略 -march=native，保证镜像在任意 CPU 上可移植
+RUN git clone --branch v0.8.6 --single-branch --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
+    && cd /tmp/pgvector \
+    && make OPTFLAGS="" \
+    && make install
+
+# 4) 编译安装 Apache AGE（图谱插件）
+RUN git clone --branch v1.7.0 --single-branch --depth 1 https://github.com/apache/age.git /tmp/age \
+    && cd /tmp/age \
+    && make \
+    && make install
+
+# 清理源码与编译产物，缩小镜像体积
+RUN rm -rf /tmp/scws /tmp/zhparser /tmp/pgvector /tmp/age
+
+# ---------- 运行阶段：仅携带插件运行产物 ----------
+FROM postgres:${PG_VERSION}-bookworm
+
+ARG PG_VERSION=18
+
+# 生成中文 UTF-8 locale，保证 zhparser 在中文环境下正常工作
+RUN localedef -i zh_CN -c -f UTF-8 -A /usr/share/locale/locale.alias zh_CN.UTF-8
+
+ENV LANG=zh_CN.UTF-8
+
+# 拷贝 zhparser（含 SCWS 动态库、扩展定义与中文词典）
+COPY --from=builder /usr/local/lib/libscws.* /usr/local/lib/
+COPY --from=builder /usr/lib/postgresql/${PG_VERSION}/lib/zhparser.so /usr/lib/postgresql/${PG_VERSION}/lib/
+COPY --from=builder /usr/lib/postgresql/${PG_VERSION}/lib/bitcode/zhparser* /usr/lib/postgresql/${PG_VERSION}/lib/bitcode/
+COPY --from=builder /usr/share/postgresql/${PG_VERSION}/extension/zhparser* /usr/share/postgresql/${PG_VERSION}/extension/
+COPY --from=builder /usr/share/postgresql/${PG_VERSION}/tsearch_data/*.utf8.* /usr/share/postgresql/${PG_VERSION}/tsearch_data/
+
+# 拷贝 pgvector（vector 扩展）
+COPY --from=builder /usr/lib/postgresql/${PG_VERSION}/lib/vector.so /usr/lib/postgresql/${PG_VERSION}/lib/
+COPY --from=builder /usr/lib/postgresql/${PG_VERSION}/lib/bitcode/vector* /usr/lib/postgresql/${PG_VERSION}/lib/bitcode/
+COPY --from=builder /usr/share/postgresql/${PG_VERSION}/extension/vector* /usr/share/postgresql/${PG_VERSION}/extension/
+
+# 拷贝 Apache AGE（age 扩展）
+COPY --from=builder /usr/lib/postgresql/${PG_VERSION}/lib/age.so /usr/lib/postgresql/${PG_VERSION}/lib/
+COPY --from=builder /usr/lib/postgresql/${PG_VERSION}/lib/bitcode/age* /usr/lib/postgresql/${PG_VERSION}/lib/bitcode/
+COPY --from=builder /usr/share/postgresql/${PG_VERSION}/extension/age* /usr/share/postgresql/${PG_VERSION}/extension/
+
+# 刷新动态链接器缓存，确保 zhparser/age 可加载 /usr/local/lib 下的库
+RUN ldconfig
+
+# 首次启动初始化脚本（docker-entrypoint-initdb.d 按文件名顺序执行）：
+# 00 - 创建三大扩展并配置数据库级参数（下方 BuildKit heredoc 内联合成该 SQL）
+# 10 - 数据源模块建表
+# 20 - Agent 模块建表
+COPY <<'EOF' /docker-entrypoint-initdb.d/00-init-extensions.sql
+-- 1. 向量插件：pgvector
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- 2. 中英文分词插件：zhparser（基于 SCWS）
+CREATE EXTENSION IF NOT EXISTS zhparser;
+
+-- 创建基于 zhparser 的全文检索配置并映射常用词性到 simple 词典
+CREATE TEXT SEARCH CONFIGURATION zhparser_cfg (PARSER = zhparser);
+ALTER TEXT SEARCH CONFIGURATION zhparser_cfg ADD MAPPING FOR n,v,a,i,e,l WITH simple;
+
+-- 3. 图谱插件：Apache AGE
+CREATE EXTENSION IF NOT EXISTS age;
+
+-- 数据库级配置：
+--   - session_preload_libraries 使每个新连接自动 LOAD 'age'
+--   - search_path 默认包含 ag_catalog，应用无需手动 SET 即可直接使用 cypher()
+ALTER DATABASE postgres SET session_preload_libraries = 'age';
+ALTER DATABASE postgres SET search_path = ag_catalog, "$user", public;
+
+-- 创建默认知识图谱（可通过 cypher() 函数使用）
+SELECT create_graph('deepdata_graph');
+EOF
+COPY core/core-backend/src/main/resources/datasource-schema-postgresql.sql /docker-entrypoint-initdb.d/10-datasource-schema.sql
+COPY core/core-backend/src/main/resources/agent-schema-postgresql.sql /docker-entrypoint-initdb.d/20-agent-schema.sql
+
+EXPOSE 5432

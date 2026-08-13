@@ -1,7 +1,7 @@
 package com.linkroa.deepdataagent.agent.application.assembler;
 
 import com.linkroa.deepdataagent.agent.application.dto.ModelConfigDTO;
-import com.linkroa.deepdataagent.agent.domain.model.AgentModelInfo;
+import com.linkroa.deepdataagent.agent.domain.model.ModelConfig;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -10,7 +10,7 @@ import java.util.stream.Collectors;
 
 /**
  * ModelConfigDTO 组装器
- * <p>将领域模型 {@link AgentModelInfo} 转换为应用层 DTO {@link ModelConfigDTO}，
+ * <p>将领域模型 {@link ModelConfig} 转换为应用层 DTO {@link ModelConfigDTO}，
  * 包含 API Key 脱敏、字段映射、时间格式化等逻辑，由控制器层进一步转换为
  * {@link com.linkroa.deepdataagent.agent.controller.response.ModelConfigResponse}。</p>
  */
@@ -29,7 +29,7 @@ public final class ModelConfigDTOAssembler {
      * @param doMask 是否脱敏 API Key
      * @return 模型配置 DTO
      */
-    public static ModelConfigDTO toDTO(AgentModelInfo info, boolean doMask) {
+    public static ModelConfigDTO toDTO(ModelConfig info, boolean doMask) {
         if (info == null) {
             return null;
         }
@@ -54,7 +54,7 @@ public final class ModelConfigDTOAssembler {
     /**
      * 脱敏转换（默认脱敏）
      */
-    public static ModelConfigDTO toDTO(AgentModelInfo info) {
+    public static ModelConfigDTO toDTO(ModelConfig info) {
         if (info == null) {
             return null;
         }
@@ -64,7 +64,7 @@ public final class ModelConfigDTOAssembler {
     /**
      * 批量转换
      */
-    public static List<ModelConfigDTO> toDTOList(List<AgentModelInfo> list) {
+    public static List<ModelConfigDTO> toDTOList(List<ModelConfig> list) {
         if (list == null) {
             return List.of();
         }

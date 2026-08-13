@@ -12,7 +12,7 @@ export async function listDatasources(
   type?: string, 
   keyword?: string
 ): Promise<PaginatedResponse<DatasourceConnection>> {
-  return post<PaginatedResponse<DatasourceConnection>>('/datasource/list', {
+  return post<PaginatedResponse<DatasourceConnection>>('/api/datasource/list', {
     page,
     size,
     status,
@@ -38,7 +38,7 @@ export async function createDatasource(params: {
     schema?: string;
   };
 }): Promise<void> {
-  return post('/datasource/create', params);
+  return post('/api/datasource/create', params);
 }
 
 /**
@@ -57,14 +57,14 @@ export async function updateDatasource(params: {
     schema?: string;
   };
 }): Promise<void> {
-  return post('/datasource/update', params);
+  return post('/api/datasource/update', params);
 }
 
 /**
  * Delete datasource
  */
 export async function deleteDatasource(id: number): Promise<void> {
-  return post('/datasource/delete', { id });
+  return post('/api/datasource/delete', { id });
 }
 
 /**
@@ -84,28 +84,28 @@ export async function testConnection(params: {
     schema?: string;
   };
 }): Promise<string> {
-  return post('/datasource/test-connection', params);
+  return post('/api/datasource/test-connection', params);
 }
 
 /**
  * Enable datasource
  */
 export async function enableDatasource(id: number): Promise<void> {
-  return post('/datasource/enable', { id });
+  return post('/api/datasource/enable', { id });
 }
 
 /**
  * Disable datasource
  */
 export async function disableDatasource(id: number): Promise<void> {
-  return post('/datasource/disable', { id });
+  return post('/api/datasource/disable', { id });
 }
 
 /**
  * Sync datasource metadata
  */
 export async function syncDatasource(id: number): Promise<void> {
-  return post('/datasource/sync', { id });
+  return post('/api/datasource/sync', { id });
 }
 
 /**
@@ -147,7 +147,7 @@ export async function listTables(
   page: number = 1,
   size: number = 100
 ): Promise<PaginatedResponse<TableResponse>> {
-  return post<PaginatedResponse<TableResponse>>('/datasource/table/list', {
+  return post<PaginatedResponse<TableResponse>>('/api/datasource/table/list', {
     connectionId,
     type,
     keyword,
@@ -177,7 +177,7 @@ export async function listColumns(
   page: number = 1,
   size: number = 100
 ): Promise<ColumnInfoResponse[]> {
-  return post<ColumnInfoResponse[]>('/datasource/column/list', {
+  return post<ColumnInfoResponse[]>('/api/datasource/column/list', {
     tableId,
     schemaId,
     type,
@@ -195,7 +195,7 @@ export async function previewTableData(
   type: string,
   limit: number = 100
 ): Promise<any[]> {
-  return post<any[]>('/datasource/table/preview', {
+  return post<any[]>('/api/datasource/table/preview', {
     connectionId,
     tableName,
     type,
@@ -228,5 +228,5 @@ export interface ApiSchemaDetailResponse {
 }
 
 export async function getApiSchemaDetail(schemaId: number): Promise<ApiSchemaDetailResponse> {
-  return post<ApiSchemaDetailResponse>('/datasource/api-schema/detail', { id: schemaId });
+  return post<ApiSchemaDetailResponse>('/api/datasource/api-schema/detail', { id: schemaId });
 }

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { createSession as apiCreateSession, listSessions as apiListSessions, getMessages as apiGetMessages, closeSession as apiCloseSession } from '@/shared/api/sessionApi';
-import type { Message, ChatMessage, SessionListItem, AnalysisSnapshot, SearchResultItem } from '../types';
+import type { Message, ChatMessage, SessionListItem, AnalysisSnapshot, SearchResultItem, ContentItem } from '../types';
 import { useSessionStateManager } from '../composables/useSessionStateManager';
 import { useModelStore } from '@/modules/model/stores/model';
 import { parseQueryDataArray } from '@/shared/utils/queryData';
@@ -42,7 +42,8 @@ function convertMessagesToChatMessages(messages: Message[]): ChatMessage[] {
     }
 
     const analysisState = buildAnalysisStateFromMessages(group);
-    const assistantMsg = group.find(m => m.role === 'assistant');
+    // 助手消息锚点：最终报告为 ASSISTANT 角色的 MESSAGE 类型；用户消息（type 同为 MESSAGE）排除在外
+    const assistantMsg = group.find(m => m.type === 'MESSAGE' && m.role !== 'user');
     if (assistantMsg || analysisState) {
       const anchor = assistantMsg ?? group[group.length - 1];
       result.push({
@@ -71,8 +72,9 @@ function countRounds(messages: Message[]): number {
 /**
  * 从一组消息（同一 dialogueId）中重建分析状态
  * <p>后端不再持久化 AnalysisSnapshot 快照，历史回放需从消息序列推导。
- * 该方法遍历该轮次内的所有消息，提取思考/工具调用/工具结果/助手报告，
- * 重建与流式 createSnapshot() 相同形状的 AnalysisSnapshot。</p>
+ * 该方法遍历该轮次内的所有消息，按消息 id 排序后重建统一内容流 contentItems
+ * （思考/工具调用/助手报告），IN_PROGRESS 消息合并展示为进行中内容项，
+ * 并同步提取 SQL/数据/图表/搜索等派生字段。</p>
  *
  * @param messages 同一 dialogueId 的一组消息（无需预先排序）
  * @returns 重建的分析状态；若消息为空则返回 undefined
@@ -83,16 +85,21 @@ export function buildAnalysisStateFromMessages(messages: Message[]): AnalysisSna
   }
   const orderMsgs = [...messages].sort((a, b) => a.id - b.id);
 
-  const thinkingSteps: Array<{ content: string; timestamp: number }> = [];
-  const toolCalls: Array<{
-    name: string;
-    status: 'running' | 'success' | 'error';
-    startTime: number;
-    endTime?: number;
-    input?: string;
-    result?: string;
-    timestamp: number;
-  }> = [];
+  // 事件线分界：最后一个工具类消息（TOOL_CALL/TOOL_RESULT）的索引。
+  // 其后的 MESSAGE 才是最终分析报告；之前/之间的 MESSAGE（旧数据/未转换的叙述）
+  // 按事件线位置渲染为思考项，不因消息类型是 MESSAGE 而误判为分析报告。
+  let lastToolIndex = -1;
+  for (let i = orderMsgs.length - 1; i >= 0; i--) {
+    const type = orderMsgs[i].type;
+    if (type === 'TOOL_CALL' || type === 'TOOL_RESULT') {
+      lastToolIndex = i;
+      break;
+    }
+  }
+
+  // 统一内容流：严格按消息 id（时序）重建
+  const contentItems: ContentItem[] = [];
+  let seq = 0;
   let currentSQL: string | null = null;
   let queryData: Record<string, any>[] = [];
   let chartConfig: any = null;
@@ -101,54 +108,124 @@ export function buildAnalysisStateFromMessages(messages: Message[]): AnalysisSna
   let analysisReport: string | null = null;
   let errorMessage: string | null = null;
 
-  for (const msg of orderMsgs) {
+  for (let index = 0; index < orderMsgs.length; index++) {
+    const msg = orderMsgs[index];
     const ts = new Date(msg.createdAt).getTime();
+    const inProgress = msg.status === 'IN_PROGRESS';
 
-    if (msg.role === 'thinking') {
-      if (msg.content) {
-        thinkingSteps.push({ content: msg.content, timestamp: ts });
-      }
-    } else if (msg.role === 'tool') {
-      if (msg.toolCalls) {
-        // 合并后的单条工具消息：同时携带入参（content）与结果（toolResult），一次成型，无需跨消息配对
-        toolCalls.push({
-          name: msg.toolCalls,
-          status: msg.toolResult ? 'success' : 'running',
-          startTime: ts,
-          endTime: msg.toolResult ? ts : undefined,
-          input: msg.content || undefined,
-          result: msg.toolResult || undefined,
-          timestamp: ts,
-        });
-        // 若同一条消息带有结果，则提取到分析状态对应字段
-        if (msg.toolResult) {
-          applyToolResultToState(msg.toolCalls, msg.toolResult, {
-            setSQL: (v) => { currentSQL = v; },
-            setQueryData: (v) => { queryData = v; },
-            setChart: (type, option) => { chartType = type; chartConfig = option; },
-            setSearchResults: (v) => { searchResults = v; },
+    switch (msg.type) {
+      case 'THINKING':
+        // THINKING → 思考内容项
+        if (msg.content) {
+          contentItems.push({
+            id: `thinking-${msg.id}`,
+            seq: seq++,
+            type: 'thinking',
+            status: inProgress ? 'in_progress' : 'completed',
+            content: msg.content,
+            startTime: ts,
+            endTime: inProgress ? undefined : ts,
           });
         }
-      }
-    } else if (msg.role === 'assistant') {
-      if (msg.content && !analysisReport) {
-        analysisReport = msg.content;
-      }
+        break;
+
+      case 'TOOL_CALL':
+        // TOOL_CALL → 工具调用项（结果由独立的 TOOL_RESULT 消息承载）
+        if (msg.toolCalls) {
+          const failed = msg.status === 'FAILED';
+          contentItems.push({
+            id: `tool-${msg.id}`,
+            seq: seq++,
+            type: 'tool_call',
+            status: inProgress ? 'in_progress' : (failed ? 'failed' : 'completed'),
+            toolName: msg.toolCalls,
+            input: msg.content || undefined,
+            toolCallId: msg.toolCallId,
+            startTime: ts,
+            endTime: inProgress ? undefined : ts,
+          });
+        }
+        break;
+
+      case 'TOOL_RESULT':
+        // TOOL_RESULT → 独立工具结果项，并提取派生字段
+        if (msg.toolCalls || msg.toolResult) {
+          const failed = msg.status === 'FAILED';
+          contentItems.push({
+            id: `tool-result-${msg.id}`,
+            seq: seq++,
+            type: 'tool_result',
+            status: inProgress ? 'in_progress' : (failed ? 'failed' : 'completed'),
+            toolName: msg.toolCalls || undefined,
+            result: msg.toolResult || undefined,
+            toolCallId: msg.toolCallId,
+            startTime: ts,
+            endTime: inProgress ? undefined : ts,
+          });
+          if (msg.toolCalls && msg.toolResult) {
+            applyToolResultToState(msg.toolCalls, msg.toolResult, {
+              setSQL: (v) => { currentSQL = v; },
+              setQueryData: (v) => { queryData = v; },
+              setChart: (type, option) => { chartType = type; chartConfig = option; },
+              setSearchResults: (v) => { searchResults = v; },
+            });
+          }
+        }
+        break;
+
+      case 'MESSAGE':
+        // MESSAGE → 按事件线位置判定：位于最后一个工具消息之后、且非用户消息的助手
+        // 文本才是最终分析报告；其余（工具调用前/之间的过程叙述）渲染为思考项，
+        // 不因消息类型是 MESSAGE 而误判为分析报告（严格按事件线渲染）
+        if (msg.role === 'user') {
+          break;
+        }
+        if (msg.content) {
+          const isFinalReport = index > lastToolIndex;
+          contentItems.push({
+            id: isFinalReport ? `report-${msg.id}` : `thinking-${msg.id}`,
+            seq: seq++,
+            type: isFinalReport ? 'report' : 'thinking',
+            status: inProgress ? 'in_progress' : 'completed',
+            content: msg.content,
+            startTime: ts,
+            endTime: inProgress ? undefined : ts,
+          });
+          if (isFinalReport) {
+            analysisReport = msg.content;
+          }
+        }
+        break;
+
+      case 'ERROR':
+        // ERROR → 失败态报告项，保留错误信息展示
+        if (msg.content) {
+          contentItems.push({
+            id: `report-${msg.id}`,
+            seq: seq++,
+            type: 'report',
+            status: 'failed',
+            content: msg.content,
+            startTime: ts,
+            endTime: ts,
+          });
+          errorMessage = msg.content;
+        }
+        break;
+
+      default:
+        // 无 type（老数据）或其他类型：跳过，不参与回放内容流
+        break;
     }
   }
 
-  // 重建 ReAct 轮次
-  const rounds = rebuildRoundsFromFlatData(thinkingSteps, toolCalls);
-
   return {
-    rounds,
-    isTimelineExpanded: true,
+    contentItems,
     currentSQL,
     queryData,
     chartConfig,
     chartType,
     analysisReport,
-    report: null,
     searchResults,
     isEmptyResult: queryData.length === 0,
     errorMessage,
@@ -273,83 +350,6 @@ function extractChartType(data: any): string | null {
   // 新格式：纯 ECharts option，从 series[0].type 提取（如 line/bar/pie）
   if (data.series?.[0]?.type) return data.series[0].type;
   return null;
-}
-
-/**
- * 从扁平的 thinkingSteps + toolCalls 重建 ReAct 轮次
- * <p>用于兼容旧格式的历史消息。按时间戳排序后，
- * 每遇到一个 thinkingStep 就开启新一轮，工具调用归入当前轮。</p>
- *
- * @param thinkingSteps 带时间戳的思考步骤数组
- * @param rawToolCalls 扁平的工具调用数组
- * @returns 重建的 ReAct 轮次数组
- */
-function rebuildRoundsFromFlatData(thinkingSteps: Array<{ content: string; timestamp: number }>, rawToolCalls: any[]): any[] {
-  // 合并所有事件并按时间戳排序
-  const allEvents: any[] = [];
-  
-  for (const step of thinkingSteps) {
-    allEvents.push({
-      type: 'thinking',
-      content: step.content,
-      timestamp: step.timestamp,
-    });
-  }
-  
-  for (const tc of rawToolCalls) {
-    allEvents.push({
-      type: 'tool_call',
-      toolName: tc.name || 'unknown',
-      status: tc.status || 'success',
-      startTime: tc.startTime || Date.now(),
-      endTime: tc.endTime,
-      input: tc.input,
-      result: tc.result,
-      timestamp: tc.startTime || Date.now(),
-    });
-  }
-  
-  allEvents.sort((a, b) => a.timestamp - b.timestamp);
-  
-  // 按 thinking 事件分组
-  const rounds: any[] = [];
-  let currentRound: any = null;
-  
-  for (const event of allEvents) {
-    if (event.type === 'thinking') {
-      // 开启新轮次
-      currentRound = {
-        id: `round-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        startTime: event.timestamp,
-        thinking: {
-          id: `thinking-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          timestamp: event.timestamp,
-          type: 'thinking',
-          content: event.content,
-          isStreaming: false,
-        },
-        toolCalls: [],
-        isActive: false,
-        isCollapsed: true,
-      };
-      rounds.push(currentRound);
-    } else if (event.type === 'tool_call' && currentRound) {
-      // 工具调用归入当前轮次
-      currentRound.toolCalls.push({
-        id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        timestamp: event.timestamp,
-        type: 'tool_call',
-        toolName: event.toolName,
-        status: event.status,
-        input: event.input,
-        result: event.result,
-        startTime: event.startTime,
-        endTime: event.endTime,
-      });
-    }
-  }
-  
-  return rounds;
 }
 
 export const useSessionStore = defineStore('session', () => {

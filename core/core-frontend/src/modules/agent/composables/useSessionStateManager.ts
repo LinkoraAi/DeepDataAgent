@@ -6,7 +6,7 @@
 import { ref, readonly } from 'vue';
 import { useAnalysisStore } from '../stores/analysis';
 import { parseQueryDataArray } from '@/shared/utils/queryData';
-import type { AnalysisState, AnalysisSnapshot, AgentEvent, SearchResultItem, ToolCallTimelineItem } from '../types';
+import type { AnalysisState, AnalysisSnapshot, AgentEvent, SearchResultItem } from '../types';
 
 /**
  * 单例实例持有者
@@ -64,21 +64,17 @@ function createSessionStateManager() {
     if (!sessionId) return;
 
     const snapshot = analysisStore.createSnapshot();
+    // 从快照内容项推导下一序号，保证切换会话后新增内容项顺序正确
+    const nextSeq = snapshot.contentItems.reduce((max, item) => Math.max(max, item.seq + 1), 0);
     stateMap.set(sessionId, {
       isAnalyzing: snapshot.isAnalyzing ?? false,
-      rounds: snapshot.rounds.map(round => ({
-        ...round,
-        thinking: { ...round.thinking },
-        toolCalls: round.toolCalls.map(t => ({ ...t })),
-      })),
-      currentRoundId: analysisStore.state.currentRoundId,
-      isTimelineExpanded: snapshot.isTimelineExpanded ?? true,
+      contentItems: snapshot.contentItems.map(item => ({ ...item })),
+      contentSeq: nextSeq,
       currentSQL: snapshot.currentSQL,
       queryData: [...snapshot.queryData],
       chartConfig: snapshot.chartConfig,
       chartType: snapshot.chartType,
       analysisReport: snapshot.analysisReport,
-      report: snapshot.report ? { ...snapshot.report } : null,
       searchResults: snapshot.searchResults ? [...snapshot.searchResults] : null,
       isEmptyResult: snapshot.isEmptyResult ?? false,
       errorMessage: snapshot.errorMessage,
@@ -118,19 +114,13 @@ function createSessionStateManager() {
     // 直接替换整个 state.value
     Object.assign(analysisStore.state, {
       isAnalyzing: state.isAnalyzing,
-      rounds: state.rounds.map(round => ({
-        ...round,
-        thinking: { ...round.thinking },
-        toolCalls: round.toolCalls.map(t => ({ ...t })),
-      })),
-      currentRoundId: state.currentRoundId,
-      isTimelineExpanded: state.isTimelineExpanded,
+      contentItems: state.contentItems.map(item => ({ ...item })),
+      contentSeq: state.contentSeq,
       currentSQL: state.currentSQL,
       queryData: [...state.queryData],
       chartConfig: state.chartConfig,
       chartType: state.chartType,
       analysisReport: state.analysisReport,
-      report: state.report ? { ...state.report } : null,
       searchResults: state.searchResults ? [...state.searchResults] : null,
       isEmptyResult: state.isEmptyResult,
       errorMessage: state.errorMessage,
@@ -227,16 +217,17 @@ function createSessionStateManager() {
         break;
 
       case 'THINKING_BLOCK_START':
-        analysisStore.startNewRound();
+        // 思考块开始：进行中思考项由 THINKING_BLOCK_DELTA 惰性创建，此处无需预创建
         break;
 
       case 'THINKING_BLOCK_DELTA':
-        if (!event.delta) return;
-        analysisStore.appendThinkingToCurrentRound(event.delta);
+        // 思考增量实时追加到进行中思考内容项
+        analysisStore.appendThinkingDelta(event.delta || '');
         break;
 
       case 'THINKING_BLOCK_END':
-        analysisStore.finalizeCurrentRoundThinking();
+        // 思考块结束：收敛进行中思考项为完成态
+        analysisStore.completeThinking();
         break;
 
       case 'MODEL_CALL_START':
@@ -247,51 +238,62 @@ function createSessionStateManager() {
         break;
 
       case 'TOOL_CALL_START':
-        // 工具调用开始。按用户决策，TEXT_BLOCK_DELTA 一律实时渲染进报告区、不搬移叙述，
-        // 故此处无需搬移待定文本到 thinking。
+        // 工具调用开始：先把工具调用前的中途叙述（进行中报告项）转为思考项
+        // （事件线对齐：工具调用前的 TEXT_BLOCK 是过程叙述，不是最终报告），
+        // 再创建进行中工具调用内容项（记录 toolCallId 供交错事件精确定位）
         if (!event.toolCallName) return;
-        // toolCallId 是 AgentScope 内部标识符（如 chatcmpl-tool-xxx），不是用户可见的输入参数
-        // 真正的输入参数通过 TOOL_CALL_DELTA 事件累积，此处不传入无意义的 toolCallId
-        analysisStore.addToolCallToCurrentRound(event.toolCallName);
+        analysisStore.convertReportToThinking();
+        analysisStore.addToolCallItem(event.toolCallName, undefined, event.toolCallId);
         break;
 
       case 'TOOL_CALL_DELTA':
-        // 按 toolCallId 累积工具入参增量，供 TOOL_CALL_END 回填
+        // 工具入参增量实时追加到对应 toolCallId 的工具调用项
         if (event.toolCallId && event.delta) {
-          const existing = toolCallInputBuffers.get(event.toolCallId) || '';
-          toolCallInputBuffers.set(event.toolCallId, existing + event.delta);
+          analysisStore.appendToolInput(event.delta, event.toolCallId);
         }
         break;
 
       case 'TOOL_CALL_END':
-        // 取回累积入参并回填到当前工具调用项
-        if (event.toolCallName) {
-          const input = event.toolCallId ? toolCallInputBuffers.get(event.toolCallId) : undefined;
-          analysisStore.addToolCallToCurrentRound(event.toolCallName, input);
-          if (event.toolCallId) {
-            toolCallInputBuffers.delete(event.toolCallId);
-          }
+        // 工具调用结束：入参已由 DELTA 实时累积，收敛工具调用项；
+        // 执行结果由独立的 tool_result 内容项承载，等待 TOOL_RESULT_END 收敛
+        if (event.toolCallId) {
+          toolCallInputBuffers.delete(event.toolCallId);
+          analysisStore.completeToolCall();
         }
         break;
 
       case 'TOOL_RESULT_TEXT_DELTA':
+        // 工具结果增量：惰性创建独立 tool_result 项（工具名继承同 toolCallId 调用项）并实时追加结果，
+        // 同时按 toolCallId 累积缓冲供 TOOL_RESULT_END 兜底回填
         if (event.toolCallId && event.delta) {
+          analysisStore.appendToolResult(event.delta, event.toolCallId);
           const existing = toolResultBuffers.get(event.toolCallId) || '';
           toolResultBuffers.set(event.toolCallId, existing + event.delta);
         }
         break;
 
       case 'TOOL_RESULT_END':
-        if (event.toolCallName) {
-          const resultContent = event.toolCallId ? toolResultBuffers.get(event.toolCallId) || '' : '';
+        if (event.toolCallId) {
+          const resultContent = toolResultBuffers.get(event.toolCallId) || '';
           const success = event.state !== 'error';
-          analysisStore.updateToolCallInCurrentRound(event.toolCallName, resultContent, success);
-          if (resultContent) {
-            handleToolResult(event.toolCallName, resultContent);
+          const toolName = event.toolCallName || '';
+          // 兜底：无结果增量流式数据时，确保存在独立结果项（工具名取事件携带）
+          if (!resultContent && toolName) {
+            const liveItem = [...analysisStore.state.contentItems].reverse()
+              .find(i => i.type === 'tool_result' && i.toolCallId === event.toolCallId);
+            if (!liveItem) {
+              analysisStore.addToolResultItem(toolName, event.toolCallId);
+            }
           }
-          if (event.toolCallId) {
-            toolResultBuffers.delete(event.toolCallId);
+          // 收敛独立结果项：有完整结果则覆盖实时累积内容，否则保留实时结果
+          analysisStore.completeToolResult(resultContent || undefined, success);
+          // 派生提取：优先用缓冲的完整结果，否则用结果项实时累积内容
+          const effectiveResult = resultContent || [...analysisStore.state.contentItems].reverse()
+            .find(i => i.type === 'tool_result' && i.toolCallId === event.toolCallId)?.result;
+          if (effectiveResult && toolName) {
+            handleToolResult(toolName, effectiveResult);
           }
+          toolResultBuffers.delete(event.toolCallId);
         }
         break;
 
@@ -299,24 +301,22 @@ function createSessionStateManager() {
         break;
 
       case 'TEXT_BLOCK_DELTA':
-        if (!event.delta) return;
-        // 文本增量实时追加进报告区（真流式），报告随 agent 生成逐字增长，不缓冲、不搬移。
-        analysisStore.upsertReportItem(event.delta, false);
+        // 报告文本增量实时追加为内容流中的报告项（不再特殊化为独立主区块）
+        analysisStore.appendReportDelta(event.delta || '');
         break;
 
       case 'TEXT_BLOCK_END':
         break;
 
       case 'AGENT_RESULT':
-        // 收尾/兜底：报告已由 TEXT_BLOCK_DELTA 实时追加，此处用权威最终文本覆盖（内容一致则无感）；
-        // 当某些 provider 不发增量、仅此处携带全文时，作为兜底填充报告。
+        // 报告权威最终文本：覆盖并收敛进行中报告项（无进行中项时兜底创建完成态报告项）
         if (event.result?.textContent) {
-          analysisStore.upsertReportItem(event.result.textContent, true);
+          analysisStore.completeReport(event.result.textContent);
         }
         break;
 
       case 'AGENT_END':
-        // Agent 结束：报告已由 TEXT_BLOCK_DELTA 实时渲染，完成收尾
+        // Agent 结束：报告已由 TEXT_BLOCK_DELTA/AGENT_RESULT 收敛，完成整体收尾
         analysisStore.completeAnalysis();
         saveState(sessionId);
         onComplete?.(sessionId);

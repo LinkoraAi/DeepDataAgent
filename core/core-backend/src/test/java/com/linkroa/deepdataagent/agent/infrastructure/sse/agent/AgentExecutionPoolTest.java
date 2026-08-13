@@ -55,7 +55,8 @@ class AgentExecutionPoolTest {
         assertTrue(accepted, "Task should be accepted when capacity is available");
         assertTrue(taskLatch.await(5, TimeUnit.SECONDS), "Task should complete within timeout");
         assertTrue(taskExecuted.get(), "Task should have been executed");
-        assertEquals(0, pool.getActiveSessionCount(), "Active session count should return to 0 after task completion");
+        // onComplete 在任务 finally 块中递减，需轮询等待计数器归零，避免竞态断言
+        assertTrue(waitForZeroActiveSessions(pool), "Active session count should return to 0 after task completion");
     }
 
     @Test
@@ -173,6 +174,23 @@ class AgentExecutionPoolTest {
 
         // then - 所有任务应在超时前完成
         assertTrue(completionLatch.await(10, TimeUnit.SECONDS), "All tasks should complete within timeout");
-        assertEquals(0, pool.getActiveSessionCount(), "Active session count should return to 0 after all tasks complete");
+        assertTrue(waitForZeroActiveSessions(pool), "Active session count should return to 0 after all tasks complete");
+    }
+
+    /**
+     * 轮询等待活跃会话计数器归零。
+     * <p>计数器在任务的 finally 块中递减，任务体结束与递减之间可能存在微小时间窗口，
+     * 直接断言可能因竞态而偶发失败，故采用带超时的轮询。</p>
+     *
+     * @param pool Agent 执行池
+     * @return true 表示在超时时间内计数器归零
+     * @throws InterruptedException 等待被中断时抛出
+     */
+    private static boolean waitForZeroActiveSessions(AgentExecutionPool pool) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (pool.getActiveSessionCount() != 0 && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        return pool.getActiveSessionCount() == 0;
     }
 }

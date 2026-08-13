@@ -31,9 +31,7 @@
         <maven.compiler.release>${java.version}</maven.compiler.release>
 
         <agentscope.version>2.0.0</agentscope.version>
-        <langchain4j.jvector.version>1.13.0-beta23</langchain4j.jvector.version>
         <opensandbox.version>1.0.4</opensandbox.version>
-        <sqlite.version>3.50.3.0</sqlite.version>
         <flatten-maven-plugin.version>1.7.3</flatten-maven-plugin.version>
         <frontend-maven-plugin.version>2.0.0</frontend-maven-plugin.version>
         <exec-maven-plugin.version>3.1.0</exec-maven-plugin.version>

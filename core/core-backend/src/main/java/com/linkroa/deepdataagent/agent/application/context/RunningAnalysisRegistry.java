@@ -34,7 +34,6 @@ public class RunningAnalysisRegistry {
             return;
         }
         registry.put(sessionId, execution);
-        log.debug("RunningAnalysisRegistry: registered sessionId={}", sessionId);
     }
 
     /**
@@ -55,7 +54,6 @@ public class RunningAnalysisRegistry {
     public void remove(String sessionId) {
         if (sessionId != null) {
             registry.remove(sessionId);
-            log.debug("RunningAnalysisRegistry: removed sessionId={}", sessionId);
         }
     }
 

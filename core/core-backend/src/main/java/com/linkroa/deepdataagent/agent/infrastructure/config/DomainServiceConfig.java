@@ -1,7 +1,7 @@
 package com.linkroa.deepdataagent.agent.infrastructure.config;
 
 import com.linkroa.deepdataagent.agent.domain.service.NL2SqlService;
-import com.linkroa.deepdataagent.agent.domain.service.port.SqlGenerationPort;
+import com.linkroa.deepdataagent.agent.domain.service.port.NL2SqlPort;
 import com.linkroa.deepdataagent.agent.domain.service.port.SqlValidationPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,15 +17,15 @@ public class DomainServiceConfig {
     /**
      * 装配 NL2SQL 领域服务
      *
-     * @param sqlGenerationPort  SQL 生成端口
+     * @param nl2SqlPort       NL2SQL 生成端口
      * @param sqlValidationPort  SQL 校验端口
      * @param properties        数据分析配置（用于读取最大重试次数）
      * @return NL2SQL 领域服务
      */
     @Bean
-    public NL2SqlService nl2SqlService(SqlGenerationPort sqlGenerationPort,
+    public NL2SqlService nl2SqlService(NL2SqlPort nl2SqlPort,
                                        SqlValidationPort sqlValidationPort,
                                        DataAnalysisProperties properties) {
-        return new NL2SqlService(sqlGenerationPort, sqlValidationPort, properties.getMaxRetryCount());
+        return new NL2SqlService(nl2SqlPort, sqlValidationPort, properties.getMaxRetryCount());
     }
 }

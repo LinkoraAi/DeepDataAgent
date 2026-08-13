@@ -1,5 +1,7 @@
 package com.linkroa.deepdataagent.agent.infrastructure.collector;
 
+import com.linkroa.deepdataagent.agent.domain.model.DialogueMessage;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -8,8 +10,9 @@ import java.util.Map;
 
 /**
  * 分析状态收集器
- * <p>在流式处理过程中收集事件所需的中间状态，仅保留流式推送所需的最小状态：
- * 思考文本缓冲、工具调用记录（含入参累积）、工具结果缓冲。</p>
+ * <p>流式处理过程中的单一累积源：收集事件所需的中间状态，仅保留流式推送与落库快照所需的最小状态——
+ * 思考文本缓冲、助手报告缓冲、工具调用记录（含入参累积）、工具结果缓冲。
+ * 进行中 {@link DialogueMessage} 仅在收敛或落库快照时从此处一次性读取完整文本，避免逐 delta 重复持有。</p>
  * <p>注意：此类非线程安全，仅在单个流式处理过程中使用；并发追加由外部加锁保护。</p>
  */
 public class AnalysisSnapshotCollector {
@@ -18,6 +21,8 @@ public class AnalysisSnapshotCollector {
     private final List<ToolCallItem> toolCalls = Collections.synchronizedList(new ArrayList<>());
     /** 使用 StringBuilder 累积当前思考块增量，thinking_end 时 flush 为完整思考文本 */
     private final StringBuilder thinkingBuffer = new StringBuilder();
+    /** 助手报告文本增量缓冲区，累积 TEXT_BLOCK_DELTA 事件，agent_end 时 flush 为完整报告 */
+    private final StringBuilder assistantBuffer = new StringBuilder();
     /** 工具结果增量缓冲区，按 toolCallId 分组累积 TOOL_RESULT_TEXT_DELTA 事件 */
     private final Map<String, StringBuilder> toolResultBuffers = new HashMap<>();
 
@@ -43,6 +48,50 @@ public class AnalysisSnapshotCollector {
     public String flushThinkingStep() {
         String text = thinkingBuffer.toString().trim();
         thinkingBuffer.setLength(0);
+        return text.isEmpty() ? null : text;
+    }
+
+    /**
+     * 获取当前思考缓冲文本（不清空）
+     * <p>用于进行中 THINKING 消息的落库快照，返回累积的完整思考内容，不改变缓冲状态。</p>
+     *
+     * @return 当前累积的思考文本；缓冲区为空返回 null
+     */
+    public String getThinkingBuffer() {
+        return thinkingBuffer.isEmpty() ? null : thinkingBuffer.toString();
+    }
+
+    /**
+     * 累积助手报告文本增量
+     * <p>LLM 流式输出最终报告时，每个 TEXT_BLOCK_DELTA 增量调用此方法累积到缓冲区。</p>
+     *
+     * @param delta 报告文本增量
+     */
+    public void addAssistantStep(String delta) {
+        if (delta != null) {
+            assistantBuffer.append(delta);
+        }
+    }
+
+    /**
+     * 获取当前助手报告缓冲文本（不清空）
+     * <p>用于进行中 ASSISTANT 消息的落库快照，返回累积的完整报告内容，不改变缓冲状态。</p>
+     *
+     * @return 当前累积的报告文本；缓冲区为空返回 null
+     */
+    public String getAssistantBuffer() {
+        return assistantBuffer.isEmpty() ? null : assistantBuffer.toString();
+    }
+
+    /**
+     * 将当前累积的助手报告增量 flush 为完整报告文本
+     * <p>在 AGENT_END 或 TOOL_CALL_START（叙述转思考）时调用，返回完整报告内容并清空缓冲区。</p>
+     *
+     * @return 完整报告文本；若缓冲区为空返回 null
+     */
+    public String flushAssistantStep() {
+        String text = assistantBuffer.toString().trim();
+        assistantBuffer.setLength(0);
         return text.isEmpty() ? null : text;
     }
 

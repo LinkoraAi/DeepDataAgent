@@ -6,28 +6,28 @@ import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceInfo;
 import com.linkroa.deepdataagent.agent.application.adapter.EventAdapter;
 import com.linkroa.deepdataagent.agent.application.command.DataAnalysisCommand;
 import com.linkroa.deepdataagent.agent.domain.model.AgentSession;
+import com.linkroa.deepdataagent.agent.domain.model.DialogueMessage;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentSessionRepository;
-import com.linkroa.deepdataagent.agent.domain.repository.DialogueRepository;
 import com.linkroa.deepdataagent.agent.domain.valueobject.DialogueStatus;
 import com.linkroa.deepdataagent.agent.domain.valueobject.MessageType;
 import com.linkroa.deepdataagent.agent.domain.valueobject.SessionStatus;
 import com.linkroa.deepdataagent.agent.infrastructure.agent.HarnessAgentFactory;
-import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
+import com.linkroa.deepdataagent.agent.infrastructure.client.TitleGenerationClient;
 import com.linkroa.deepdataagent.agent.infrastructure.collector.AnalysisEventBuffer;
 import com.linkroa.deepdataagent.agent.infrastructure.config.AgentProperties;
-import com.linkroa.deepdataagent.agent.infrastructure.config.DataAnalysisProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.config.SessionProperties;
 import com.linkroa.deepdataagent.agent.application.context.RunningAnalysisRegistry;
 import com.linkroa.deepdataagent.agent.application.context.RunningExecution;
 import com.linkroa.deepdataagent.agent.application.context.SessionToolContext;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.MessagePersistenceService;
 import com.linkroa.deepdataagent.agent.infrastructure.sse.SSEConnectionPool;
-import com.linkroa.deepdataagent.agent.infrastructure.sse.SessionEventBus;
 import com.linkroa.deepdataagent.agent.infrastructure.sse.agent.AgentExecutionPool;
 import com.linkroa.deepdataagent.shared.exception.SSENotConnectedException;
 import com.linkroa.deepdataagent.shared.exception.SessionNotRunningException;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
+import io.agentscope.core.event.AgentEventType;
+import io.agentscope.core.event.TextBlockDeltaEvent;
 import io.agentscope.harness.agent.HarnessAgent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,9 +36,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Sinks;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
@@ -51,7 +51,8 @@ import static org.mockito.Mockito.*;
 
 /**
  * DataAnalysisApplicationService 单元测试
- * <p>覆盖应用服务构造与流式执行三条终态路径（COMPLETED/FAILED/CANCELLED）的持久化状态。</p>
+ * <p>覆盖应用服务构造、逐事件实时落库（RUNNING 状态）、持久化失败终止分析并推 error 事件、
+ * 以及三条终态路径（COMPLETED/FAILED/CANCELLED）的持久化状态。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class DataAnalysisApplicationServiceTest {
@@ -60,7 +61,7 @@ class DataAnalysisApplicationServiceTest {
     private DatasourceGateway datasourceGateway;
 
     @Mock
-    private LLMClient llmClient;
+    private TitleGenerationClient titleGenerationClient;
 
     @Mock
     private HarnessAgentFactory agentFactory;
@@ -74,25 +75,16 @@ class DataAnalysisApplicationServiceTest {
     private AgentSessionRepository sessionRepository;
 
     @Mock
-    private DialogueRepository dialogueRepository;
-
-    @Mock
     private SessionProperties sessionProperties;
 
     @Mock
     private AgentProperties agentProperties;
 
     @Mock
-    private DataAnalysisProperties dataAnalysisProperties;
-
-    @Mock
     private SessionToolContext sessionToolContext;
 
     @Mock
     private SSEConnectionPool sseConnectionPool;
-
-    @Mock
-    private SessionEventBus sessionEventBus;
 
     @Mock
     private AgentExecutionPool agentExecutionPool;
@@ -106,25 +98,22 @@ class DataAnalysisApplicationServiceTest {
 
     @BeforeEach
     void setUp() {
-        // 使用真实 EventAdapter：registerContext 需返回真实 CollectorContext，供 BatchFlushManager 复制快照
+        // 使用真实 EventAdapter：registerContext 需返回真实 CollectorContext，供逐事件落库复制快照
         eventAdapter = new EventAdapter();
         // 使用真实 RunningAnalysisRegistry：停止与重连判定依赖其真实行为
         runningAnalysisRegistry = new RunningAnalysisRegistry();
 
         service = new DataAnalysisApplicationService(
                 datasourceGateway,
-                llmClient,
+                titleGenerationClient,
                 agentFactory,
                 eventAdapter,
                 messagePersistenceService,
                 sessionRepository,
-                dialogueRepository,
                 sessionProperties,
                 agentProperties,
-                dataAnalysisProperties,
                 sessionToolContext,
                 sseConnectionPool,
-                sessionEventBus,
                 agentExecutionPool,
                 runningAnalysisRegistry
         );
@@ -155,9 +144,6 @@ class DataAnalysisApplicationServiceTest {
 
         when(messagePersistenceService.persistUserMessageSync(anyString(), anyString())).thenReturn(dialogueId);
         when(agentFactory.getOrCreateAgent(any(), any(), any(), anyBoolean(), anyList())).thenReturn(agent);
-        // 写库节奏：首次延迟 1s、间隔 5s（scheduleAtFixedRate 要求周期必须 > 0）
-        when(dataAnalysisProperties.getInitialFlushDelaySeconds()).thenReturn(1L);
-        when(dataAnalysisProperties.getFlushIntervalSeconds()).thenReturn(5L);
     }
 
     @Test
@@ -172,7 +158,7 @@ class DataAnalysisApplicationServiceTest {
             capturedStatus.set(inv.getArgument(2));
             flushLatch.countDown();
             return null;
-        }).when(dialogueRepository).updateMessages(any(), any(), any());
+        }).when(messagePersistenceService).updateMessagesSync(any(), any(), any());
 
         DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false, false);
 
@@ -193,13 +179,13 @@ class DataAnalysisApplicationServiceTest {
         when(agent.streamEvents(anyList(), any(RuntimeContext.class))).thenReturn(Flux.error(new RuntimeException("模拟失败")));
         CountDownLatch flushLatch = new CountDownLatch(1);
         AtomicReference<DialogueStatus> capturedStatus = new AtomicReference<>();
-        AtomicReference<List<com.linkroa.deepdataagent.agent.domain.model.DialogueMessage>> capturedMessages = new AtomicReference<>();
+        AtomicReference<List<DialogueMessage>> capturedMessages = new AtomicReference<>();
         doAnswer(inv -> {
             capturedStatus.set(inv.getArgument(2));
             capturedMessages.set(inv.getArgument(1));
             flushLatch.countDown();
             return null;
-        }).when(dialogueRepository).updateMessages(any(), any(), any());
+        }).when(messagePersistenceService).updateMessagesSync(any(), any(), any());
 
         DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false, false);
 
@@ -207,7 +193,7 @@ class DataAnalysisApplicationServiceTest {
         assertThrows(RuntimeException.class, () -> service.executeStream(command).blockLast());
         assertTrue(flushLatch.await(5, TimeUnit.SECONDS));
         assertEquals(DialogueStatus.FAILED, capturedStatus.get());
-        // 终态 flush 的消息快照应包含 addError 追加的 ERROR 消息
+        // 终态落库的消息快照应包含 addError 追加的 ERROR 消息
         assertTrue(capturedMessages.get().stream()
                 .anyMatch(m -> m.getMessageType() == MessageType.ERROR));
     }
@@ -227,7 +213,7 @@ class DataAnalysisApplicationServiceTest {
             capturedStatus.set(inv.getArgument(2));
             flushLatch.countDown();
             return null;
-        }).when(dialogueRepository).updateMessages(any(), any(), any());
+        }).when(messagePersistenceService).updateMessagesSync(any(), any(), any());
 
         DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false, false);
 
@@ -240,6 +226,66 @@ class DataAnalysisApplicationServiceTest {
         // then
         assertTrue(flushLatch.await(5, TimeUnit.SECONDS));
         assertEquals(DialogueStatus.CANCELLED, capturedStatus.get());
+    }
+
+    @Test
+    void should_persistRunningPerEvent_when_executeStream_given_textBlockDeltaEvents() throws Exception {
+        // given
+        Long dialogueId = 1L;
+        prepareStreamCommonMocks(dialogueId);
+        // 模拟 Agent 流式输出两段文本增量，随后正常结束
+        TextBlockDeltaEvent delta1 = mock(TextBlockDeltaEvent.class);
+        when(delta1.getType()).thenReturn(AgentEventType.TEXT_BLOCK_DELTA);
+        when(delta1.getDelta()).thenReturn("第一段");
+        TextBlockDeltaEvent delta2 = mock(TextBlockDeltaEvent.class);
+        when(delta2.getType()).thenReturn(AgentEventType.TEXT_BLOCK_DELTA);
+        when(delta2.getDelta()).thenReturn("第二段");
+        when(agent.streamEvents(anyList(), any(RuntimeContext.class))).thenReturn(Flux.just(delta1, delta2));
+        List<DialogueStatus> capturedStatuses = new ArrayList<>();
+        doAnswer(inv -> {
+            capturedStatuses.add(inv.getArgument(2));
+            return null;
+        }).when(messagePersistenceService).updateMessagesSync(any(), any(), any());
+
+        DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false, false);
+
+        // when
+        service.executeStream(command).blockLast();
+
+        // then
+        // 每个事件先落库（RUNNING），完成后终态落库（COMPLETED）
+        verify(messagePersistenceService, times(3)).updateMessagesSync(any(), any(), any());
+        assertEquals(List.of(DialogueStatus.RUNNING, DialogueStatus.RUNNING, DialogueStatus.COMPLETED),
+                capturedStatuses);
+    }
+
+    @Test
+    void should_terminateAnalysis_when_executeStream_given_persistFailureDuringStreaming() throws Exception {
+        // given
+        Long dialogueId = 1L;
+        prepareStreamCommonMocks(dialogueId);
+        TextBlockDeltaEvent delta = mock(TextBlockDeltaEvent.class);
+        when(delta.getType()).thenReturn(AgentEventType.TEXT_BLOCK_DELTA);
+        when(delta.getDelta()).thenReturn("第一段");
+        when(agent.streamEvents(anyList(), any(RuntimeContext.class))).thenReturn(Flux.just(delta));
+        // 第一次 RUNNING 落库即失败：应终止分析（Flux error）并仍尝试 FAILED 终态落库
+        doThrow(new RuntimeException("写库失败"))
+                .when(messagePersistenceService)
+                .updateMessagesSync(any(), any(), eq(DialogueStatus.RUNNING));
+        CountDownLatch flushLatch = new CountDownLatch(1);
+        AtomicReference<DialogueStatus> capturedStatus = new AtomicReference<>();
+        doAnswer(inv -> {
+            capturedStatus.set(inv.getArgument(2));
+            flushLatch.countDown();
+            return null;
+        }).when(messagePersistenceService).updateMessagesSync(any(), any(), eq(DialogueStatus.FAILED));
+
+        DataAnalysisCommand command = new DataAnalysisCommand("session-1", 200L, "100", "分析销量", false, false);
+
+        // when & then
+        assertThrows(RuntimeException.class, () -> service.executeStream(command).blockLast());
+        assertTrue(flushLatch.await(5, TimeUnit.SECONDS));
+        assertEquals(DialogueStatus.FAILED, capturedStatus.get());
     }
 
     // ==================== 停止分析 ====================
@@ -268,7 +314,6 @@ class DataAnalysisApplicationServiceTest {
         assertTrue(stopped);
         verify(subscription).dispose();
         verify(agent).interrupt();
-        verify(sessionEventBus).unregister("session-1");
         verify(sseConnectionPool).removeSessionClientId("session-1");
         assertFalse(runningAnalysisRegistry.isRunning("session-1"));
     }
@@ -418,8 +463,6 @@ class DataAnalysisApplicationServiceTest {
         String sessionId = "session-1";
         String clientId = "client-A";
         when(sseConnectionPool.isConnected(clientId)).thenReturn(true);
-        Sinks.Many<AgentEvent> sink = Sinks.many().unicast().onBackpressureBuffer();
-        when(sessionEventBus.register(sessionId)).thenReturn(sink);
         when(agentExecutionPool.execute(eq(sessionId), any())).thenReturn(true);
         DataAnalysisCommand command = new DataAnalysisCommand(sessionId, 200L, "100", "分析销量", false, false);
 
@@ -429,7 +472,6 @@ class DataAnalysisApplicationServiceTest {
         // then：正常启动新分析
         assertEquals(sessionId, result.sessionId());
         verify(sseConnectionPool).updateSessionClientId(sessionId, clientId);
-        verify(sessionEventBus).register(sessionId);
         verify(agentExecutionPool).execute(eq(sessionId), any());
     }
 }

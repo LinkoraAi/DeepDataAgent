@@ -7,6 +7,5 @@ public enum MessageRole {
     USER,
     SYSTEM,
     ASSISTANT,
-    TOOL,
-    THINKING
+    TOOL
 }

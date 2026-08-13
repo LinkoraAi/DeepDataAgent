@@ -5,7 +5,7 @@ import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 /**
  * 数据分析被用户主动取消的领域异常。
  * <p>前端终止报告分析时，LLM 调用线程被中断（{@link InterruptedException}），
- * 该异常由基础设施层（如 {@code LLMClient}）抛出，用于表达取消语义而非真实模型故障。</p>
+ * 该异常由基础设施层（如 {@code LLMInvoker}）抛出，用于表达取消语义而非真实模型故障。</p>
  */
 public class AnalysisCancelledException extends DeepDataAgentException {
 

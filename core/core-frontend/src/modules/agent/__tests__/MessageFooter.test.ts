@@ -21,8 +21,7 @@ function createMockMessage(report?: string): ChatMessage {
     content: '',
     timestamp: Date.now(),
     analysisState: {
-      rounds: [],
-      isTimelineExpanded: false,
+      contentItems: [],
       currentSQL: null,
       queryData: [],
       chartConfig: null,

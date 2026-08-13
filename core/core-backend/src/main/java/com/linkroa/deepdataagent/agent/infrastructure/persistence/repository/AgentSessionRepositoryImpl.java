@@ -78,10 +78,11 @@ public class AgentSessionRepositoryImpl implements AgentSessionRepository {
     }
 
     @Override
-    public void updateStatus(String sessionId, SessionStatus status) {
+    public void softDelete(String sessionId) {
         LambdaUpdateWrapper<AgentSessionEntity> wrapper = new LambdaUpdateWrapper<>();
         wrapper.eq(AgentSessionEntity::getId, sessionId)
-                .set(AgentSessionEntity::getStatus, status.name())
+                .set(AgentSessionEntity::getStatus, SessionStatus.DELETED.name())
+                .set(AgentSessionEntity::getIsDeleted, 1)
                 .set(AgentSessionEntity::getUpdatedTime, LocalDateTime.now());
         mapper.update(null, wrapper);
     }
@@ -120,7 +121,7 @@ public class AgentSessionRepositoryImpl implements AgentSessionRepository {
         session.setUserId(entity.getUserId());
         session.setDatasourceId(entity.getDatasourceId());
         session.setModelConfigId(entity.getModelConfigId());
-        session.setStatus(SessionStatus.valueOf(entity.getStatus()));
+        session.restoreStatus(SessionStatus.valueOf(entity.getStatus()));
         session.setLastMessageTime(entity.getLastMessageTime());
         session.setCreatedTime(entity.getCreatedTime());
         session.setUpdatedTime(entity.getUpdatedTime());

@@ -83,7 +83,14 @@ public class AgentSession {
         return status;
     }
 
-    public void setStatus(SessionStatus status) {
+    /**
+     * 恢复会话状态（仅限持久化恢复场景使用）
+     * <p>从仓储加载会话时恢复持久化状态，不校验状态迁移合法性；
+     * 业务状态变更必须通过 {@link #close()} 等生命周期方法，避免任意状态跳跃。</p>
+     *
+     * @param status 持久化的会话状态
+     */
+    public void restoreStatus(SessionStatus status) {
         this.status = status;
         this.updatedTime = LocalDateTime.now();
     }
@@ -120,24 +127,19 @@ public class AgentSession {
         this.deleted = deleted;
     }
 
-    /** 关闭会话 */
+    /** 删除会话（软删除终态） */
     public void close() {
-        if (this.status != SessionStatus.CLOSED && this.status != SessionStatus.DELETED) {
-            this.status = SessionStatus.CLOSED;
-            this.updatedTime = LocalDateTime.now();
+        if (this.status == SessionStatus.DELETED) {
+            throw new IllegalStateException("会话已删除");
         }
-    }
-
-    /** 归档（软删除）会话 */
-    public void archive() {
         this.status = SessionStatus.DELETED;
         this.deleted = 1;
         this.updatedTime = LocalDateTime.now();
     }
 
-    /** 会话是否已关闭 */
+    /** 会话是否已关闭（已删除） */
     public boolean isClosed() {
-        return this.status == SessionStatus.CLOSED || this.deleted != null && this.deleted == 1;
+        return this.status == SessionStatus.DELETED;
     }
 
     /** 是否可以发起新对话 */

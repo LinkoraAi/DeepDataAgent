@@ -50,10 +50,12 @@ class MessageResponseAssemblerTest {
         assertNotNull(result);
         assertEquals(1L, result.id());
         assertEquals("user", result.role());
+        assertEquals("MESSAGE", result.type());
         assertEquals("用户问题", result.content());
         assertEquals(SESSION_ID, result.sessionId());
         assertNull(result.toolCalls());
         assertNull(result.toolResult());
+        assertNull(result.toolCallId());
         assertNotNull(result.createdAt());
     }
 
@@ -77,6 +79,7 @@ class MessageResponseAssemblerTest {
         // then
         assertEquals(2L, result.id());
         assertEquals("assistant", result.role());
+        assertEquals("MESSAGE", result.type());
         assertEquals("", result.content());
         assertEquals(SESSION_ID, result.sessionId());
     }
@@ -89,7 +92,7 @@ class MessageResponseAssemblerTest {
                 3L,
                 MessageRole.ASSISTANT,
                 MessageType.TOOL_CALL,
-                DialogueContent.toolCall("query_database", "{\"sql\": \"SELECT * FROM users\"}", ""),
+                DialogueContent.toolCall("query_database", "{\"sql\": \"SELECT * FROM users\"}", "", "call-1"),
                 MessageStatus.COMPLETED,
                 now,
                 now
@@ -100,20 +103,23 @@ class MessageResponseAssemblerTest {
 
         // then
         assertEquals(3L, result.id());
+        assertEquals("TOOL_CALL", result.type());
         assertEquals("query_database", result.toolCalls());
         assertEquals("{\"sql\": \"SELECT * FROM users\"}", result.content());
+        assertNull(result.toolResult());
+        assertEquals("call-1", result.toolCallId());
         assertEquals(SESSION_ID, result.sessionId());
     }
 
     @Test
-    void should_mapToolCallWithResult_when_toResponse_given_mergedToolMessage() {
+    void should_mapToolCallWithoutResult_when_toResponse_given_toolCallMessage() {
         // given
         LocalDateTime now = LocalDateTime.now();
         DialogueMessage message = new DialogueMessage(
                 3L,
                 MessageRole.ASSISTANT,
                 MessageType.TOOL_CALL,
-                DialogueContent.toolCall("query_database", "{\"sql\": \"SELECT * FROM users\"}", "查询到的数据"),
+                DialogueContent.toolCall("query_database", "{\"sql\": \"SELECT * FROM users\"}", "查询到的数据", "call-2"),
                 MessageStatus.COMPLETED,
                 now,
                 now
@@ -123,10 +129,13 @@ class MessageResponseAssemblerTest {
         MessageResponse result = MessageResponseAssembler.toResponse(message, SESSION_ID, DIALOGUE_ID);
 
         // then
+        // TOOL_CALL 消息仅透出工具名与入参，结果由独立的 TOOL_RESULT 消息承载
         assertEquals(3L, result.id());
+        assertEquals("TOOL_CALL", result.type());
         assertEquals("query_database", result.toolCalls());
         assertEquals("{\"sql\": \"SELECT * FROM users\"}", result.content());
-        assertEquals("查询到的数据", result.toolResult());
+        assertNull(result.toolResult());
+        assertEquals("call-2", result.toolCallId());
         assertEquals(SESSION_ID, result.sessionId());
     }
 
@@ -138,7 +147,7 @@ class MessageResponseAssemblerTest {
                 4L,
                 MessageRole.TOOL,
                 MessageType.TOOL_RESULT,
-                DialogueContent.toolResult("查询结果数据"),
+                DialogueContent.toolResult("query_database", "查询结果数据", "call-1"),
                 MessageStatus.COMPLETED,
                 now,
                 now
@@ -148,9 +157,13 @@ class MessageResponseAssemblerTest {
         MessageResponse result = MessageResponseAssembler.toResponse(message, SESSION_ID, DIALOGUE_ID);
 
         // then
+        // TOOL_RESULT 同时透出工具名（toolCalls）与返回结果（toolResult），并与对应调用共享 toolCallId
         assertEquals(4L, result.id());
+        assertEquals("TOOL_RESULT", result.type());
         assertEquals("tool", result.role());
+        assertEquals("query_database", result.toolCalls());
         assertEquals("查询结果数据", result.toolResult());
+        assertEquals("call-1", result.toolCallId());
         assertEquals(SESSION_ID, result.sessionId());
     }
 
@@ -160,7 +173,7 @@ class MessageResponseAssemblerTest {
         LocalDateTime now = LocalDateTime.now();
         DialogueMessage message = new DialogueMessage(
                 5L,
-                MessageRole.THINKING,
+                MessageRole.ASSISTANT,
                 MessageType.THINKING,
                 DialogueContent.text("正在思考..."),
                 MessageStatus.COMPLETED,
@@ -174,6 +187,7 @@ class MessageResponseAssemblerTest {
         // then
         assertEquals(5L, result.id());
         assertEquals("thinking", result.role());
+        assertEquals("THINKING", result.type());
         assertEquals("正在思考...", result.content());
         assertEquals(SESSION_ID, result.sessionId());
     }
@@ -246,6 +260,7 @@ class MessageResponseAssemblerTest {
         // then
         assertEquals(7L, result.id());
         assertEquals("user", result.role());
+        assertNull(result.type());
         assertEquals("", result.content());
         assertEquals(SESSION_ID, result.sessionId());
     }
@@ -270,6 +285,7 @@ class MessageResponseAssemblerTest {
         // then
         assertEquals(8L, result.id());
         assertNull(result.role());
+        assertEquals("MESSAGE", result.type());
         assertEquals("测试", result.content());
         assertEquals(SESSION_ID, result.sessionId());
     }
@@ -306,7 +322,7 @@ class MessageResponseAssemblerTest {
                 10L,
                 MessageRole.ASSISTANT,
                 MessageType.TOOL_CALL,
-                new DialogueContent("query_database", null, null),
+                new DialogueContent("query_database", null, null, null),
                 MessageStatus.COMPLETED,
                 now,
                 now

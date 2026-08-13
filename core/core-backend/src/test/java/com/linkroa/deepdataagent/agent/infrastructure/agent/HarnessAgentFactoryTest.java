@@ -1,10 +1,9 @@
 package com.linkroa.deepdataagent.agent.infrastructure.agent;
 
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceCategory;
-import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
+import com.linkroa.deepdataagent.agent.infrastructure.client.ChatModelManager;
 import com.linkroa.deepdataagent.agent.infrastructure.config.AgentMemoryProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.config.AgentProperties;
-import com.linkroa.deepdataagent.agent.infrastructure.config.SessionProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.ApiDataFetcherTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.ChartGeneratorTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.NL2SqlTool;
@@ -24,11 +23,11 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -43,18 +42,15 @@ import static org.mockito.Mockito.when;
 
 /**
  * HarnessAgentFactory 单元测试
- * <p>覆盖 getOrCreateAgent、createAgent（含 buildToolkit、resolvePrompt）、getAgent、evictSession、closeAgent
+ * <p>覆盖 getOrCreateAgent、createAgent（含 buildToolkit、resolvePrompt）、closeAgent
  * 等方法及所有可测分支。通过 {@code MockedStatic} 对 AgentScope 的 {@link HarnessAgent#builder()} 静态方法进行桩化，
- * 避免真实框架初始化。</p>
+ * 避免真实框架初始化。工厂不缓存 Agent，每次调用均创建新实例。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class HarnessAgentFactoryTest {
 
     @Mock
-    private LLMClient llmClient;
-
-    @Mock
-    private SessionProperties sessionProperties;
+    private ChatModelManager chatModelManager;
 
     @Mock
     private AgentProperties agentProperties;
@@ -84,22 +80,11 @@ class HarnessAgentFactoryTest {
 
     @BeforeEach
     void setUp() {
-        lenient().when(llmClient.getChatModel(any())).thenReturn(mock(ChatModelBase.class));
+        lenient().when(chatModelManager.getChatModel(any())).thenReturn(mock(ChatModelBase.class));
         // 默认禁用记忆，避免现有测试受记忆接线影响；记忆相关测试单独开启
         lenient().when(agentMemoryProperties.isEnabled()).thenReturn(false);
-        factory = createFactory(10);
-    }
-
-    /**
-     * 按指定最大活跃会话数创建工厂实例
-     *
-     * @param maxActiveSessions 最大活跃会话数
-     * @return 工厂实例
-     */
-    private HarnessAgentFactory createFactory(int maxActiveSessions) {
-        lenient().when(sessionProperties.getMaxActiveSessions()).thenReturn(maxActiveSessions);
-        return new HarnessAgentFactory(
-                llmClient, sessionProperties, agentProperties, agentMemoryProperties,
+        factory = new HarnessAgentFactory(
+                chatModelManager, agentProperties, agentMemoryProperties,
                 schemaRetrieverTool, nl2SqlTool, sqlExecutorTool,
                 apiDataFetcherTool, chartGeneratorTool, webSearchTool);
     }
@@ -171,33 +156,13 @@ class HarnessAgentFactoryTest {
      * 捕获实际传给 builder.middlewares 的中间件列表
      */
     private List<MiddlewareBase> captureMiddlewares(HarnessAgent.Builder builder) {
-        ArgumentCaptor<List> captor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<MiddlewareBase>> captor = ArgumentCaptor.forClass(List.class);
         verify(builder).middlewares(captor.capture());
         return captor.getValue();
     }
 
     @Test
-    void should_throwIllegalStateException_when_getOrCreateAgent_given_cacheExceedsLimit() {
-        // given
-        HarnessAgentFactory limitFactory = createFactory(1);
-        HarnessAgent agent = mock(HarnessAgent.class);
-        HarnessAgent.Builder builder = mockBuilderChain(agent);
-
-        // when
-        try (MockedStatic<HarnessAgent> mocked = mockStatic(HarnessAgent.class)) {
-            mocked.when(HarnessAgent::builder).thenReturn(builder);
-            limitFactory.getOrCreateAgent("s1", 1L, DatasourceCategory.JDBC, false, null);
-
-            // then: 缓存已满 1 个，再次创建应抛异常
-            assertThatThrownBy(() ->
-                    limitFactory.getOrCreateAgent("s2", 1L, DatasourceCategory.JDBC, false, null))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("活跃会话数已达上限");
-        }
-    }
-
-    @Test
-    void should_createTempAgent_when_getOrCreateAgent_given_nonEmptyExtraMiddlewares() {
+    void should_createNewInstance_when_getOrCreateAgent_given_nonEmptyExtraMiddlewares() {
         // given
         MiddlewareBase middleware = mock(MiddlewareBase.class);
         HarnessAgent agent = mock(HarnessAgent.class);
@@ -210,9 +175,8 @@ class HarnessAgentFactoryTest {
             result = factory.getOrCreateAgent("s1", 1L, DatasourceCategory.JDBC, false, List.of(middleware));
         }
 
-        // then: 返回创建的 agent，且不作为缓存
+        // then: 每次调用均创建并返回新实例
         assertThat(result).isSameAs(agent);
-        assertThat(factory.getAgent("s1")).isNull();
         verify(builder, times(1)).build();
     }
 
@@ -231,10 +195,12 @@ class HarnessAgentFactoryTest {
     }
 
     @Test
-    void should_returnSameCachedAgent_when_getOrCreateAgent_given_sameSessionId() {
+    void should_createNewInstanceEachCall_when_getOrCreateAgent_given_sameSessionId() {
         // given
-        HarnessAgent agent = mock(HarnessAgent.class);
-        HarnessAgent.Builder builder = mockBuilderChain(agent);
+        HarnessAgent firstAgent = mock(HarnessAgent.class);
+        HarnessAgent secondAgent = mock(HarnessAgent.class);
+        HarnessAgent.Builder builder = mockBuilderChain(firstAgent);
+        when(builder.build()).thenReturn(firstAgent, secondAgent);
 
         // when
         HarnessAgent first;
@@ -245,10 +211,9 @@ class HarnessAgentFactoryTest {
             second = factory.getOrCreateAgent("s1", 1L, DatasourceCategory.JDBC, false, null);
         }
 
-        // then: 第二次调用命中缓存，返回同一实例
-        assertThat(first).isSameAs(second);
-        assertThat(factory.getAgent("s1")).isSameAs(first);
-        verify(builder, times(1)).build();
+        // then: 工厂不缓存，同一 sessionId 的多次调用也创建独立实例
+        assertThat(first).isNotSameAs(second);
+        verify(builder, times(2)).build();
     }
 
     @Test
@@ -268,11 +233,9 @@ class HarnessAgentFactoryTest {
             second = factory.getOrCreateAgent("s2", 1L, DatasourceCategory.JDBC, false, null);
         }
 
-        // then: 不同会话分别创建并缓存
+        // then: 不同会话分别创建
         assertThat(first).isSameAs(agent1);
         assertThat(second).isSameAs(agent2);
-        assertThat(factory.getAgent("s1")).isSameAs(agent1);
-        assertThat(factory.getAgent("s2")).isSameAs(agent2);
         verify(builder, times(2)).build();
     }
 
@@ -385,86 +348,15 @@ class HarnessAgentFactoryTest {
     }
 
     @Test
-    void should_returnCachedAgent_when_getAgent_given_existingSession() {
+    void should_closeAgent_when_closeAgent_given_agent() {
         // given
         HarnessAgent agent = mock(HarnessAgent.class);
-        HarnessAgent.Builder builder = mockBuilderChain(agent);
-        try (MockedStatic<HarnessAgent> mocked = mockStatic(HarnessAgent.class)) {
-            mocked.when(HarnessAgent::builder).thenReturn(builder);
-            factory.getOrCreateAgent("s1", 1L, DatasourceCategory.JDBC, false, null);
-        }
-
-        // when
-        HarnessAgent cached = factory.getAgent("s1");
-
-        // then
-        assertThat(cached).isSameAs(agent);
-    }
-
-    @Test
-    void should_returnNull_when_getAgent_given_unknownSession() {
-        // when
-        HarnessAgent cached = factory.getAgent("unknown");
-
-        // then
-        assertThat(cached).isNull();
-    }
-
-    @Test
-    void should_closeAndRemoveAgent_when_evictSession_given_existingSession() {
-        // given
-        HarnessAgent agent = mock(HarnessAgent.class);
-        HarnessAgent.Builder builder = mockBuilderChain(agent);
-        try (MockedStatic<HarnessAgent> mocked = mockStatic(HarnessAgent.class)) {
-            mocked.when(HarnessAgent::builder).thenReturn(builder);
-            factory.getOrCreateAgent("s1", 1L, DatasourceCategory.JDBC, false, null);
-        }
-
-        // when
-        factory.evictSession("s1");
-
-        // then
-        verify(agent).close();
-        assertThat(factory.getAgent("s1")).isNull();
-    }
-
-    @Test
-    void should_doNothing_when_evictSession_given_unknownSession() {
-        // when
-        factory.evictSession("unknown");
-
-        // then: 无异常即可
-        assertThat(factory.getAgent("unknown")).isNull();
-    }
-
-    @Test
-    void should_closeTempAgent_when_closeAgent_given_notCachedAgent() {
-        // given
-        HarnessAgent tempAgent = mock(HarnessAgent.class);
-
-        // when
-        factory.closeAgent(tempAgent);
-
-        // then
-        verify(tempAgent).close();
-    }
-
-    @Test
-    void should_notCloseCachedAgent_when_closeAgent_given_cachedAgent() {
-        // given
-        HarnessAgent agent = mock(HarnessAgent.class);
-        HarnessAgent.Builder builder = mockBuilderChain(agent);
-        try (MockedStatic<HarnessAgent> mocked = mockStatic(HarnessAgent.class)) {
-            mocked.when(HarnessAgent::builder).thenReturn(builder);
-            factory.getOrCreateAgent("s1", 1L, DatasourceCategory.JDBC, false, null);
-        }
 
         // when
         factory.closeAgent(agent);
 
-        // then: 缓存中的 agent 不应被 closeAgent 关闭
-        verify(agent, never()).close();
-        assertThat(factory.getAgent("s1")).isSameAs(agent);
+        // then
+        verify(agent).close();
     }
 
     @Test
@@ -473,7 +365,7 @@ class HarnessAgentFactoryTest {
         factory.closeAgent(null);
 
         // then: 无异常即可
-        assertThat(factory.getAgent("s1")).isNull();
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> factory.closeAgent(null));
     }
 
     @Test
@@ -486,8 +378,12 @@ class HarnessAgentFactoryTest {
         when(agentMemoryProperties.getFlushTrigger()).thenReturn("throttled");
         HarnessAgent agent = mock(HarnessAgent.class);
 
-        // when
-        HarnessAgent.Builder builder = createViaFactory(agent, "s1", DatasourceCategory.JDBC, false, null);
+        // when: 桩化 Files.createDirectories，避免在磁盘上真实创建 data/agentscope/test 及其父目录
+        HarnessAgent.Builder builder;
+        try (MockedStatic<Files> mockedFiles = mockStatic(Files.class)) {
+            mockedFiles.when(() -> Files.createDirectories(any(Path.class))).thenReturn(null);
+            builder = createViaFactory(agent, "s1", DatasourceCategory.JDBC, false, null);
+        }
 
         // then: 记忆开启时调用 memory/workspace/disableMemoryTools
         verify(builder).memory(any(MemoryConfig.class));

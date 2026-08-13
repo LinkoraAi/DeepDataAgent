@@ -66,7 +66,7 @@ class SSEConnectionManager {
     this.controller = new AbortController();
 
     const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
-    const url = `${baseUrl}/agent/sse/connect`;
+    const url = `${baseUrl}/api/agent/sse/connect`;
 
     return new Promise((resolve, reject) => {
       fetchEventSource(url, {

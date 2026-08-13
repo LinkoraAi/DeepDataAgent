@@ -42,18 +42,12 @@ export function useDataAnalysis() {
     if (savedState) {
       return {
         isAnalyzing: savedState.isAnalyzing,
-        rounds: savedState.rounds.map(round => ({
-          ...round,
-          thinking: { ...round.thinking },
-          toolCalls: round.toolCalls.map(t => ({ ...t })),
-        })),
-        isTimelineExpanded: savedState.isTimelineExpanded,
+        contentItems: savedState.contentItems.map(item => ({ ...item })),
         currentSQL: savedState.currentSQL,
         queryData: [...savedState.queryData],
         chartConfig: savedState.chartConfig,
         chartType: savedState.chartType,
         analysisReport: savedState.analysisReport,
-        report: savedState.report ? { ...savedState.report } : null,
         searchResults: savedState.searchResults ? [...savedState.searchResults] : null,
         isEmptyResult: savedState.isEmptyResult,
         errorMessage: savedState.errorMessage,
@@ -381,7 +375,7 @@ export function useDataAnalysis() {
             // 诊断日志：确认 AGENT_END 打包是否执行、快照是否有内容、消息是否入列
             console.log('[SSE][diag] pack agent:', {
               sid,
-              rounds: snapshot?.rounds?.length,
+              contentItems: snapshot?.contentItems?.length,
               hasReport: !!snapshot?.analysisReport,
               current: sessionStore.currentSessionId,
               chatLenBefore: sessionStore.chatMessages.length,

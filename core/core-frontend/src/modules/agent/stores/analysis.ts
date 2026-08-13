@@ -3,27 +3,23 @@ import { ref } from 'vue';
 import type {
   AnalysisState,
   AnalysisSnapshot,
+  ContentItem,
+  ContentItemStatus,
   SearchResultItem,
   Suggestion,
-  ReActRound,
-  ThinkingTimelineItem,
-  ToolCallTimelineItem,
-  ReportTimelineItem,
 } from '../types';
 import { generateTimelineId } from '../composables/useTimelineItem';
 
 export const useAnalysisStore = defineStore('analysis', () => {
   const state = ref<AnalysisState>({
     isAnalyzing: false,
-    rounds: [],
-    currentRoundId: null,
-    isTimelineExpanded: true,
+    contentItems: [],
+    contentSeq: 0,
     currentSQL: null,
     queryData: [],
     chartConfig: null,
     chartType: null,
     analysisReport: null,
-    report: null,
     searchResults: null,
     isEmptyResult: false,
     errorMessage: null,
@@ -49,15 +45,13 @@ export const useAnalysisStore = defineStore('analysis', () => {
   function reset() {
     state.value = {
       isAnalyzing: false,
-      rounds: [],
-      currentRoundId: null,
-      isTimelineExpanded: true,
+      contentItems: [],
+      contentSeq: 0,
       currentSQL: null,
       queryData: [],
       chartConfig: null,
       chartType: null,
       analysisReport: null,
-      report: null,
       searchResults: null,
       isEmptyResult: false,
       errorMessage: null,
@@ -82,159 +76,238 @@ export const useAnalysisStore = defineStore('analysis', () => {
   }
 
   /**
-   * 创建新轮次并设为当前轮次
-   * <p>用于 thinking 事件到达时开启新一轮 ReAct 循环。
-   * 若当前轮次仍有 active 工具（status=running），先强制结束当前轮次。</p>
+   * 创建并追加一个新的内容流项
    *
-   * @returns 新创建的轮次对象
+   * @param type 内容项类型
+   * @param status 内容项状态
+   * @param extra 内容项附加字段（内容/工具名/入参/结果等）
+   * @returns 创建的内容项
    */
-  function startNewRound(): ReActRound {
-    // 若当前轮次仍有 active 工具，强制结束（符合 ReAct 语义：新一轮思考开启则旧轮次结束）
-    if (state.value.currentRoundId) {
-      const current = state.value.rounds.find(r => r.id === state.value.currentRoundId);
-      if (current && current.isActive) {
-        forceCompleteCurrentRound();
-      }
-    }
-
-    const now = Date.now();
-    const thinkingItem: ThinkingTimelineItem = {
-      id: `thinking-${generateTimelineId()}`,
-      timestamp: now,
-      type: 'thinking',
-      content: '',
-      isStreaming: true,
+  function pushContentItem(type: ContentItem['type'], status: ContentItemStatus, extra: Partial<ContentItem> = {}): ContentItem {
+    const item: ContentItem = {
+      id: `${type}-${generateTimelineId()}`,
+      seq: state.value.contentSeq++,
+      type,
+      status,
+      startTime: Date.now(),
+      ...extra,
     };
-    const newRound: ReActRound = {
-      id: `round-${generateTimelineId()}`,
-      startTime: now,
-      thinking: thinkingItem,
-      toolCalls: [],
-      isActive: true,
-      isCollapsed: false,
-    };
-    state.value.rounds.push(newRound);
-    state.value.currentRoundId = newRound.id;
-    return newRound;
+    state.value.contentItems.push(item);
+    return item;
   }
 
   /**
-   * 追加思考增量到当前轮次
-   * <p>若无当前轮次，自动创建新轮次（兜底场景）。</p>
+   * 查找最后一个进行中状态的指定类型内容项
+   *
+   * @param type 内容项类型
+   * @returns 进行中的内容项；不存在则返回 undefined
+   */
+  function findInProgressItem(type: ContentItem['type']): ContentItem | undefined {
+    for (let i = state.value.contentItems.length - 1; i >= 0; i--) {
+      const item = state.value.contentItems[i];
+      if (item.type === type && item.status === 'in_progress') {
+        return item;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * 追加思考增量：无进行中思考项则新建，有则原地追加并返回该消息项
    *
    * @param delta 思考内容增量
    */
-  function appendThinkingToCurrentRound(delta: string) {
+  function appendThinkingDelta(delta: string) {
     if (!delta) return;
-    let current = state.value.rounds.find(r => r.id === state.value.currentRoundId);
-    if (!current || !current.thinking.isStreaming) {
-      // 无当前轮次或当前轮次思考已结束，创建新轮次
-      current = startNewRound();
+    let item = findInProgressItem('thinking');
+    if (!item) {
+      item = pushContentItem('thinking', 'in_progress', { content: '' });
     }
-    current.thinking.content += delta;
+    item.content = (item.content || '') + delta;
   }
 
   /**
-   * 标记当前轮次的思考为完成状态
-   * <p>thinking.isStreaming 置为 false，保留 currentRoundId 等待工具调用归入。</p>
-   * 同步更新轮次的 isActive 状态。
+   * 完成当前思考：最后一个进行中思考项收敛为 completed
    */
-  function finalizeCurrentRoundThinking() {
-    const current = state.value.rounds.find(r => r.id === state.value.currentRoundId);
-    if (current) {
-      current.thinking.isStreaming = false;
-      updateRoundActiveState(current);
+  function completeThinking() {
+    const item = findInProgressItem('thinking');
+    if (item) {
+      item.status = 'completed';
+      item.endTime = Date.now();
     }
   }
 
   /**
-   * 在当前轮次新增工具调用
-   * <p>若无当前轮次，创建空 thinking 的兜底轮次。
-   * 对重复同名 running 工具做去重（更新 input 而非新增）。</p>
+   * 新增工具调用内容项（进行中）
    *
    * @param toolName 工具名称
    * @param input 工具输入参数（JSON 字符串）
+   * @param toolCallId 工具调用 ID（交错事件时用于精确定位）
    */
-  function addToolCallToCurrentRound(toolName: string, input?: string) {
-    let current = state.value.rounds.find(r => r.id === state.value.currentRoundId);
-    if (!current) {
-      // 无当前轮次，创建空 thinking 兜底轮次
-      current = startNewRound();
-      current.thinking.isStreaming = false; // 兜底轮次思考为空且非流式
-    }
-
-    // 去重：若最后一个同名工具仍在 running 且 input 为空，更新 input
-    const lastRunning = [...current.toolCalls].reverse().find(
-      t => t.toolName === toolName && t.status === 'running' && !t.input
-    );
-    if (lastRunning) {
-      lastRunning.input = input;
-      return;
-    }
-
-    const now = Date.now();
-    const newTool: ToolCallTimelineItem = {
-      id: `tool-${generateTimelineId()}`,
-      timestamp: now,
-      type: 'tool_call',
-      toolName,
-      status: 'running',
-      input,
-      startTime: now,
-    };
-    current.toolCalls.push(newTool);
-    updateRoundActiveState(current);
+  function addToolCallItem(toolName: string, input?: string, toolCallId?: string) {
+    pushContentItem('tool_call', 'in_progress', { toolName, input, toolCallId });
   }
 
   /**
-   * 更新当前轮次最后一个同名 running 工具的结果
+   * 查找指定 toolCallId 的工具调用内容项
    *
-   * @param toolName 工具名称
-   * @param result 执行结果
-   * @param success 是否成功
+   * @param toolCallId 工具调用 ID
+   * @returns 匹配的工具调用项；不存在则返回 undefined
    */
-  function updateToolCallInCurrentRound(toolName: string, result: string, success: boolean = true) {
-    const current = state.value.rounds.find(r => r.id === state.value.currentRoundId);
-    if (!current) return;
-
-    // 从后往前查找最后一个 running 状态的同名工具
-    const tool = [...current.toolCalls].reverse().find(
-      t => t.toolName === toolName && t.status === 'running'
-    );
-    if (tool) {
-      tool.status = success ? 'success' : 'error';
-      tool.result = result;
-      tool.endTime = Date.now();
-    }
-    updateRoundActiveState(current);
-  }
-
-  /**
-   * 强制结束当前轮次
-   * <p>标记 endTime，但不修改内部工具状态（保留 running 状态作为历史记录）。
-   * 清空 currentRoundId，用于下一轮 thinking 开启新轮次。</p>
-   */
-  function forceCompleteCurrentRound() {
-    const current = state.value.rounds.find(r => r.id === state.value.currentRoundId);
-    if (current) {
-      if (!current.endTime) {
-        current.endTime = Date.now();
+  function findToolCallItem(toolCallId: string): ContentItem | undefined {
+    for (let i = state.value.contentItems.length - 1; i >= 0; i--) {
+      const item = state.value.contentItems[i];
+      if (item.type === 'tool_call' && item.toolCallId === toolCallId) {
+        return item;
       }
-      current.isActive = false;
-      // 关键修复：轮次完成时同步折叠。否则切换会话回来后重新挂载 TimelineRound，
-      // 初值依赖 isCollapsed 快照（仍为 false），导致已完成轮次错误展开。
-      current.isCollapsed = true;
     }
-    state.value.currentRoundId = null;
+    return undefined;
   }
 
   /**
-   * 更新轮次的 isActive 状态
-   * <p>isActive = thinking.isStreaming || 任意 toolCall.status=running</p>
+   * 查找指定 toolCallId 的工具结果内容项
+   *
+   * @param toolCallId 工具调用 ID
+   * @returns 匹配的工具结果项；不存在则返回 undefined
    */
-  function updateRoundActiveState(round: ReActRound) {
-    round.isActive = round.thinking.isStreaming ||
-      round.toolCalls.some(t => t.status === 'running');
+  function findToolResultItem(toolCallId: string): ContentItem | undefined {
+    for (let i = state.value.contentItems.length - 1; i >= 0; i--) {
+      const item = state.value.contentItems[i];
+      if (item.type === 'tool_result' && item.toolCallId === toolCallId) {
+        return item;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * 新增工具结果内容项（进行中）
+   *
+   * @param toolName 工具名称（通常继承自同 toolCallId 的工具调用项）
+   * @param toolCallId 工具调用 ID（结果归属的调用标识）
+   * @returns 新建的工具结果项
+   */
+  function addToolResultItem(toolName?: string, toolCallId?: string): ContentItem {
+    return pushContentItem('tool_result', 'in_progress', { toolName, toolCallId });
+  }
+
+  /**
+   * 追加工具入参增量到指定工具调用（无 toolCallId 时回退到最后一个进行中工具调用）
+   *
+   * @param delta 入参增量
+   * @param toolCallId 工具调用 ID（可选）
+   */
+  function appendToolInput(delta: string, toolCallId?: string) {
+    if (!delta) return;
+    const item = toolCallId ? (findToolCallItem(toolCallId) ?? findInProgressItem('tool_call')) : findInProgressItem('tool_call');
+    if (item) {
+      item.input = (item.input || '') + delta;
+    }
+  }
+
+  /**
+   * 追加工具结果增量到指定工具结果项（首次到达时惰性创建独立结果项）
+   * <p>工具结果与工具调用拆分为两个独立内容项：结果增量写入 tool_result 项的 result，
+   * 工具名在惰性创建时继承自同一 toolCallId 的工具调用项。</p>
+   *
+   * @param delta 结果增量
+   * @param toolCallId 工具调用 ID（可选）
+   */
+  function appendToolResult(delta: string, toolCallId?: string) {
+    if (!delta) return;
+    let item = toolCallId ? findToolResultItem(toolCallId) : findInProgressItem('tool_result');
+    if (!item) {
+      // 惰性创建独立结果项：工具名继承同 toolCallId 的工具调用项
+      const toolCall = toolCallId ? findToolCallItem(toolCallId) : undefined;
+      item = addToolResultItem(toolCall?.toolName, toolCallId);
+    }
+    item.result = (item.result || '') + delta;
+  }
+
+  /**
+   * 完成最后一个进行中工具调用
+   * <p>调用消息仅承载工具名与入参，结果由独立的 tool_result 内容项承载，此处不写入结果。</p>
+   *
+   * @param success 是否成功；成功置 completed，失败置 failed
+   */
+  function completeToolCall(success: boolean = true) {
+    const item = findInProgressItem('tool_call');
+    if (!item) return;
+    item.status = success ? 'completed' : 'failed';
+    item.endTime = Date.now();
+  }
+
+  /**
+   * 完成最后一个进行中工具结果项
+   *
+   * @param result 完整执行结果（可选，覆盖流式结果）
+   * @param success 是否成功；成功置 completed，失败置 failed
+   */
+  function completeToolResult(result?: string, success: boolean = true) {
+    const item = findInProgressItem('tool_result');
+    if (!item) return;
+    if (result) {
+      item.result = result;
+    }
+    item.status = success ? 'completed' : 'failed';
+    item.endTime = Date.now();
+  }
+
+  /**
+   * 追加报告增量：无进行中报告项则新建，有则原地追加
+   * <p>同步维护 analysisReport 派生字段。</p>
+   *
+   * @param delta 报告内容增量
+   */
+  function appendReportDelta(delta: string) {
+    if (!delta) return;
+    let item = findInProgressItem('report');
+    if (!item) {
+      item = pushContentItem('report', 'in_progress', { content: '' });
+    }
+    item.content = (item.content || '') + delta;
+    state.value.analysisReport = item.content;
+  }
+
+  /**
+   * 将进行中的报告项转换为思考项并收敛为完成态（工具调用前的中途叙述）
+   * <p>事件线对齐（与后端 convertAssistantToThinking 语义一致）：agent 在工具调用前
+   * 输出的 TEXT_BLOCK 是过程叙述，应作为「思考」展示而非混入最终报告。
+   * TOOL_CALL_START 时调用；转换后最终报告由后续 TEXT_BLOCK_DELTA 新建报告项承接，
+   * 确保分析报告严格出现在事件线最后。</p>
+   */
+  function convertReportToThinking() {
+    const item = findInProgressItem('report');
+    if (!item) return;
+    item.type = 'thinking';
+    item.status = 'completed';
+    item.endTime = Date.now();
+    // 叙述不再作为报告，重取最后一个报告项同步派生字段
+    const lastReport = [...state.value.contentItems].reverse().find(i => i.type === 'report');
+    state.value.analysisReport = lastReport?.content ?? null;
+  }
+
+  /**
+   * 完成报告：最后一个进行中报告项收敛为 completed
+   * <p>存在权威最终文本时覆盖流式内容（如 AGENT_RESULT 兜底全文）。</p>
+   *
+   * @param finalText 权威最终文本（可选）
+   */
+  function completeReport(finalText?: string) {
+    const item = findInProgressItem('report');
+    if (item) {
+      if (finalText) {
+        item.content = finalText;
+      }
+      item.status = 'completed';
+      item.endTime = Date.now();
+    } else if (finalText) {
+      // 兜底：无进行中报告项但携带全文，直接创建完成态报告项
+      pushContentItem('report', 'completed', { content: finalText, endTime: Date.now() });
+    }
+    // 同步派生字段：取最后一个报告项的内容
+    const lastReport = [...state.value.contentItems].reverse().find(i => i.type === 'report');
+    state.value.analysisReport = lastReport?.content ?? null;
   }
 
   /**
@@ -261,74 +334,6 @@ export const useAnalysisStore = defineStore('analysis', () => {
     } catch (err) {
       console.error('Failed to parse chart option:', err);
       state.value.chartConfig = null;
-    }
-  }
-
-  /**
-   * 设置分析报告
-   * @param report 分析报告内容
-   * @param isComplete 是否为完整报告（true: 覆盖，false: 追加）
-   */
-  function setAnalysisReport(report: string, isComplete: boolean = true) {
-    if (isComplete) {
-      state.value.analysisReport = report;
-    } else {
-      state.value.analysisReport = (state.value.analysisReport || '') + report;
-    }
-  }
-
-  /**
-   * 更新时间线报告项
-   * <p>报告现只由权威 REPORT/AGENT_RESULT 事件整段渲染（isComplete=true），
-   * 中间叙述不再进入报告，故不再需要叙述前缀过滤。</p>
-   *
-   * @param delta 报告内容
-   * @param isComplete 是否为报告完成事件
-   */
-  function upsertReportItem(delta: string, isComplete: boolean = false) {
-    if (!state.value.report && !isComplete) {
-      // 创建新的流式报告（首次增量）
-      const now = Date.now();
-      state.value.report = {
-        id: 'report-1',
-        timestamp: now,
-        type: 'report',
-        content: delta,
-        isStreaming: true,
-      };
-    } else if (state.value.report) {
-      if (isComplete) {
-        // 完成事件：用完整内容替换已流式输出的内容，避免重复
-        state.value.report = {
-          ...state.value.report,
-          content: delta,
-          isStreaming: false,
-        };
-      } else if (state.value.report.isStreaming) {
-        // 增量事件：仅在报告仍在流式中时才追加
-        // 防止报告已完成后，迟到的增量事件再次追加导致内容重复
-        state.value.report = {
-          ...state.value.report,
-          content: state.value.report.content + delta,
-          isStreaming: true,
-        };
-      }
-      // 如果报告已完成（isStreaming=false），忽略迟到的增量事件
-    } else if (isComplete) {
-      // 首次即为完成事件（无流式过程）
-      const now = Date.now();
-      state.value.report = {
-        id: 'report-1',
-        timestamp: now,
-        type: 'report',
-        content: delta,
-        isStreaming: false,
-      };
-    }
-
-    // 同步 legacy 字段，保持兼容
-    if (state.value.report) {
-      state.value.analysisReport = state.value.report.content;
     }
   }
 
@@ -363,27 +368,20 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   /**
    * 完成分析
-   * <p>清理流式状态：currentRoundId 清空，所有未结束轮次回填 endTime，
-   * 所有轮次标记 isActive=false 并 isCollapsed=true（完成后默认折叠）。</p>
+   * <p>清理流式状态：所有进行中内容项收敛为 completed（failed 保持展开），
+   * 同步报告派生字段。</p>
    */
   function completeAnalysis() {
     state.value.isAnalyzing = false;
     state.value.analysisEndTime = Date.now();
-    state.value.currentRoundId = null;
-    // 回填所有未结束轮次的 endTime，并标记为非激活、默认折叠
-    for (const round of state.value.rounds) {
-      if (!round.endTime) {
-        round.endTime = state.value.analysisEndTime;
+    for (const item of state.value.contentItems) {
+      if (item.status === 'in_progress') {
+        item.status = 'completed';
+        item.endTime = state.value.analysisEndTime;
       }
-      round.isActive = false;
-      round.isCollapsed = true;
     }
-    // 结束报告流式状态
-    if (state.value.report) {
-      state.value.report.isStreaming = false;
-    }
-    // 保持时间线可见（展示各轮次折叠摘要），用户可手动折叠
-    state.value.isTimelineExpanded = true;
+    const lastReport = [...state.value.contentItems].reverse().find(i => i.type === 'report');
+    state.value.analysisReport = lastReport?.content ?? null;
   }
 
   /**
@@ -392,18 +390,12 @@ export const useAnalysisStore = defineStore('analysis', () => {
   function createSnapshot(): AnalysisSnapshot {
     return {
       isAnalyzing: state.value.isAnalyzing,
-      rounds: state.value.rounds.map(round => ({
-        ...round,
-        thinking: { ...round.thinking },
-        toolCalls: round.toolCalls.map(t => ({ ...t })),
-      })),
-      isTimelineExpanded: state.value.isTimelineExpanded,
+      contentItems: state.value.contentItems.map(item => ({ ...item })),
       currentSQL: state.value.currentSQL,
       queryData: [...state.value.queryData],
       chartConfig: state.value.chartConfig,
       chartType: state.value.chartType,
       analysisReport: state.value.analysisReport,
-      report: state.value.report ? { ...state.value.report } : null,
       searchResults: state.value.searchResults ? [...state.value.searchResults] : null,
       isEmptyResult: state.value.isEmptyResult,
       errorMessage: state.value.errorMessage,
@@ -427,21 +419,17 @@ export const useAnalysisStore = defineStore('analysis', () => {
    * @param snapshot 要导入的分析快照
    */
   function importSnapshot(snapshot: AnalysisSnapshot) {
+    // 序号从快照最大 seq 继续递增，保证后续新增内容项顺序正确
+    const nextSeq = snapshot.contentItems.reduce((max, item) => Math.max(max, item.seq + 1), 0);
     state.value = {
       isAnalyzing: snapshot.isAnalyzing ?? false,
-      rounds: snapshot.rounds.map(round => ({
-        ...round,
-        thinking: { ...round.thinking },
-        toolCalls: round.toolCalls.map(t => ({ ...t })),
-      })),
-      currentRoundId: null,
-      isTimelineExpanded: snapshot.isTimelineExpanded ?? true,
+      contentItems: snapshot.contentItems.map(item => ({ ...item })),
+      contentSeq: nextSeq,
       currentSQL: snapshot.currentSQL,
       queryData: [...snapshot.queryData],
       chartConfig: snapshot.chartConfig,
       chartType: snapshot.chartType,
       analysisReport: snapshot.analysisReport,
-      report: snapshot.report ? { ...snapshot.report } : null,
       searchResults: snapshot.searchResults ? [...snapshot.searchResults] : null,
       isEmptyResult: snapshot.isEmptyResult ?? false,
       errorMessage: snapshot.errorMessage,
@@ -457,19 +445,26 @@ export const useAnalysisStore = defineStore('analysis', () => {
     analysisSessionId,
     reset,
     startAnalysis,
-    // 轮次操作方法
-    startNewRound,
-    appendThinkingToCurrentRound,
-    finalizeCurrentRoundThinking,
-    addToolCallToCurrentRound,
-    updateToolCallInCurrentRound,
-    forceCompleteCurrentRound,
+    // 内容流操作方法
+    pushContentItem,
+    findInProgressItem,
+    appendThinkingDelta,
+    completeThinking,
+    addToolCallItem,
+    findToolCallItem,
+    findToolResultItem,
+    addToolResultItem,
+    appendToolInput,
+    appendToolResult,
+    completeToolCall,
+    completeToolResult,
+    appendReportDelta,
+    convertReportToThinking,
+    completeReport,
     // 通用设置方法
     setSQL,
     setQueryData,
     setChart,
-    setAnalysisReport,
-    upsertReportItem,
     setSearchResults,
     setEmptyResult,
     setError,

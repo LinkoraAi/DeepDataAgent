@@ -68,6 +68,119 @@ class AnalysisSnapshotCollectorTest {
         assertEquals("第二次", result);
     }
 
+    // ==================== getThinkingBuffer ====================
+
+    @Test
+    void should_returnAccumulatedText_when_getThinkingBuffer_given_accumulatedDeltas() {
+        // given
+        AnalysisSnapshotCollector collector = new AnalysisSnapshotCollector();
+
+        // when
+        collector.addThinkingStep("步骤1");
+        collector.addThinkingStep("步骤2");
+        String result = collector.getThinkingBuffer();
+
+        // then
+        assertEquals("步骤1步骤2", result);
+    }
+
+    @Test
+    void should_keepBuffer_when_getThinkingBuffer_given_accumulatedDeltas() {
+        // given
+        AnalysisSnapshotCollector collector = new AnalysisSnapshotCollector();
+
+        // when
+        collector.addThinkingStep("步骤1");
+        collector.getThinkingBuffer();
+        collector.addThinkingStep("步骤2");
+        String result = collector.getThinkingBuffer();
+
+        // then
+        // getThinkingBuffer 不清空缓冲，后续 delta 继续累积
+        assertEquals("步骤1步骤2", result);
+    }
+
+    @Test
+    void should_returnNull_when_getThinkingBuffer_given_noAccumulatedContent() {
+        // given
+        AnalysisSnapshotCollector collector = new AnalysisSnapshotCollector();
+
+        // when
+        String result = collector.getThinkingBuffer();
+
+        // then
+        assertNull(result);
+    }
+
+    // ==================== addAssistantStep / getAssistantBuffer / flushAssistantStep ====================
+
+    @Test
+    void should_returnAccumulatedText_when_getAssistantBuffer_given_accumulatedDeltas() {
+        // given
+        AnalysisSnapshotCollector collector = new AnalysisSnapshotCollector();
+
+        // when
+        collector.addAssistantStep("第一段");
+        collector.addAssistantStep("第二段");
+        String result = collector.getAssistantBuffer();
+
+        // then
+        assertEquals("第一段第二段", result);
+    }
+
+    @Test
+    void should_returnNull_when_getAssistantBuffer_given_noAccumulatedContent() {
+        // given
+        AnalysisSnapshotCollector collector = new AnalysisSnapshotCollector();
+
+        // when
+        String result = collector.getAssistantBuffer();
+
+        // then
+        assertNull(result);
+    }
+
+    @Test
+    void should_flushAssistantText_when_flushAssistantStep_given_accumulatedDeltas() {
+        // given
+        AnalysisSnapshotCollector collector = new AnalysisSnapshotCollector();
+
+        // when
+        collector.addAssistantStep("第一段");
+        collector.addAssistantStep("第二段");
+        String result = collector.flushAssistantStep();
+
+        // then
+        assertEquals("第一段第二段", result);
+    }
+
+    @Test
+    void should_returnNullAndClear_when_flushAssistantStep_given_secondCall() {
+        // given
+        AnalysisSnapshotCollector collector = new AnalysisSnapshotCollector();
+        collector.addAssistantStep("第一段");
+        collector.flushAssistantStep();
+
+        // when
+        collector.addAssistantStep("第二段");
+        String result = collector.flushAssistantStep();
+
+        // then
+        assertEquals("第二段", result);
+    }
+
+    @Test
+    void should_returnNull_when_flushAssistantStep_given_noAccumulatedContent() {
+        // given
+        AnalysisSnapshotCollector collector = new AnalysisSnapshotCollector();
+
+        // when
+        String result = collector.flushAssistantStep();
+
+        // then
+        assertNull(result);
+    }
+
     // ==================== addToolCall / getToolCallById ====================
 
     @Test

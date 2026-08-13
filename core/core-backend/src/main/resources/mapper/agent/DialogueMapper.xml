@@ -26,4 +26,46 @@
         WHERE status = 'RUNNING' AND is_deleted = 0
     </select>
 
+    <select id="selectMessages" resultType="java.lang.String">
+        SELECT messages
+        FROM dialogue
+        WHERE id = #{id}
+    </select>
+
+    <update id="updateMessages">
+        UPDATE dialogue
+        SET messages = CAST(#{messages} AS jsonb)
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateMessagesAndStatus">
+        UPDATE dialogue
+        SET status = #{status},
+            messages = CAST(#{messages} AS jsonb),
+            end_time = now()
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateStatus">
+        UPDATE dialogue
+        SET status = #{status},
+            end_time = now()
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateStatusAndMetadata">
+        UPDATE dialogue
+        SET status = #{status},
+            metadata = CAST(#{metadata} AS jsonb),
+            end_time = now()
+        WHERE id = #{id}
+    </update>
+
+    <update id="markAllRunningAsFailed">
+        UPDATE dialogue
+        SET status = 'FAILED',
+            end_time = now()
+        WHERE status = 'RUNNING' AND is_deleted = 0
+    </update>
+
 </mapper>

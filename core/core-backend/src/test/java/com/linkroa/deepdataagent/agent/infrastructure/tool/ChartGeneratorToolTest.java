@@ -1,7 +1,7 @@
 package com.linkroa.deepdataagent.agent.infrastructure.tool;
 
 import com.linkroa.deepdataagent.agent.domain.support.DataSummaryBuilder;
-import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
+import com.linkroa.deepdataagent.agent.infrastructure.client.ChartConfigGenerationClient;
 import com.linkroa.deepdataagent.agent.application.context.SessionToolContext;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.tool.ToolCallParam;
@@ -32,7 +32,7 @@ import static org.mockito.Mockito.when;
 class ChartGeneratorToolTest {
 
     @Mock
-    private LLMClient llmClient;
+    private ChartConfigGenerationClient chartConfigGenerationClient;
 
     @Mock
     private DataSummaryBuilder dataSummaryBuilder;
@@ -45,7 +45,7 @@ class ChartGeneratorToolTest {
 
     @Test
     void generateChart_shouldReturnEmpty_whenSessionIdIsBlank() {
-        ChartGeneratorTool tool = new ChartGeneratorTool(llmClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
+        ChartGeneratorTool tool = new ChartGeneratorTool(chartConfigGenerationClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
 
         String result = tool.generateChart(
                 "queryResult", "question", " ", toolCallParam
@@ -56,7 +56,7 @@ class ChartGeneratorToolTest {
 
     @Test
     void generateChart_shouldReturnEmpty_whenModelConfigIdMissing() {
-        ChartGeneratorTool tool = new ChartGeneratorTool(llmClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
+        ChartGeneratorTool tool = new ChartGeneratorTool(chartConfigGenerationClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
         RuntimeContext ctx = mock(RuntimeContext.class);
         when(sessionToolContext.getModelConfigId("session-1")).thenReturn(null);
         when(toolCallParam.getRuntimeContext()).thenReturn(ctx);
@@ -67,7 +67,7 @@ class ChartGeneratorToolTest {
         );
 
         assertEquals("[ERROR] 图表生成失败: 未找到可用的模型配置", result);
-        verify(llmClient, never()).generateChartConfig(anyLong(), anyString(), anyString(), anyString());
+        verify(chartConfigGenerationClient, never()).generateChartConfig(anyLong(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -79,9 +79,9 @@ class ChartGeneratorToolTest {
                 .thenReturn("data description");
         // 使用 any() matchers 避免 LENIENT 模式下参数匹配问题
         when(sessionToolContext.getModelConfigId(anyString())).thenReturn(null);
-        doReturn("{\"chart\": true}").when(llmClient).generateChartConfig(anyLong(), anyString(), anyString(), anyString());
+        doReturn("{\"chart\": true}").when(chartConfigGenerationClient).generateChartConfig(anyLong(), anyString(), anyString(), anyString());
 
-        ChartGeneratorTool tool = new ChartGeneratorTool(llmClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
+        ChartGeneratorTool tool = new ChartGeneratorTool(chartConfigGenerationClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
         String result = tool.generateChart(
                 "[{\"a\":1}]", "question", "session-1", toolCallParam
         );
@@ -97,9 +97,9 @@ class ChartGeneratorToolTest {
         when(dataSummaryBuilder.build(any()))
                 .thenReturn("data description");
         when(sessionToolContext.getModelConfigId(anyString())).thenReturn(null);
-        doReturn("{\"chart\": true}").when(llmClient).generateChartConfig(anyLong(), anyString(), anyString(), anyString());
+        doReturn("{\"chart\": true}").when(chartConfigGenerationClient).generateChartConfig(anyLong(), anyString(), anyString(), anyString());
 
-        ChartGeneratorTool tool = new ChartGeneratorTool(llmClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
+        ChartGeneratorTool tool = new ChartGeneratorTool(chartConfigGenerationClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
         String result = tool.generateChart(
                 "[{\"a\":1}]", "question", "session-1", toolCallParam
         );
@@ -108,18 +108,18 @@ class ChartGeneratorToolTest {
     }
 
     @Test
-    void generateChart_shouldReturnEmpty_whenLLMClientFails() {
+    void generateChart_shouldReturnEmpty_whenChartConfigGenerationClientFails() {
         RuntimeContext ctx = mock(RuntimeContext.class);
         when(ctx.get("model_config_id")).thenReturn(1L);
         when(toolCallParam.getRuntimeContext()).thenReturn(ctx);
         when(dataSummaryBuilder.build(any()))
                 .thenReturn("data description");
         when(sessionToolContext.getModelConfigId(anyString())).thenReturn(null);
-        doReturn("{\"chart\": true}").when(llmClient).generateChartConfig(anyLong(), anyString(), anyString(), anyString());
-        when(llmClient.generateChartConfig(anyLong(), anyString(), anyString(), anyString()))
+        doReturn("{\"chart\": true}").when(chartConfigGenerationClient).generateChartConfig(anyLong(), anyString(), anyString(), anyString());
+        when(chartConfigGenerationClient.generateChartConfig(anyLong(), anyString(), anyString(), anyString()))
                 .thenThrow(new RuntimeException("LLM failed"));
 
-        ChartGeneratorTool tool = new ChartGeneratorTool(llmClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
+        ChartGeneratorTool tool = new ChartGeneratorTool(chartConfigGenerationClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
         String result = tool.generateChart(
                 "[{\"a\":1}]", "question", "session-1", toolCallParam
         );
@@ -134,10 +134,10 @@ class ChartGeneratorToolTest {
         when(toolCallParam.getRuntimeContext()).thenReturn(ctx);
         when(sessionToolContext.getModelConfigId(anyString())).thenReturn(null);
         // When data is an empty JSON array, buildDataDescription returns "[]"
-        // and llmClient.generateChartConfig is called with "[]" as dataDescription
-        doReturn("{}").when(llmClient).generateChartConfig(anyLong(), anyString(), anyString(), anyString());
+        // and chartConfigGenerationClient.generateChartConfig is called with "[]" as dataDescription
+        doReturn("{}").when(chartConfigGenerationClient).generateChartConfig(anyLong(), anyString(), anyString(), anyString());
 
-        ChartGeneratorTool tool = new ChartGeneratorTool(llmClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
+        ChartGeneratorTool tool = new ChartGeneratorTool(chartConfigGenerationClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
         String result = tool.generateChart(
                 "[]", "question", "session-1", toolCallParam
         );
@@ -154,10 +154,10 @@ class ChartGeneratorToolTest {
         when(sessionToolContext.getModelConfigId(anyString())).thenReturn(null);
         // build 返回固定摘要；若前缀未被剥离，readValue 会走 catch 分支返回原始串，build 不会被调用
         when(dataSummaryBuilder.build(any())).thenReturn("PARSED_SUMMARY");
-        when(llmClient.generateChartConfig(1L, "PARSED_SUMMARY", "question", "session-1"))
+        when(chartConfigGenerationClient.generateChartConfig(1L, "PARSED_SUMMARY", "question", "session-1"))
                 .thenReturn("{\"chart\": true}");
 
-        ChartGeneratorTool tool = new ChartGeneratorTool(llmClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
+        ChartGeneratorTool tool = new ChartGeneratorTool(chartConfigGenerationClient, dataSummaryBuilder, new tools.jackson.databind.ObjectMapper(), sessionToolContext);
         String result = tool.generateChart(
                 "[DATA] 查询成功，共 1 行：\n[{\"a\":1}]", "question", "session-1", toolCallParam
         );

@@ -23,6 +23,7 @@ import com.linkroa.deepdataagent.datasource.domain.strategy.DatasourceConnection
 import com.linkroa.deepdataagent.datasource.domain.strategy.DatasourceConnectionStrategyFactory;
 import com.linkroa.deepdataagent.datasource.infrastructure.client.ApiPaginationHandler;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
+import com.linkroa.deepdataagent.shared.infrastructure.redis.port.SchemaCachePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -73,12 +74,15 @@ class DatasourceGatewayAdapterTest {
     @Mock
     private ColumnInfoRepository columnInfoRepository;
 
+    @Mock
+    private SchemaCachePort schemaCachePort;
+
     private DatasourceGatewayAdapter adapter;
 
     @BeforeEach
     void setUp() {
         adapter = new DatasourceGatewayAdapter(
-                repository, strategyFactory, apiSchemaRepository, apiFieldRepository, paginationHandler,
+                schemaCachePort, repository, strategyFactory, apiSchemaRepository, apiFieldRepository, paginationHandler,
                 databaseSchemaRepository, tableInfoRepository, columnInfoRepository
         );
     }
@@ -182,22 +186,40 @@ class DatasourceGatewayAdapterTest {
     // ==================== extractSchema (JDBC 类型 + 缓存/裁剪) ====================
 
     @Test
-    void should_returnCachedSchema_when_extractSchema_given_secondCallWithinTtl() {
-        // given - JDBC 数据源，首次提取成功
+    void should_returnCachedSchema_when_extractSchema_given_cacheHit() {
+        // given - Schema 缓存命中，直接返回缓存文本，不访问仓储与远程策略
+        Long connectionId = 10L;
+        when(schemaCachePort.get(connectionId)).thenReturn(Optional.of("cached-schema"));
+
+        // when
+        String result = adapter.extractSchema(connectionId);
+
+        // then
+        assertEquals("cached-schema", result);
+        verify(schemaCachePort).get(connectionId);
+        verify(repository, never()).findById(any());
+        verify(schemaCachePort, never()).put(any(), any());
+    }
+
+    @Test
+    void should_putSchemaCache_when_extractSchema_given_cacheMiss() {
+        // given - JDBC 数据源，首次提取（缓存未命中）
         Long connectionId = 10L;
         DatasourceConnection jdbcConnection = createJdbcConnection(connectionId, "jdbc-source");
+        when(schemaCachePort.get(connectionId)).thenReturn(Optional.empty());
         when(repository.findById(connectionId)).thenReturn(Optional.of(jdbcConnection));
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(strategy.extractSchemas(jdbcConnection)).thenReturn(List.of(createSchema("db")));
         when(strategy.extractTables(jdbcConnection, "db")).thenReturn(List.of(createTable("orders")));
         when(strategy.extractColumns(jdbcConnection, "db", "orders")).thenReturn(List.of(createColumn("order_id")));
 
-        // when - 连续两次调用
-        String first = adapter.extractSchema(connectionId);
-        String second = adapter.extractSchema(connectionId);
+        // when
+        String schema = adapter.extractSchema(connectionId);
 
-        // then - 第二次命中缓存，repository 与 strategy 仅被访问一次
-        assertEquals(first, second);
+        // then - 提取结果写入缓存
+        assertTrue(schema.contains("表: orders"));
+        verify(schemaCachePort).get(connectionId);
+        verify(schemaCachePort).put(eq(connectionId), contains("表: orders"));
         verify(repository, times(1)).findById(connectionId);
         verify(strategy, times(1)).extractSchemas(jdbcConnection);
     }

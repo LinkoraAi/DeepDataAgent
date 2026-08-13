@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * AgentSession 聚合根单元测试
- * <p>覆盖构造器、生命周期方法（close/archive）及状态判断逻辑。</p>
+ * <p>覆盖构造器、生命周期方法（close）及状态判断逻辑。</p>
  */
 class AgentSessionTest {
 
@@ -53,50 +53,28 @@ class AgentSessionTest {
     // ==================== close() ====================
 
     @Test
-    void should_changeStatusToClosed_when_close_given_activeSession() {
+    void should_changeStatusToDeleted_when_close_given_activeSession() {
         // when
         session.close();
-
-        // then
-        assertEquals(SessionStatus.CLOSED, session.getStatus());
-        assertNotNull(session.getUpdatedTime());
-    }
-
-    @Test
-    void should_notChangeStatus_when_close_given_alreadyClosedSession() {
-        // given
-        session.close();
-
-        // when
-        session.close();
-
-        // then
-        assertEquals(SessionStatus.CLOSED, session.getStatus());
-    }
-
-    @Test
-    void should_notChangeStatus_when_close_given_deletedSession() {
-        // given
-        session.archive();
-
-        // when
-        session.close();
-
-        // then
-        assertEquals(SessionStatus.DELETED, session.getStatus());
-    }
-
-    // ==================== archive() ====================
-
-    @Test
-    void should_markAsDeleted_when_archive() {
-        // when
-        session.archive();
 
         // then
         assertEquals(SessionStatus.DELETED, session.getStatus());
         assertEquals(1, session.getDeleted());
         assertNotNull(session.getUpdatedTime());
+    }
+
+    @Test
+    void should_throwException_when_close_given_alreadyDeletedSession() {
+        // given
+        session.close();
+
+        // when & then
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> session.close()
+        );
+        assertTrue(exception.getMessage().contains("已删除"));
+        assertEquals(SessionStatus.DELETED, session.getStatus());
     }
 
     // ==================== isClosed() ====================
@@ -108,18 +86,9 @@ class AgentSessionTest {
     }
 
     @Test
-    void should_returnTrue_when_isClosed_given_closedSession() {
+    void should_returnTrue_when_isClosed_given_deletedSession() {
         // given
         session.close();
-
-        // then
-        assertTrue(session.isClosed());
-    }
-
-    @Test
-    void should_returnTrue_when_isClosed_given_archivedSession() {
-        // given
-        session.archive();
 
         // then
         assertTrue(session.isClosed());
@@ -134,18 +103,9 @@ class AgentSessionTest {
     }
 
     @Test
-    void should_returnFalse_when_canStartDialogue_given_closedSession() {
+    void should_returnFalse_when_canStartDialogue_given_deletedSession() {
         // given
         session.close();
-
-        // then
-        assertFalse(session.canStartDialogue());
-    }
-
-    @Test
-    void should_returnFalse_when_canStartDialogue_given_archivedSession() {
-        // given
-        session.archive();
 
         // then
         assertFalse(session.canStartDialogue());
@@ -181,12 +141,12 @@ class AgentSessionTest {
     }
 
     @Test
-    void should_updateStatusAndTime_when_setStatus() {
+    void should_restoreStatusAndTime_when_restoreStatus() {
         // when
-        session.setStatus(SessionStatus.CLOSED);
+        session.restoreStatus(SessionStatus.DELETED);
 
         // then
-        assertEquals(SessionStatus.CLOSED, session.getStatus());
+        assertEquals(SessionStatus.DELETED, session.getStatus());
         assertNotNull(session.getUpdatedTime());
     }
 }

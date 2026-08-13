@@ -13,21 +13,21 @@
     <update id="updateColumnCustomComment">
         UPDATE column_info
         SET column_custom_comment = #{columnCustomComment},
-            updated_at = datetime('now')
+            updated_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
         WHERE id = #{id}
     </update>
 
     <update id="softDeleteByTableId">
         UPDATE column_info
         SET is_deleted = 1,
-            updated_at = datetime('now')
+            updated_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
         WHERE table_id = #{tableId}
     </update>
 
     <update id="softDeleteById">
         UPDATE column_info
         SET is_deleted = 1,
-            updated_at = datetime('now')
+            updated_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
         WHERE id = #{id}
     </update>
 

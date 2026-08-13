@@ -11,13 +11,13 @@ import com.linkroa.deepdataagent.agent.application.dto.SessionListItemDTO;
 import com.linkroa.deepdataagent.agent.domain.model.AgentSession;
 import com.linkroa.deepdataagent.agent.domain.model.Dialogue;
 import com.linkroa.deepdataagent.agent.domain.model.DialogueMessage;
-import com.linkroa.deepdataagent.agent.domain.repository.AgentModelInfoRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentSessionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.DialogueRepository;
+import com.linkroa.deepdataagent.agent.domain.repository.ModelConfigRepository;
 import com.linkroa.deepdataagent.agent.domain.valueobject.MessageRole;
 import com.linkroa.deepdataagent.agent.domain.valueobject.SessionStatus;
-import com.linkroa.deepdataagent.agent.infrastructure.agent.HarnessAgentFactory;
 import com.linkroa.deepdataagent.agent.infrastructure.config.SessionProperties;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -41,26 +41,23 @@ public class SessionApplicationService {
     private static final int DEFAULT_ROUND_LIMIT = 5;
 
     private final AgentSessionRepository sessionRepository;
-    private final AgentModelInfoRepository modelInfoRepository;
+    private final ModelConfigRepository modelInfoRepository;
     private final DialogueRepository dialogueRepository;
     private final SessionProperties sessionProperties;
     private final DatasourceGateway datasourceGateway;
-    private final HarnessAgentFactory agentFactory;
     private final RunningAnalysisRegistry runningAnalysisRegistry;
 
     public SessionApplicationService(AgentSessionRepository sessionRepository,
-                                     AgentModelInfoRepository modelInfoRepository,
+                                     ModelConfigRepository modelInfoRepository,
                                      DialogueRepository dialogueRepository,
                                      SessionProperties sessionProperties,
                                      DatasourceGateway datasourceGateway,
-                                     HarnessAgentFactory agentFactory,
                                      RunningAnalysisRegistry runningAnalysisRegistry) {
         this.sessionRepository = sessionRepository;
         this.modelInfoRepository = modelInfoRepository;
         this.dialogueRepository = dialogueRepository;
         this.sessionProperties = sessionProperties;
         this.datasourceGateway = datasourceGateway;
-        this.agentFactory = agentFactory;
         this.runningAnalysisRegistry = runningAnalysisRegistry;
     }
 
@@ -70,10 +67,10 @@ public class SessionApplicationService {
      * @param userId         用户 ID
      * @param datasourceId   数据源 ID
      * @param modelConfigId  模型配置 ID
-     * @param userQuestion   用户问题（用于生成即时标题）
+     * @param text           用户问题（用于生成即时标题）
      * @return 会话 DTO
      */
-    public SessionDTO createSession(Long userId, Long datasourceId, Long modelConfigId, String userQuestion) {
+    public SessionDTO createSession(Long userId, Long datasourceId, Long modelConfigId, String text) {
         // 校验数据源是否存在
         datasourceGateway.findDatasource(datasourceId)
                 .orElseThrow(() -> new IllegalArgumentException("数据源不存在: " + datasourceId));
@@ -89,7 +86,7 @@ public class SessionApplicationService {
         }
 
         String sessionId = "session-" + UUID.randomUUID().toString();
-        String title = generateInstantTitle(userQuestion);
+        String title = generateInstantTitle(text);
 
         AgentSession session = new AgentSession(sessionId, title, userId, datasourceId,
                 modelConfigId, SessionStatus.ACTIVE);
@@ -134,7 +131,9 @@ public class SessionApplicationService {
     }
 
     /**
-     * 关闭会话
+     * 关闭（删除）会话
+     * <p>软删除会话：状态置为 DELETED 并标记逻辑删除。
+     * 已删除会话再次关闭会抛出 {@link IllegalStateException}（由 {@link AgentSession#close()} 内置守卫触发）。</p>
      *
      * @param sessionId 会话 ID
      */
@@ -142,21 +141,35 @@ public class SessionApplicationService {
         AgentSession session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("会话不存在: " + sessionId));
 
-        if (session.isClosed()) {
-            throw new IllegalStateException("会话已关闭");
-        }
-
         session.close();
-        sessionRepository.updateStatus(sessionId, session.getStatus());
-        agentFactory.evictSession(sessionId);
-        log.info("SessionApplicationService: closed session={}", sessionId);
+        sessionRepository.softDelete(sessionId);
+        log.info("SessionApplicationService: deleted session={}", sessionId);
+    }
+
+    /**
+     * 更新会话标题
+     *
+     * @param sessionId 会话 ID
+     * @param title     新标题
+     */
+    public void updateSessionTitle(String sessionId, String title) {
+        if (StringUtils.isBlank(title)) {
+            throw new IllegalArgumentException("标题不能为空");
+        }
+        AgentSession session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在: " + sessionId));
+        if (session.isClosed()) {
+            throw new IllegalStateException("会话已删除，无法更新标题");
+        }
+        sessionRepository.updateTitle(sessionId, title.trim());
+        log.info("SessionApplicationService: updated title of session={}", sessionId);
     }
 
     /**
      * 获取会话消息列表
      * <p>以对话轮次为分页单元游标加载：不传 beforeDialogueId 时返回最新 limit 轮，
      * 传入时返回 id 更小的更早 limit 轮；每轮消息全量返回，保证轮次完整。
-     * 输出按 (dialogueId ASC, sequenceNumber ASC) 升序排列。</p>
+     * 输出按 (dialogueId ASC, messageNumber ASC) 升序排列。</p>
      *
      * @param sessionId        会话 ID
      * @param limit            轮次数（可选，默认 5）
@@ -187,16 +200,16 @@ public class SessionApplicationService {
                     .map(msg -> new MessageWithDialogue(dialogueId, msg))
                     .forEach(allMessages::add);
         }
-        // 先按 dialogueId 排序（auto-increment 主键反映创建顺序），再按 sequenceNumber 排序
+        // 先按 dialogueId 排序（auto-increment 主键反映创建顺序），再按 messageNumber 排序
         // 确保多轮对话中"用户提问→Agent回复"的配对顺序正确，
-        // 而非所有对话的 seq=1 排在一起、seq=2 排在一起
+        // 而非所有对话的 messageNumber=1 排在一起、messageNumber=2 排在一起
         allMessages.sort((a, b) -> {
             int cmp = a.dialogueId().compareTo(b.dialogueId());
             if (cmp != 0) {
                 return cmp;
             }
-            Long seqA = a.message().getSequenceNumber() != null ? a.message().getSequenceNumber() : 0L;
-            Long seqB = b.message().getSequenceNumber() != null ? b.message().getSequenceNumber() : 0L;
+            Long seqA = a.message().getMessageNumber() != null ? a.message().getMessageNumber() : 0L;
+            Long seqB = b.message().getMessageNumber() != null ? b.message().getMessageNumber() : 0L;
             return seqA.compareTo(seqB);
         });
 
@@ -218,14 +231,14 @@ public class SessionApplicationService {
     /**
      * 根据用户问题生成即时降级标题
      *
-     * @param userQuestion 用户问题
+     * @param text 用户问题
      * @return 标题
      */
-    private String generateInstantTitle(String userQuestion) {
-        if (userQuestion == null || userQuestion.isBlank()) {
+    private String generateInstantTitle(String text) {
+        if (text == null || text.isBlank()) {
             return DEFAULT_TITLE;
         }
-        String trimmed = userQuestion.trim();
+        String trimmed = text.trim();
         if (trimmed.length() <= 15) {
             return trimmed;
         }

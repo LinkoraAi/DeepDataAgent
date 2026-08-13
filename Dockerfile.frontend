@@ -2,8 +2,8 @@ FROM node:24.14.1-alpine AS build
 
 WORKDIR /workspace
 
-COPY core/core-frontend/package.json ./
-RUN npm install
+COPY core/core-frontend/package.json core/core-frontend/package-lock.json ./
+RUN npm ci
 
 COPY core/core-frontend/ ./
 RUN npm run build

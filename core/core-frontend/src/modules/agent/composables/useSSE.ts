@@ -210,7 +210,7 @@ export function useSSE() {
     if (['AGENT_START', 'AGENT_END', 'ERROR', 'EXCEED_MAX_ITERS', 'AGENT_RESULT'].includes(event.type)) {
       console.log('[SSE][diag] store:', {
         type: event.type,
-        rounds: analysisStore.state.rounds.length,
+        contentItems: analysisStore.state.contentItems.length,
         report: analysisStore.state.analysisReport ? 'yes' : 'no',
         isAnalyzing: analysisStore.state.isAnalyzing,
         analysisSessionId: analysisStore.analysisSessionId,

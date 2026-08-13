@@ -58,12 +58,7 @@ const currentAnalysisMessage = computed<ChatMessage | null>(() => {
     content: '',
     timestamp: Date.now(),
     analysisState: {
-      rounds: analysisStore.state.rounds.map(round => ({
-        ...round,
-        thinking: { ...round.thinking },
-        toolCalls: round.toolCalls.map(t => ({ ...t })),
-      })),
-      isTimelineExpanded: analysisStore.state.isTimelineExpanded,
+      contentItems: analysisStore.state.contentItems.map(item => ({ ...item })),
       searchResults: [...(analysisStore.state.searchResults || [])],
       currentSQL: analysisStore.state.currentSQL,
       queryData: [...analysisStore.state.queryData],
@@ -226,7 +221,7 @@ function handleRetry() {
 watch(
   () => [
     sessionStore.chatMessages.length,
-    analysisStore.state.rounds.length,
+    analysisStore.state.contentItems.length,
     analysisStore.state.isAnalyzing,
     analysisStore.state.analysisReport,
     analysisStore.state.queryData.length,
@@ -239,11 +234,12 @@ watch(
   }
 );
 
-// 监听当前轮次思考内容变化自动滚动（高频事件，单独处理）
+// 监听内容流最后一项内容变化自动滚动（高频事件，单独处理）
 watch(
   () => {
-    const current = analysisStore.state.rounds.find(r => r.id === analysisStore.state.currentRoundId);
-    return current?.thinking.content.length ?? 0;
+    const items = analysisStore.state.contentItems;
+    const last = items[items.length - 1];
+    return last ? `${last.id}:${last.content?.length ?? last.input?.length ?? last.result?.length ?? 0}` : 0;
   },
   () => {
     if (shouldAutoScroll.value) {

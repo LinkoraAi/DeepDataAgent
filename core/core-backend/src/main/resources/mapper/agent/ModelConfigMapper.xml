@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper.ModelConfigMapper">
+
+    <select id="selectAllEnabled" resultType="com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.ModelConfigEntity">
+        SELECT *
+        FROM model_config
+        WHERE is_enabled = 1 AND is_deleted = 0
+        ORDER BY created_time ASC
+    </select>
+
+    <select id="selectDefault" resultType="com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.ModelConfigEntity">
+        SELECT *
+        FROM model_config
+        WHERE is_default = 1 AND is_enabled = 1 AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="selectByProviderName" resultType="com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.ModelConfigEntity">
+        SELECT *
+        FROM model_config
+        WHERE provider_name = #{providerName} AND is_deleted = 0
+        ORDER BY sort_order ASC
+    </select>
+
+    <select id="selectProviders" resultType="com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.ModelConfigEntity">
+        SELECT *
+        FROM model_config
+        WHERE is_deleted = 0
+        ORDER BY created_time ASC, id ASC
+    </select>
+
+    <update id="markDeleted">
+        UPDATE model_config
+        SET is_deleted = 1,
+            updated_time = datetime('now')
+        WHERE id = #{id}
+    </update>
+
+</mapper>

@@ -24,7 +24,6 @@ public class ChatModelFactoryRegistry {
     public ChatModelFactoryRegistry(List<ChatModelFactory> factories) {
         for (ChatModelFactory factory : factories) {
             factoryMap.put(factory.getProviderName().toLowerCase(), factory);
-            log.debug("ChatModelFactoryRegistry: registered factory for provider '{}'", factory.getProviderName());
         }
         log.info("ChatModelFactoryRegistry: registered {} ChatModel factories", factories.size());
     }

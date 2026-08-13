@@ -9,6 +9,7 @@ import com.linkroa.deepdataagent.agent.controller.request.CreateSessionRequest;
 import com.linkroa.deepdataagent.agent.controller.request.GetMessagesRequest;
 import com.linkroa.deepdataagent.agent.controller.request.GetSessionRequest;
 import com.linkroa.deepdataagent.agent.controller.request.ListSessionsRequest;
+import com.linkroa.deepdataagent.agent.controller.request.UpdateSessionRequest;
 import com.linkroa.deepdataagent.agent.controller.response.MessageResponse;
 import com.linkroa.deepdataagent.agent.controller.response.SessionListItem;
 import com.linkroa.deepdataagent.agent.controller.response.SessionResponse;
@@ -25,7 +26,7 @@ import java.util.List;
  * <p>控制器负责将应用层 DTO 转换为控制器层响应对象。</p>
  */
 @RestController
-@RequestMapping("/agent/sessions")
+@RequestMapping("/api/agent/sessions")
 public class SessionController {
 
     private final SessionApplicationService sessionApplicationService;
@@ -90,6 +91,21 @@ public class SessionController {
     }
 
     /**
+     * 更新会话标题
+     */
+    @PostMapping("/update")
+    public ApiResponse<Void> updateSession(@Valid @RequestBody UpdateSessionRequest request) {
+        try {
+            sessionApplicationService.updateSessionTitle(request.sessionId(), request.title());
+            return ApiResponse.success(null);
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.error("404", e.getMessage());
+        } catch (IllegalStateException e) {
+            return ApiResponse.error("400", e.getMessage());
+        }
+    }
+
+    /**
      * 获取会话消息列表
      * <p>limit 为轮次数（可选，默认 5），beforeDialogueId 为轮次游标（可选，null 表示取最新轮次）。</p>
      */
@@ -127,7 +143,7 @@ public class SessionController {
      */
     private MessageResponse toMessageResponse(MessageDTO dto) {
         return new MessageResponse(
-                dto.id(), dto.sessionId(), dto.dialogueId(), dto.role(), dto.content(),
-                dto.toolCalls(), dto.toolResult(), dto.createdAt());
+                dto.id(), dto.sessionId(), dto.dialogueId(), dto.role(), dto.type(), dto.content(),
+                dto.toolCalls(), dto.toolResult(), dto.toolCallId(), dto.createdAt(), dto.status());
     }
 }

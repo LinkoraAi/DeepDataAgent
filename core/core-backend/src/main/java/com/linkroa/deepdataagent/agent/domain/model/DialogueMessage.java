@@ -13,7 +13,8 @@ import java.time.LocalDateTime;
  */
 public class DialogueMessage {
 
-    private Long sequenceNumber;
+    /** 轮次内消息序号（用户消息=1，Agent 侧从 2 递增） */
+    private Long messageNumber;
     private MessageRole role;
     private MessageType messageType;
     private DialogueContent content;
@@ -24,10 +25,10 @@ public class DialogueMessage {
     public DialogueMessage() {
     }
 
-    public DialogueMessage(Long sequenceNumber, MessageRole role, MessageType messageType,
+    public DialogueMessage(Long messageNumber, MessageRole role, MessageType messageType,
                            DialogueContent content, MessageStatus status,
                            LocalDateTime startTime, LocalDateTime endTime) {
-        this.sequenceNumber = sequenceNumber;
+        this.messageNumber = messageNumber;
         this.role = role;
         this.messageType = messageType;
         this.content = content;
@@ -50,12 +51,12 @@ public class DialogueMessage {
                 LocalDateTime.now(), null);
     }
 
-    public Long getSequenceNumber() {
-        return sequenceNumber;
+    public Long getMessageNumber() {
+        return messageNumber;
     }
 
-    public void setSequenceNumber(Long sequenceNumber) {
-        this.sequenceNumber = sequenceNumber;
+    public void setMessageNumber(Long messageNumber) {
+        this.messageNumber = messageNumber;
     }
 
     public MessageRole getRole() {

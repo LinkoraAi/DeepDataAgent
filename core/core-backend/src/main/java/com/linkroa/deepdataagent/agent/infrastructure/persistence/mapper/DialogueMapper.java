@@ -4,13 +4,12 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.DialogueEntity;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
-import org.apache.ibatis.annotations.Select;
-import org.apache.ibatis.annotations.Update;
 
 import java.util.List;
 
 /**
  * 对话轮次 Mapper
+ * <p>SQL 定义见 DialogueMapper.xml。</p>
  */
 @Mapper
 public interface DialogueMapper extends BaseMapper<DialogueEntity> {
@@ -31,21 +30,56 @@ public interface DialogueMapper extends BaseMapper<DialogueEntity> {
 
     List<DialogueEntity> selectRunning();
 
-    @Select("SELECT messages FROM dialogue WHERE id = #{id}")
+    /**
+     * 查询对话的 messages 原始 JSON 字符串
+     *
+     * @param id 对话 ID
+     * @return messages 列内容
+     */
     String selectMessages(@Param("id") Long id);
 
-    @Update("UPDATE dialogue SET messages = #{messages} WHERE id = #{id}")
+    /**
+     * 更新对话的 messages 内容
+     *
+     * @param id       对话 ID
+     * @param messages 新 messages JSON 字符串
+     * @return 影响行数
+     */
     int updateMessages(@Param("id") Long id, @Param("messages") String messages);
 
-    @Update("UPDATE dialogue SET status = #{status}, messages = #{messages}, end_time = datetime('now') WHERE id = #{id}")
+    /**
+     * 更新对话的 messages 与状态（同时写入结束时间）
+     *
+     * @param id       对话 ID
+     * @param messages 新 messages JSON 字符串
+     * @param status   新状态
+     * @return 影响行数
+     */
     int updateMessagesAndStatus(@Param("id") Long id, @Param("messages") String messages, @Param("status") String status);
 
-    @Update("UPDATE dialogue SET status = #{status}, end_time = datetime('now') WHERE id = #{id}")
+    /**
+     * 更新对话状态（同时写入结束时间）
+     *
+     * @param id     对话 ID
+     * @param status 新状态
+     * @return 影响行数
+     */
     int updateStatus(@Param("id") Long id, @Param("status") String status);
 
-    @Update("UPDATE dialogue SET status = #{status}, metadata = #{metadata}, end_time = datetime('now') WHERE id = #{id}")
+    /**
+     * 更新对话状态与 metadata（同时写入结束时间）
+     *
+     * @param id       对话 ID
+     * @param status   新状态
+     * @param metadata 新 metadata JSON 字符串
+     * @return 影响行数
+     */
     int updateStatusAndMetadata(@Param("id") Long id, @Param("status") String status, @Param("metadata") String metadata);
 
-    @Update("UPDATE dialogue SET status = 'FAILED', end_time = datetime('now') WHERE status = 'RUNNING' AND is_deleted = 0")
+    /**
+     * 将全部运行中对话标记为失败（启动清理用）
+     *
+     * @return 影响行数
+     */
     int markAllRunningAsFailed();
 }

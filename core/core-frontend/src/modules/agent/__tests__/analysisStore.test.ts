@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useAnalysisStore } from '../stores/analysis';
 
-describe('AnalysisStore - ReAct 轮次模型', () => {
+/**
+ * AnalysisStore - 统一内容流模型测试
+ * <p>验证基于有序 contentItems 的内容流操作：思考/工具调用/报告按接收时序追加、
+ * 进行中状态收敛、快照导出与导入（contentSeq 续接）。</p>
+ */
+describe('AnalysisStore - 统一内容流模型', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
   });
@@ -14,346 +19,322 @@ describe('AnalysisStore - ReAct 轮次模型', () => {
 
       expect(store.state.isAnalyzing).toBe(true);
       expect(store.state.analysisStartTime).not.toBeNull();
-      expect(store.state.rounds).toEqual([]);
-      expect(store.state.currentRoundId).toBeNull();
+      expect(store.state.contentItems).toEqual([]);
+      expect(store.state.contentSeq).toBe(0);
     });
 
-    it('completeAnalysis 应设置 isAnalyzing=false、记录结束时间、清理 currentRoundId', () => {
+    it('completeAnalysis 应设置 isAnalyzing=false、记录结束时间并收敛进行中项', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
-      store.appendThinkingToCurrentRound('思考内容');
-      store.finalizeCurrentRoundThinking();
+      store.appendThinkingDelta('思考内容');
+      store.appendReportDelta('报告内容');
 
       store.completeAnalysis();
 
       expect(store.state.isAnalyzing).toBe(false);
       expect(store.state.analysisEndTime).not.toBeNull();
-      expect(store.state.currentRoundId).toBeNull();
-    });
-
-    it('completeAnalysis 应将所有轮次标记为 isActive=false、isCollapsed=true', () => {
-      const store = useAnalysisStore();
-      store.startAnalysis();
-      store.appendThinkingToCurrentRound('思考1');
-      store.finalizeCurrentRoundThinking();
-
-      store.completeAnalysis();
-
-      for (const round of store.state.rounds) {
-        expect(round.isActive).toBe(false);
-        expect(round.isCollapsed).toBe(true);
+      for (const item of store.state.contentItems) {
+        expect(item.status).toBe('completed');
+        expect(item.endTime).toBeDefined();
       }
     });
 
     it('reset 应清空所有状态', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
-      store.appendThinkingToCurrentRound('思考');
+      store.appendThinkingDelta('思考');
 
       store.reset();
 
-      expect(store.state.rounds).toEqual([]);
-      expect(store.state.currentRoundId).toBeNull();
+      expect(store.state.contentItems).toEqual([]);
+      expect(store.state.contentSeq).toBe(0);
       expect(store.state.isAnalyzing).toBe(false);
       expect(store.state.analysisReport).toBeNull();
     });
   });
 
-  describe('轮次管理 - startNewRound', () => {
-    it('应创建新轮次并设为 currentRoundId', () => {
+  describe('内容项追加 - pushContentItem/findInProgressItem', () => {
+    it('pushContentItem 应创建内容项并自增 seq', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
 
-      const round = store.startNewRound();
+      const item = store.pushContentItem('thinking', 'in_progress', { content: '' });
+      const item2 = store.pushContentItem('tool_call', 'in_progress', { toolName: 'test_tool' });
 
-      expect(store.state.rounds).toHaveLength(1);
-      expect(round.id).toBe(store.state.currentRoundId);
-      expect(round.thinking.isStreaming).toBe(true);
-      expect(round.thinking.content).toBe('');
-      expect(round.toolCalls).toEqual([]);
-      expect(round.isActive).toBe(true);
+      expect(store.state.contentItems).toHaveLength(2);
+      expect(item.seq).toBe(0);
+      expect(item2.seq).toBe(1);
+      expect(store.state.contentSeq).toBe(2);
     });
 
-    it('已有 active 轮次时再 startNewRound 应强制结束旧轮次', () => {
+    it('findInProgressItem 应返回最后一个进行中指定类型项', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
-      const round1 = store.startNewRound();
-      store.appendThinkingToCurrentRound('思考1');
+      store.appendThinkingDelta('第一段');
+      store.completeThinking();
+      store.appendThinkingDelta('第二段');
 
-      // 旧轮次仍有 active 工具时开启新轮次
-      store.addToolCallToCurrentRound('test_tool');
-      const round2 = store.startNewRound();
+      const item = store.findInProgressItem('thinking');
 
-      expect(store.state.rounds).toHaveLength(2);
-      expect(round1.id).not.toBe(round2.id);
-      expect(round1.isActive).toBe(false); // 旧轮次被强制结束
-      expect(round1.endTime).toBeDefined();
-      expect(store.state.currentRoundId).toBe(round2.id);
+      expect(item).toBeDefined();
+      expect(item!.content).toBe('第二段');
+    });
+
+    it('无进行中指定类型项时 findInProgressItem 返回 undefined', () => {
+      const store = useAnalysisStore();
+      store.startAnalysis();
+      store.appendThinkingDelta('第一段');
+      store.completeThinking();
+
+      expect(store.findInProgressItem('thinking')).toBeUndefined();
     });
   });
 
-  describe('轮次管理 - appendThinkingToCurrentRound', () => {
-    it('无当前轮次时应自动创建新轮次', () => {
+  describe('思考内容 - appendThinkingDelta/completeThinking', () => {
+    it('无进行中思考项时自动创建并追加', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
 
-      store.appendThinkingToCurrentRound('第一次思考');
+      store.appendThinkingDelta('第一次思考');
 
-      expect(store.state.rounds).toHaveLength(1);
-      expect(store.state.rounds[0].thinking.content).toBe('第一次思考');
-      expect(store.state.rounds[0].thinking.isStreaming).toBe(true);
+      expect(store.state.contentItems).toHaveLength(1);
+      expect(store.state.contentItems[0].type).toBe('thinking');
+      expect(store.state.contentItems[0].status).toBe('in_progress');
+      expect(store.state.contentItems[0].content).toBe('第一次思考');
     });
 
-    it('当前轮次思考流式中应追加到 content', () => {
+    it('有进行中思考项时原地追加', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
-      store.appendThinkingToCurrentRound('第一段');
+      store.appendThinkingDelta('第一段');
 
-      store.appendThinkingToCurrentRound('第二段');
+      store.appendThinkingDelta('第二段');
 
-      expect(store.state.rounds).toHaveLength(1);
-      expect(store.state.rounds[0].thinking.content).toBe('第一段第二段');
-    });
-
-    it('当前轮次思考已结束时再追加应创建新轮次', () => {
-      const store = useAnalysisStore();
-      store.startAnalysis();
-      store.appendThinkingToCurrentRound('第一轮思考');
-      store.finalizeCurrentRoundThinking();
-
-      store.appendThinkingToCurrentRound('第二轮思考');
-
-      expect(store.state.rounds).toHaveLength(2);
-      expect(store.state.rounds[1].thinking.content).toBe('第二轮思考');
+      expect(store.state.contentItems).toHaveLength(1);
+      expect(store.state.contentItems[0].content).toBe('第一段第二段');
     });
 
     it('空 delta 应被忽略', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
 
-      store.appendThinkingToCurrentRound('');
+      store.appendThinkingDelta('');
 
-      expect(store.state.rounds).toHaveLength(0);
+      expect(store.state.contentItems).toHaveLength(0);
+    });
+
+    it('completeThinking 应收敛进行中思考项为 completed 并记录 endTime', () => {
+      const store = useAnalysisStore();
+      store.startAnalysis();
+      store.appendThinkingDelta('思考');
+
+      store.completeThinking();
+
+      const item = store.state.contentItems[0];
+      expect(item.status).toBe('completed');
+      expect(item.endTime).toBeDefined();
     });
   });
 
-  describe('轮次管理 - finalizeCurrentRoundThinking', () => {
-    it('应标记当前轮次思考为完成，保留 currentRoundId', () => {
+  describe('工具调用与结果 - addToolCallItem/appendToolInput/appendToolResult/completeToolCall/completeToolResult', () => {
+    it('addToolCallItem 应创建进行中工具调用项', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
-      store.appendThinkingToCurrentRound('思考');
-      const roundId = store.state.currentRoundId;
 
-      store.finalizeCurrentRoundThinking();
+      store.addToolCallItem('retrieve_schema', '{"datasource": 1}');
 
-      expect(store.state.rounds[0].thinking.isStreaming).toBe(false);
-      expect(store.state.rounds[0].isActive).toBe(false); // 无 running 工具，isActive 变 false
-      expect(store.state.currentRoundId).toBe(roundId); // 保留等待工具
+      const item = store.state.contentItems[0];
+      expect(item.type).toBe('tool_call');
+      expect(item.toolName).toBe('retrieve_schema');
+      expect(item.input).toBe('{"datasource": 1}');
+      expect(item.status).toBe('in_progress');
+    });
+
+    it('appendToolInput 应实时追加到进行中工具项', () => {
+      const store = useAnalysisStore();
+      store.startAnalysis();
+      store.addToolCallItem('generate_sql');
+
+      store.appendToolInput('{"sql":"SEL');
+      store.appendToolInput('ECT 1"}');
+
+      expect(store.state.contentItems[0].input).toBe('{"sql":"SELECT 1"}');
+    });
+
+    it('appendToolResult 应惰性创建独立结果项并实时追加结果（与调用项拆分）', () => {
+      const store = useAnalysisStore();
+      store.startAnalysis();
+      store.addToolCallItem('execute_sql', undefined, 'tc-1');
+
+      store.appendToolResult('{"data":[', 'tc-1');
+      store.appendToolResult('1]}', 'tc-1');
+
+      // 工具调用项与工具结果项为两个独立内容项，结果仅写入结果项
+      expect(store.state.contentItems).toHaveLength(2);
+      expect(store.state.contentItems[0].type).toBe('tool_call');
+      expect(store.state.contentItems[0].result).toBeUndefined();
+      const resultItem = store.state.contentItems[1];
+      expect(resultItem.type).toBe('tool_result');
+      expect(resultItem.toolName).toBe('execute_sql'); // 工具名继承自同 toolCallId 调用项
+      expect(resultItem.result).toBe('{"data":[1]}');
+    });
+
+    it('completeToolCall 成功时收敛为 completed（不写入结果）', () => {
+      const store = useAnalysisStore();
+      store.startAnalysis();
+      store.addToolCallItem('execute_sql');
+
+      store.completeToolCall(true);
+
+      const item = store.state.contentItems[0];
+      expect(item.status).toBe('completed');
+      expect(item.result).toBeUndefined();
+      expect(item.endTime).toBeDefined();
+    });
+
+    it('completeToolCall 失败时收敛为 failed', () => {
+      const store = useAnalysisStore();
+      store.startAnalysis();
+      store.addToolCallItem('execute_sql');
+
+      store.completeToolCall(false);
+
+      expect(store.state.contentItems[0].status).toBe('failed');
+    });
+
+    it('completeToolResult 应收敛进行中结果项并写入完整结果', () => {
+      const store = useAnalysisStore();
+      store.startAnalysis();
+      store.addToolCallItem('execute_sql', undefined, 'tc-1');
+      store.appendToolResult('部分', 'tc-1');
+
+      store.completeToolResult('完整结果', true);
+
+      const item = store.state.contentItems[1];
+      expect(item.type).toBe('tool_result');
+      expect(item.status).toBe('completed');
+      expect(item.result).toBe('完整结果');
+      expect(item.endTime).toBeDefined();
+    });
+
+    it('completeToolResult 失败时收敛为 failed 并保留实时累积内容', () => {
+      const store = useAnalysisStore();
+      store.startAnalysis();
+      store.addToolCallItem('execute_sql', undefined, 'tc-1');
+      store.appendToolResult('结果', 'tc-1');
+
+      store.completeToolResult(undefined, false);
+
+      const item = store.state.contentItems[1];
+      expect(item.type).toBe('tool_result');
+      expect(item.status).toBe('failed');
+      expect(item.result).toBe('结果');
     });
   });
 
-  describe('轮次管理 - addToolCallToCurrentRound', () => {
-    it('应在当前轮次新增 running 工具', () => {
+  describe('报告内容 - appendReportDelta/completeReport', () => {
+    it('appendReportDelta 应创建报告项并同步 analysisReport', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
-      store.appendThinkingToCurrentRound('思考');
-      store.finalizeCurrentRoundThinking();
 
-      store.addToolCallToCurrentRound('retrieve_schema', '{"datasource": 1}');
+      store.appendReportDelta('第一段');
 
-      expect(store.state.rounds[0].toolCalls).toHaveLength(1);
-      expect(store.state.rounds[0].toolCalls[0].toolName).toBe('retrieve_schema');
-      expect(store.state.rounds[0].toolCalls[0].status).toBe('running');
-      expect(store.state.rounds[0].isActive).toBe(true); // 有 running 工具
+      expect(store.state.contentItems).toHaveLength(1);
+      expect(store.state.contentItems[0].type).toBe('report');
+      expect(store.state.contentItems[0].content).toBe('第一段');
+      expect(store.state.analysisReport).toBe('第一段');
     });
 
-    it('无当前轮次时应创建空 thinking 兜底轮次', () => {
+    it('appendReportDelta 连续追加应累积内容', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
+      store.appendReportDelta('第一段');
 
-      store.addToolCallToCurrentRound('test_tool');
+      store.appendReportDelta('第二段');
 
-      expect(store.state.rounds).toHaveLength(1);
-      expect(store.state.rounds[0].thinking.content).toBe('');
-      expect(store.state.rounds[0].thinking.isStreaming).toBe(false); // 兜底轮次非流式
-      expect(store.state.rounds[0].toolCalls).toHaveLength(1);
+      expect(store.state.contentItems[0].content).toBe('第一段第二段');
+      expect(store.state.analysisReport).toBe('第一段第二段');
     });
 
-    it('重复同名 running 工具（input 为空）应更新 input 而非新增', () => {
+    it('completeReport 应使用权威最终文本覆盖流式内容', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
-      store.appendThinkingToCurrentRound('思考');
-      store.addToolCallToCurrentRound('test_tool'); // 无 input
+      store.appendReportDelta('流式内容');
 
-      store.addToolCallToCurrentRound('test_tool', '{"param": 1}');
+      store.completeReport('权威全文');
 
-      expect(store.state.rounds[0].toolCalls).toHaveLength(1);
-      expect(store.state.rounds[0].toolCalls[0].input).toBe('{"param": 1}');
-    });
-  });
-
-  describe('轮次管理 - updateToolCallInCurrentRound', () => {
-    it('应更新当前轮次最后一个同名 running 工具的状态', () => {
-      const store = useAnalysisStore();
-      store.startAnalysis();
-      store.appendThinkingToCurrentRound('思考');
-      // 模拟真实 SSE 流程：thinking_end 后再调用工具
-      store.finalizeCurrentRoundThinking();
-      store.addToolCallToCurrentRound('retrieve_schema', '{}');
-
-      store.updateToolCallInCurrentRound('retrieve_schema', '表结构结果', true);
-
-      const tool = store.state.rounds[0].toolCalls[0];
-      expect(tool.status).toBe('success');
-      expect(tool.result).toBe('表结构结果');
-      expect(tool.endTime).toBeDefined();
-      // 思考已结束且无 running 工具，轮次应处于非激活状态
-      expect(store.state.rounds[0].isActive).toBe(false);
+      const item = store.state.contentItems[0];
+      expect(item.status).toBe('completed');
+      expect(item.content).toBe('权威全文');
+      expect(store.state.analysisReport).toBe('权威全文');
     });
 
-    it('失败结果应将 status 设为 error', () => {
-      const store = useAnalysisStore();
-      store.startAnalysis();
-      store.appendThinkingToCurrentRound('思考');
-      store.addToolCallToCurrentRound('test_tool');
-
-      store.updateToolCallInCurrentRound('test_tool', '执行失败', false);
-
-      expect(store.state.rounds[0].toolCalls[0].status).toBe('error');
-    });
-
-    it('无当前轮次时应安全返回不报错', () => {
+    it('无进行中报告项但携带最终文本时应兜底创建完成态报告项', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
 
-      expect(() => {
-        store.updateToolCallInCurrentRound('test_tool', '结果');
-      }).not.toThrow();
+      store.completeReport('兜底全文');
+
+      expect(store.state.contentItems).toHaveLength(1);
+      expect(store.state.contentItems[0].status).toBe('completed');
+      expect(store.state.contentItems[0].content).toBe('兜底全文');
     });
   });
 
-  describe('轮次管理 - forceCompleteCurrentRound', () => {
-    it('应标记 endTime 并清空 currentRoundId', () => {
-      const store = useAnalysisStore();
-      store.startAnalysis();
-      store.appendThinkingToCurrentRound('思考');
-      store.addToolCallToCurrentRound('running_tool');
-
-      store.forceCompleteCurrentRound();
-
-      expect(store.state.rounds[0].endTime).toBeDefined();
-      expect(store.state.rounds[0].isActive).toBe(false);
-      expect(store.state.currentRoundId).toBeNull();
-    });
-
-    it('不修改内部工具状态（保留 running 作为历史记录）', () => {
-      const store = useAnalysisStore();
-      store.startAnalysis();
-      store.appendThinkingToCurrentRound('思考');
-      store.addToolCallToCurrentRound('running_tool');
-
-      store.forceCompleteCurrentRound();
-
-      expect(store.state.rounds[0].toolCalls[0].status).toBe('running');
-    });
-  });
-
-  describe('跨轮次场景', () => {
-    it('完整 ReAct 流程：思考→工具→思考→工具→完成', () => {
+  describe('完整事件流场景', () => {
+    it('思考→工具调用→工具结果→思考→报告 按事件顺序生成有序内容流', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
 
-      // 第一轮
-      store.appendThinkingToCurrentRound('需要查询数据');
-      store.finalizeCurrentRoundThinking();
-      store.addToolCallToCurrentRound('retrieve_schema', '{}');
-      store.updateToolCallInCurrentRound('retrieve_schema', 'schema', true);
+      store.appendThinkingDelta('需要查询数据');
+      store.completeThinking();
+      store.addToolCallItem('retrieve_schema', '{}', 'tc-1');
+      store.appendToolResult('schema', 'tc-1');
+      store.completeToolResult('schema', true);
+      store.completeToolCall(true);
+      store.appendThinkingDelta('生成 SQL');
+      store.completeThinking();
+      store.appendReportDelta('分析结果：');
+      store.appendReportDelta('完成');
+      store.completeReport('分析结果：完成');
 
-      // 第二轮
-      store.appendThinkingToCurrentRound('生成 SQL');
-      store.finalizeCurrentRoundThinking();
-      store.addToolCallToCurrentRound('execute_sql', 'SELECT 1');
-      store.updateToolCallInCurrentRound('execute_sql', 'data', true);
-
-      store.completeAnalysis();
-
-      expect(store.state.rounds).toHaveLength(2);
-      expect(store.state.rounds[0].thinking.content).toBe('需要查询数据');
-      expect(store.state.rounds[0].toolCalls[0].toolName).toBe('retrieve_schema');
-      expect(store.state.rounds[1].thinking.content).toBe('生成 SQL');
-      expect(store.state.rounds[1].toolCalls[0].toolName).toBe('execute_sql');
-
-      // 所有轮次完成后应折叠
-      for (const round of store.state.rounds) {
-        expect(round.isActive).toBe(false);
-        expect(round.isCollapsed).toBe(true);
+      expect(store.state.contentItems.map(i => i.type)).toEqual([
+        'thinking', 'tool_call', 'tool_result', 'thinking', 'report',
+      ]);
+      // 每个内容项的 seq 严格递增，保证渲染顺序
+      for (let i = 0; i < store.state.contentItems.length; i++) {
+        expect(store.state.contentItems[i].seq).toBe(i);
       }
     });
-
-    it('下一轮 thinking 到达但当前轮次有 active 工具时应强制结束旧轮次', () => {
-      const store = useAnalysisStore();
-      store.startAnalysis();
-
-      // 第一轮：思考后工具未完成
-      store.appendThinkingToCurrentRound('第一轮思考');
-      store.finalizeCurrentRoundThinking();
-      store.addToolCallToCurrentRound('long_running_tool');
-
-      // 第二轮 thinking 到达
-      store.appendThinkingToCurrentRound('第二轮思考');
-
-      expect(store.state.rounds).toHaveLength(2);
-      expect(store.state.rounds[0].isActive).toBe(false); // 被强制结束
-      expect(store.state.rounds[0].endTime).toBeDefined();
-      expect(store.state.rounds[0].toolCalls[0].status).toBe('running'); // 保留 running 状态
-      expect(store.state.rounds[1].thinking.content).toBe('第二轮思考');
-    });
   });
 
-  describe('createSnapshot', () => {
-    it('应导出 rounds 的深拷贝', () => {
+  describe('createSnapshot/importSnapshot', () => {
+    it('createSnapshot 应导出 contentItems 深拷贝', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
-      store.appendThinkingToCurrentRound('思考');
-      store.addToolCallToCurrentRound('tool');
+      store.appendThinkingDelta('思考');
+      store.addToolCallItem('tool');
 
       const snapshot = store.createSnapshot();
 
-      expect(snapshot.rounds).toHaveLength(1);
-      expect(snapshot.rounds[0].thinking.content).toBe('思考');
-      // 修改 snapshot 不应影响原状态
-      snapshot.rounds[0].thinking.content = '修改后';
-      expect(store.state.rounds[0].thinking.content).toBe('思考');
+      expect(snapshot.contentItems).toHaveLength(2);
+      snapshot.contentItems[0].content = '修改后';
+      expect(store.state.contentItems[0].content).toBe('思考');
     });
 
-    it('应包含其他分析字段', () => {
+    it('importSnapshot 应从最大 seq 续接 contentSeq', () => {
       const store = useAnalysisStore();
       store.startAnalysis();
-      store.setSQL('SELECT 1');
-      store.setAnalysisReport('报告内容', true);
-
+      store.appendThinkingDelta('思考');
       const snapshot = store.createSnapshot();
+      expect(snapshot.contentItems[0].seq).toBe(0);
 
-      expect(snapshot.currentSQL).toBe('SELECT 1');
-      expect(snapshot.analysisReport).toBe('报告内容');
-    });
-  });
+      // 模拟从快照导入（contentSeq 应为 1，后续新项 seq 从 1 开始）
+      store.importSnapshot(snapshot);
+      store.appendReportDelta('新报告');
 
-  describe('setAnalysisReport', () => {
-    it('isComplete=true 应覆盖报告', () => {
-      const store = useAnalysisStore();
-      store.setAnalysisReport('增量1', false);
-      store.setAnalysisReport('完整报告', true);
-
-      expect(store.state.analysisReport).toBe('完整报告');
-    });
-
-    it('isComplete=false 应追加报告', () => {
-      const store = useAnalysisStore();
-      store.setAnalysisReport('第一段', false);
-      store.setAnalysisReport('第二段', false);
-
-      expect(store.state.analysisReport).toBe('第一段第二段');
+      expect(store.state.contentItems).toHaveLength(2);
+      expect(store.state.contentItems[1].seq).toBe(1);
     });
   });
 });

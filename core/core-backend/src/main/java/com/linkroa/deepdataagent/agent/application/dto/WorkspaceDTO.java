@@ -10,13 +10,11 @@ import java.util.List;
  * @param boundedContexts    限界上下文列表
  * @param sandboxEnabled     沙箱是否启用
  * @param serverProxyEnabled 是否使用服务器代理
- * @param sqlitePath         SQLite 数据库路径
  */
 public record WorkspaceDTO(
         String applicationName,
         List<String> boundedContexts,
         boolean sandboxEnabled,
-        boolean serverProxyEnabled,
-        String sqlitePath
+        boolean serverProxyEnabled
 ) {
 }

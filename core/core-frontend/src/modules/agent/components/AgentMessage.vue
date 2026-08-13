@@ -16,25 +16,16 @@
           <ErrorDisplay :error="classifiedError" @retry="$emit('retry')" />
         </template>
 
-        <!-- 正常状态：流式渐进显示，内容块按到达顺序渲染 -->
+        <!-- 正常状态：统一内容流按接收时序渲染，派生区块独立展示 -->
         <template v-else>
-          <!-- 统一时间线：分析中和分析完成后均显示 -->
-          <TimelineSection
-            v-if="hasTimeline"
-            :rounds="message.analysisState!.rounds"
-            :is-analyzing="isAnalyzing"
-            :analysis-start-time="message.analysisState?.analysisStartTime ?? null"
-            :analysis-end-time="message.analysisState?.analysisEndTime ?? null"
-          />
-
-          <!-- 分析报告（主内容，分析中及分析完成后均显示，流式渲染） -->
-          <ReportSection
-            v-if="hasReport"
-            :report="message.analysisState!.analysisReport!"
+          <!-- 统一内容流：思考/工具调用/报告按 seq 时序依次展示 -->
+          <ContentStream
+            v-if="hasContent"
+            :items="message.analysisState!.contentItems"
             :is-analyzing="isAnalyzing"
           />
 
-          <!-- 分析完成后才显示的区块 -->
+          <!-- 分析完成后才显示的派生区块 -->
           <template v-if="!isAnalyzing">
             <!-- 图表（紧随报告，交互增强） -->
             <ChartSection
@@ -83,21 +74,16 @@ import MessageHeader from './MessageHeader.vue';
 import MessageFooter from './MessageFooter.vue';
 import ErrorDisplay from './ErrorDisplay.vue';
 import SearchResultsCard from './cards/SearchResultsCard.vue';
-import TimelineSection from './cards/TimelineSection.vue';
+import ContentStream from './cards/ContentStream.vue';
 
 import ChartSection from './cards/ChartSection.vue';
 import DataTableSection from './cards/DataTableSection.vue';
-import ReportSection from './cards/ReportSection.vue';
 import SuggestionsSection from './cards/SuggestionsSection.vue';
 
 /**
  * Agent 消息组件 — 单列流式消息卡片
- * <p>从 Tab 布局重构为单列卡片，通过渐进式披露实现：
- * 分析中所有区块默认展开，分析完成后思考+工具自动折叠。</p>
- * <p>采用 ReAct 轮次时间线：将思考与工具调用按"思考 → 工具调用"的轮次分组展示，
- * 体现 ReAct 循环的因果关系。</p>
- * <p><b>报告渲染顺序：</b>分析报告在分析中及分析完成后均以 ReportSection 流式渲染，
- * 确保用户实时看到最终结论。</p>
+ * <p>基于流式消息接收顺序的统一内容流渲染：思考、工具调用、报告严格按接收时序
+ * 依次展示，不按特殊事件类型剥离分析报告；图表/数据/搜索/建议作为独立派生区块展示。</p>
  * <p><b>子组件自治：</b>建议追问点击由 SuggestionsSection 内部通过 uiStore.setSuggestion 处理，
  * 反馈状态由 MessageFooter 内部管理，本组件不再透传空回调。</p>
  */
@@ -132,14 +118,9 @@ const hasSearchResults = computed(() => {
   return Boolean(props.message.analysisState?.searchResults && props.message.analysisState.searchResults.length > 0);
 });
 
-/** 是否有 ReAct 轮次数据 */
-const hasTimeline = computed(() => {
-  return Boolean(props.message.analysisState?.rounds && props.message.analysisState.rounds.length > 0);
-});
-
-/** 是否有分析报告（分析中及分析完成后均显示，流式渲染） */
-const hasReport = computed(() => {
-  return Boolean(props.message.analysisState?.analysisReport);
+/** 是否有统一内容流内容（分析中及分析完成后均显示） */
+const hasContent = computed(() => {
+  return Boolean(props.message.analysisState?.contentItems && props.message.analysisState.contentItems.length > 0);
 });
 
 /** 是否有图表（确保 chartConfig 有效、包含可渲染数据，且具备直观展示价值）

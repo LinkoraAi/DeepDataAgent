@@ -21,6 +21,7 @@ import com.linkroa.deepdataagent.datasource.infrastructure.adapter.ApiResponsePa
 import com.linkroa.deepdataagent.datasource.infrastructure.client.ApiConnectionStrategy;
 import com.linkroa.deepdataagent.datasource.infrastructure.client.ApiPaginationHandler;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
+import com.linkroa.deepdataagent.shared.infrastructure.redis.port.SchemaCachePort;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -49,6 +50,7 @@ public class DatasourceApplicationService {
     private final ApiFieldRepository apiFieldRepository;
     private final ApiResponseParser apiResponseParser;
     private final ApiPaginationHandler apiPaginationHandler;
+    private final SchemaCachePort schemaCachePort;
 
     public DatasourceApplicationService(
             DatasourceConnectionRepository connectionRepository,
@@ -61,7 +63,8 @@ public class DatasourceApplicationService {
             ApiSchemaRepository apiSchemaRepository,
             ApiFieldRepository apiFieldRepository,
             ApiResponseParser apiResponseParser,
-            ApiPaginationHandler apiPaginationHandler
+            ApiPaginationHandler apiPaginationHandler,
+            SchemaCachePort schemaCachePort
     ) {
         this.connectionRepository = connectionRepository;
         this.strategyFactory = strategyFactory;
@@ -74,6 +77,7 @@ public class DatasourceApplicationService {
         this.apiFieldRepository = apiFieldRepository;
         this.apiResponseParser = apiResponseParser;
         this.apiPaginationHandler = apiPaginationHandler;
+        this.schemaCachePort = schemaCachePort;
     }
 
     public List<DatasourceTypeResponse> getSupportedTypes() {
@@ -125,6 +129,8 @@ public class DatasourceApplicationService {
         if (saved.type() == DatasourceType.JDBC) {
             doSyncMetadata(saved);
         }
+        // 元数据已变更，显式失效 Schema 缓存，保证下次提取走全量
+        schemaCachePort.evict(saved.id());
         return saved;
     }
 
@@ -159,6 +165,8 @@ public class DatasourceApplicationService {
             }
             connectionRepository.deleteById(id);
         });
+        // 数据源已删除，清理其 Schema 缓存，避免命中已删除数据源的过期元数据
+        schemaCachePort.evict(id);
     }
 
     public DatasourceConnectionStrategy.ConnectionTestResult testConnection(TestConnectionCommand command) {
@@ -200,6 +208,8 @@ public class DatasourceApplicationService {
                 .orElseThrow(() -> new DeepDataAgentException("数据源不存在"));
         domainService.validateCanSync(connection);
         transactionTemplate.executeWithoutResult(status -> doSyncMetadata(connection));
+        // 元数据重新同步完成，显式失效 Schema 缓存，保证下次提取走全量
+        schemaCachePort.evict(connectionId);
     }
 
     public void doSyncMetadata(DatasourceConnection connection) {

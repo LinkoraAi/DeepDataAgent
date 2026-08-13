@@ -1,10 +1,9 @@
 package com.linkroa.deepdataagent.agent.infrastructure.agent;
 
 import com.linkroa.deepdataagent.agent.acl.datasource.DatasourceCategory;
-import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
+import com.linkroa.deepdataagent.agent.infrastructure.client.ChatModelManager;
 import com.linkroa.deepdataagent.agent.infrastructure.config.AgentMemoryProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.config.AgentProperties;
-import com.linkroa.deepdataagent.agent.infrastructure.config.SessionProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.ApiDataFetcherTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.ChartGeneratorTool;
 import com.linkroa.deepdataagent.agent.infrastructure.tool.NL2SqlTool;
@@ -26,8 +25,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * HarnessAgent 工厂
@@ -36,7 +33,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>核心职责：</p>
  * <ul>
- *   <li>根据 sessionId 缓存 HarnessAgent 实例，避免重复创建</li>
+ *   <li>按需创建 HarnessAgent 实例，不缓存：Agent 使用完毕后由调用方关闭，
+ *       会话上下文由 AgentScope 2.0 按 sessionId 自动关联恢复</li>
  *   <li>配置 Compaction（阈值设为模型上下文窗口的 80%）</li>
  *   <li>根据数据源类型条件化注册工具集和选择系统提示词</li>
  * </ul>
@@ -46,14 +44,7 @@ public class HarnessAgentFactory {
 
     private static final Logger log = LoggerFactory.getLogger(HarnessAgentFactory.class);
 
-    /** 活跃会话数上限（从 SessionProperties 读取） */
-    private final int maxActiveSessions;
-
-    /** 按 sessionId 索引的 HarnessAgent 缓存 */
-    private final Map<String, HarnessAgent> agentCache = new ConcurrentHashMap<>();
-
-    private final LLMClient llmClient;
-    private final SessionProperties sessionProperties;
+    private final ChatModelManager chatModelManager;
     private final AgentProperties agentProperties;
     private final AgentMemoryProperties agentMemoryProperties;
     private final SchemaRetrieverTool schemaRetrieverTool;
@@ -175,8 +166,7 @@ public class HarnessAgentFactory {
     /**
      * 构造方法
      *
-     * @param llmClient LLM 客户端
-     * @param sessionProperties 会话配置
+     * @param chatModelManager ChatModel 实例管理器
      * @param agentProperties Agent 配置
      * @param agentMemoryProperties Agent 记忆配置
      * @param schemaRetrieverTool Schema 检索工具
@@ -187,8 +177,7 @@ public class HarnessAgentFactory {
      * @param webSearchTool 网络搜索工具
      */
     public HarnessAgentFactory(
-            LLMClient llmClient,
-            SessionProperties sessionProperties,
+            ChatModelManager chatModelManager,
             AgentProperties agentProperties,
             AgentMemoryProperties agentMemoryProperties,
             SchemaRetrieverTool schemaRetrieverTool,
@@ -197,11 +186,9 @@ public class HarnessAgentFactory {
             ApiDataFetcherTool apiDataFetcherTool,
             ChartGeneratorTool chartGeneratorTool,
             WebSearchTool webSearchTool) {
-        this.llmClient = llmClient;
-        this.sessionProperties = sessionProperties;
+        this.chatModelManager = chatModelManager;
         this.agentProperties = agentProperties;
         this.agentMemoryProperties = agentMemoryProperties;
-        this.maxActiveSessions = sessionProperties.getMaxActiveSessions();
         this.schemaRetrieverTool = schemaRetrieverTool;
         this.nl2SqlTool = nl2SqlTool;
         this.sqlExecutorTool = sqlExecutorTool;
@@ -211,9 +198,10 @@ public class HarnessAgentFactory {
     }
 
     /**
-     * 获取或创建 HarnessAgent 实例
-     * <p>根据 sessionId 缓存 Agent 实例，避免重复创建。
-     * 当缓存数量达到上限时，抛出 IllegalStateException。</p>
+     * 创建 HarnessAgent 实例
+     * <p>每次调用都创建新的 Agent，不缓存实例：分析请求结束后由调用方通过
+     * {@link #closeAgent(HarnessAgent)} 关闭，会话上下文由 AgentScope 2.0
+     * 框架按 sessionId 自动关联恢复。</p>
      *
      * @param sessionId 会话 ID
      * @param modelConfigId 模型配置 ID
@@ -221,7 +209,6 @@ public class HarnessAgentFactory {
      * @param enableWebSearch 是否启用网络搜索工具
      * @param extraMiddlewares 请求特定的中间件列表（如 SearchResultsMiddleware）
      * @return HarnessAgent 实例
-     * @throws IllegalStateException 当活跃会话数已达上限时抛出
      */
     public HarnessAgent getOrCreateAgent(
             String sessionId,
@@ -230,19 +217,7 @@ public class HarnessAgentFactory {
             boolean enableWebSearch,
             List<MiddlewareBase> extraMiddlewares) {
 
-        // 检查活跃会话数上限
-        if (agentCache.size() >= maxActiveSessions) {
-            throw new IllegalStateException("活跃会话数已达上限: " + maxActiveSessions);
-        }
-
-        // 当传入非空 extraMiddlewares 时，创建临时 Agent（不缓存）
-        if (extraMiddlewares != null && !extraMiddlewares.isEmpty()) {
-            return createAgent(sessionId, modelConfigId, category, enableWebSearch, extraMiddlewares);
-        }
-
-        return agentCache.computeIfAbsent(sessionId, id ->
-                createAgent(sessionId, modelConfigId, category, enableWebSearch, List.of())
-        );
+        return createAgent(sessionId, modelConfigId, category, enableWebSearch, extraMiddlewares);
     }
 
     /**
@@ -264,7 +239,7 @@ public class HarnessAgentFactory {
             List<MiddlewareBase> extraMiddlewares) {
 
         // 1. 获取 ChatModel
-        ChatModelBase chatModel = llmClient.getChatModel(modelConfigId);
+        ChatModelBase chatModel = chatModelManager.getChatModel(modelConfigId);
 
         // 2. 构建工具集
         Toolkit toolkit = buildToolkit(category, enableWebSearch);
@@ -410,32 +385,9 @@ public class HarnessAgentFactory {
     }
 
     /**
-     * 获取已缓存的 HarnessAgent 实例
-     *
-     * @param sessionId 会话 ID
-     * @return HarnessAgent 实例，如果不存在返回 null
-     */
-    public HarnessAgent getAgent(String sessionId) {
-        return agentCache.get(sessionId);
-    }
-
-    /**
-     * 清除指定会话的缓存
-     * <p>关闭 Agent 并释放资源。</p>
-     *
-     * @param sessionId 会话 ID
-     */
-    public void evictSession(String sessionId) {
-        HarnessAgent agent = agentCache.remove(sessionId);
-        if (agent != null) {
-            agent.close();
-            log.info("HarnessAgentFactory: closed HarnessAgent for sessionId={}", sessionId);
-        }
-    }
-
-    /**
-     * 关闭临时 HarnessAgent 实例
-     * <p>仅关闭不在缓存中的 agent（临时 agent），缓存 agent 的生命周期由 {@link #evictSession} 管理。</p>
+     * 关闭 HarnessAgent 实例
+     * <p>关闭 Agent 并释放其持有的资源（模型客户端、工具集、记忆等）。
+     * 工厂不缓存 Agent，所有实例均需在使用完毕后显式关闭。</p>
      *
      * @param agent HarnessAgent 实例（可能为 null）
      */
@@ -443,10 +395,7 @@ public class HarnessAgentFactory {
         if (agent == null) {
             return;
         }
-        boolean isCached = agentCache.containsValue(agent);
-        if (!isCached) {
-            agent.close();
-            log.info("HarnessAgentFactory: closed temp HarnessAgent");
-        }
+        agent.close();
+        log.info("HarnessAgentFactory: closed HarnessAgent");
     }
 }

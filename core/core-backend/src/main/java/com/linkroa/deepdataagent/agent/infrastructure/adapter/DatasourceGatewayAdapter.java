@@ -26,6 +26,7 @@ import com.linkroa.deepdataagent.datasource.domain.repository.TableInfoRepositor
 import com.linkroa.deepdataagent.datasource.domain.strategy.DatasourceConnectionStrategy;
 import com.linkroa.deepdataagent.datasource.domain.strategy.DatasourceConnectionStrategyFactory;
 import com.linkroa.deepdataagent.datasource.infrastructure.client.ApiPaginationHandler;
+import com.linkroa.deepdataagent.shared.infrastructure.redis.port.SchemaCachePort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -33,8 +34,6 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 /**
  * 数据源网关适配器
@@ -49,25 +48,10 @@ public class DatasourceGatewayAdapter implements DatasourceGateway {
 
     private static final Logger log = LoggerFactory.getLogger(DatasourceGatewayAdapter.class);
 
-    /** Schema 缓存有效期（毫秒），避免同一会话内重复连库提取元数据 */
-    private static final long SCHEMA_CACHE_TTL_MILLIS = 60_000L;
-
     /** 表数超过该上限时，仅返回表清单而非完整字段，避免超大 Schema 撑爆上下文 */
     private static final int MAX_TABLES_FOR_FULL_SCHEMA = 50;
 
-    /** 按数据源 ID 索引的 Schema 缓存条目 */
-    private static final class CachedSchema {
-        private final String schema;
-        private final long cachedAt;
-        CachedSchema(String schema, long cachedAt) {
-            this.schema = schema;
-            this.cachedAt = cachedAt;
-        }
-    }
-
-    /** Schema 缓存，键为数据源 ID */
-    private final ConcurrentMap<Long, CachedSchema> schemaCache = new ConcurrentHashMap<>();
-
+    private final SchemaCachePort schemaCachePort;
     private final DatasourceConnectionRepository repository;
     private final DatasourceConnectionStrategyFactory strategyFactory;
     private final ApiSchemaRepository apiSchemaRepository;
@@ -78,6 +62,7 @@ public class DatasourceGatewayAdapter implements DatasourceGateway {
     private final ColumnInfoRepository columnInfoRepository;
 
     public DatasourceGatewayAdapter(
+            SchemaCachePort schemaCachePort,
             DatasourceConnectionRepository repository,
             DatasourceConnectionStrategyFactory strategyFactory,
             ApiSchemaRepository apiSchemaRepository,
@@ -86,6 +71,7 @@ public class DatasourceGatewayAdapter implements DatasourceGateway {
             DatabaseSchemaRepository databaseSchemaRepository,
             TableInfoRepository tableInfoRepository,
             ColumnInfoRepository columnInfoRepository) {
+        this.schemaCachePort = schemaCachePort;
         this.repository = repository;
         this.strategyFactory = strategyFactory;
         this.apiSchemaRepository = apiSchemaRepository;
@@ -104,14 +90,13 @@ public class DatasourceGatewayAdapter implements DatasourceGateway {
     @Override
     public String extractSchema(Long datasourceId) {
         // 命中未过期的缓存则直接返回，避免重复连库提取元数据
-        CachedSchema cached = schemaCache.get(datasourceId);
-        long now = System.currentTimeMillis();
-        if (cached != null && now - cached.cachedAt < SCHEMA_CACHE_TTL_MILLIS) {
-            return cached.schema;
+        Optional<String> cached = schemaCachePort.get(datasourceId);
+        if (cached.isPresent()) {
+            return cached.get();
         }
 
         String schema = extractSchemaInternal(datasourceId);
-        schemaCache.put(datasourceId, new CachedSchema(schema, now));
+        schemaCachePort.put(datasourceId, schema);
         return schema;
     }
 
@@ -194,7 +179,7 @@ public class DatasourceGatewayAdapter implements DatasourceGateway {
 
     /**
      * 从本地已同步的 JDBC 元数据重组 Schema 描述文本
-     * <p>优先读取本地 SQLite 中由 syncMetadata 同步的 schema/表/字段，
+     * <p>优先读取本地 PostgreSQL 中由 syncMetadata 同步的 schema/表/字段，
      * 本地无任何 schema 时返回 null，由调用方兜底连远程提取。</p>
      *
      * @param connectionId 数据源连接 ID

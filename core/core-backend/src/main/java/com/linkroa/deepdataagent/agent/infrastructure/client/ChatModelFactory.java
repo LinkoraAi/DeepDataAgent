@@ -11,7 +11,7 @@ public interface ChatModelFactory {
 
     /**
      * 获取当前工厂支持的提供商名称（小写）
-     * <p>用于匹配 {@link com.linkroa.deepdataagent.agent.domain.model.AgentModelInfo#getProviderName()}。</p>
+     * <p>用于匹配 {@link com.linkroa.deepdataagent.agent.domain.model.ModelConfig#getProviderName()}。</p>
      *
      * @return 提供商名称，如 "dashscope"、"openai"
      */

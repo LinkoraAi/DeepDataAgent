@@ -37,8 +37,7 @@ public class AgentWorkspaceController {
                 dto.applicationName(),
                 dto.boundedContexts(),
                 dto.sandboxEnabled(),
-                dto.serverProxyEnabled(),
-                dto.sqlitePath()
+                dto.serverProxyEnabled()
         );
     }
 }

@@ -34,10 +34,10 @@ export function useAnalysisProgress() {
     if (s.analysisReport) return 'generating_report';
     if (s.chartConfig || s.queryData.length > 0) return 'generating_chart';
     if (s.currentSQL) return 'executing_sql';
-    // 基于 ReAct 轮次判定阶段
-    const hasRunningTools = s.rounds.some(r => r.toolCalls.some(t => t.status === 'running'));
-    const hasAnyToolCalls = s.rounds.some(r => r.toolCalls.length > 0);
-    const hasThinking = s.rounds.some(r => r.thinking.isStreaming || r.thinking.content);
+    // 基于统一内容流判定阶段（tool_call 与 tool_result 均为工具执行阶段；结果项进行中同样计入）
+    const hasRunningTools = s.contentItems.some(i => (i.type === 'tool_call' || i.type === 'tool_result') && i.status === 'in_progress');
+    const hasAnyToolCalls = s.contentItems.some(i => i.type === 'tool_call' || i.type === 'tool_result');
+    const hasThinking = s.contentItems.some(i => i.type === 'thinking' && (i.status === 'in_progress' || i.content));
     if (hasRunningTools) return 'executing_tools';
     if (hasAnyToolCalls) return 'executing_tools';
     if (hasThinking) return 'thinking';

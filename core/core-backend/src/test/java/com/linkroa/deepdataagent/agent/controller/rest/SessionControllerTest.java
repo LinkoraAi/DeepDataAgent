@@ -9,6 +9,7 @@ import com.linkroa.deepdataagent.agent.controller.request.CreateSessionRequest;
 import com.linkroa.deepdataagent.agent.controller.request.GetMessagesRequest;
 import com.linkroa.deepdataagent.agent.controller.request.GetSessionRequest;
 import com.linkroa.deepdataagent.agent.controller.request.ListSessionsRequest;
+import com.linkroa.deepdataagent.agent.controller.request.UpdateSessionRequest;
 import com.linkroa.deepdataagent.agent.controller.response.MessageResponse;
 import com.linkroa.deepdataagent.agent.controller.response.SessionListItem;
 import com.linkroa.deepdataagent.agent.controller.response.SessionResponse;
@@ -215,13 +216,57 @@ class SessionControllerTest {
         assertEquals("400", result.code());
     }
 
+    // ==================== updateSession ====================
+
+    @Test
+    void should_returnSuccess_when_updateSession_given_validRequest() {
+        // given
+        UpdateSessionRequest request = new UpdateSessionRequest("session-1", "新标题");
+        doNothing().when(sessionApplicationService).updateSessionTitle("session-1", "新标题");
+
+        // when
+        ApiResponse<Void> result = controller.updateSession(request);
+
+        // then
+        assertTrue(result.success());
+        verify(sessionApplicationService).updateSessionTitle("session-1", "新标题");
+    }
+
+    @Test
+    void should_returnError_when_updateSession_given_nonexistentSessionId() {
+        // given
+        doThrow(new IllegalArgumentException("会话不存在"))
+                .when(sessionApplicationService).updateSessionTitle("nonexistent", "新标题");
+
+        // when
+        ApiResponse<Void> result = controller.updateSession(new UpdateSessionRequest("nonexistent", "新标题"));
+
+        // then
+        assertFalse(result.success());
+        assertEquals("404", result.code());
+    }
+
+    @Test
+    void should_returnError_when_updateSession_given_deletedSession() {
+        // given
+        doThrow(new IllegalStateException("会话已删除，无法更新标题"))
+                .when(sessionApplicationService).updateSessionTitle("session-1", "新标题");
+
+        // when
+        ApiResponse<Void> result = controller.updateSession(new UpdateSessionRequest("session-1", "新标题"));
+
+        // then
+        assertFalse(result.success());
+        assertEquals("400", result.code());
+    }
+
     // ==================== getMessages ====================
 
     @Test
     void should_returnSuccess_when_getMessages_given_validSessionId() {
         // given
         List<MessageDTO> expectedMessages = List.of(
-                new MessageDTO(1L, "session-1", 100L, "user", "你好", null, null, "2025-01-01 00:00:00"));
+                new MessageDTO(1L, "session-1", 100L, "user", "MESSAGE", "你好", null, null, null, "2025-01-01 00:00:00", "COMPLETED"));
         when(sessionApplicationService.getMessages(eq("session-1"), anyInt(), isNull()))
                 .thenReturn(expectedMessages);
 

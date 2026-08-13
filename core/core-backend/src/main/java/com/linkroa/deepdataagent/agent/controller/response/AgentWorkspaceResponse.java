@@ -6,7 +6,6 @@ public record AgentWorkspaceResponse(
         String applicationName,
         List<String> boundedContexts,
         boolean sandboxEnabled,
-        boolean serverProxyEnabled,
-        String sqlitePath
+        boolean serverProxyEnabled
 ) {
 }

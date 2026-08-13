@@ -76,7 +76,7 @@ public class JdbcDatasourceConnectionRepository implements DatasourceConnectionR
                         keyword,
                         type != null ? type.name() : null,
                         status != null ? status.name() : null,
-                        (long) (page - 1) * size,
+                        (long) Math.max(0, page - 1) * size,
                         size)
                 .stream()
                 .map(e -> DatasourcePersistenceMapper.toDomain(e, encryptionUtil))

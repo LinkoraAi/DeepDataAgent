@@ -4,7 +4,7 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import com.linkroa.deepdataagent.agent.domain.exception.AnalysisCancelledException;
 import com.linkroa.deepdataagent.agent.domain.support.DataSummaryBuilder;
-import com.linkroa.deepdataagent.agent.infrastructure.client.LLMClient;
+import com.linkroa.deepdataagent.agent.infrastructure.client.ChartConfigGenerationClient;
 import com.linkroa.deepdataagent.agent.infrastructure.util.AgentToolResponse;
 import com.linkroa.deepdataagent.agent.application.context.SessionToolContext;
 import io.agentscope.core.tool.Tool;
@@ -30,13 +30,13 @@ public class ChartGeneratorTool {
     /** RuntimeContext 中存储 modelConfigId 的键名 */
     private static final String CTX_KEY_MODEL_CONFIG_ID = "model_config_id";
 
-    private final LLMClient llmClient;
+    private final ChartConfigGenerationClient chartConfigGenerationClient;
     private final DataSummaryBuilder dataSummaryBuilder;
     private final ObjectMapper objectMapper;
     private final SessionToolContext sessionToolContext;
 
-    public ChartGeneratorTool(LLMClient llmClient, DataSummaryBuilder dataSummaryBuilder, ObjectMapper objectMapper, SessionToolContext sessionToolContext) {
-        this.llmClient = llmClient;
+    public ChartGeneratorTool(ChartConfigGenerationClient chartConfigGenerationClient, DataSummaryBuilder dataSummaryBuilder, ObjectMapper objectMapper, SessionToolContext sessionToolContext) {
+        this.chartConfigGenerationClient = chartConfigGenerationClient;
         this.dataSummaryBuilder = dataSummaryBuilder;
         this.objectMapper = objectMapper;
         this.sessionToolContext = sessionToolContext;
@@ -51,13 +51,13 @@ public class ChartGeneratorTool {
     public String generateChart(
             @ToolParam(name = "queryResult", required = true,
                        description = "The query result data in JSON format") String queryResult,
-            @ToolParam(name = "userQuestion", required = true,
-                       description = "The user's original question for context") String userQuestion,
+            @ToolParam(name = "text", required = true,
+                       description = "The user's original question for context") String text,
             @ToolParam(name = "sessionId", required = true,
                        description = "The session ID from the user message (format: UUID)") String sessionId,
             ToolCallParam toolCallParam
     ) {
-        log.info("ChartGeneratorTool: generating chart for question='{}', sessionId={}", userQuestion, sessionId);
+        log.info("ChartGeneratorTool: generating chart for question='{}', sessionId={}", text, sessionId);
         try {
             if (sessionId == null || sessionId.isBlank()) {
                 log.error("ChartGeneratorTool: sessionId parameter is empty");
@@ -81,9 +81,8 @@ public class ChartGeneratorTool {
             }
             
             String dataDescription = buildDataDescription(queryResult);
-            String echartsJson = llmClient.generateChartConfig(modelConfigId, dataDescription, userQuestion, sessionId);
-            log.info("ChartGeneratorTool: chart generated, length={}", echartsJson.length());
-            return echartsJson;
+            return chartConfigGenerationClient.generateChartConfig(modelConfigId, dataDescription, text, sessionId);
+
         } catch (AnalysisCancelledException e) {
             log.info("ChartGeneratorTool: chart generation cancelled, sessionId={}", sessionId);
             String reason = e.getMessage() != null ? e.getMessage() : "未知错误";

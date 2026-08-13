@@ -37,9 +37,9 @@ class SessionResponseAssemblerTest {
     }
 
     @Test
-    void should_mapStatusAsUppercase_when_toResponse_given_closedSession() {
+    void should_mapStatusAsUppercase_when_toResponse_given_deletedSession() {
         // given
-        AgentSession session = new AgentSession("session-2", "已关闭", 2L, 10L, 20L, SessionStatus.CLOSED);
+        AgentSession session = new AgentSession("session-2", "已删除", 2L, 10L, 20L, SessionStatus.DELETED);
         session.setCreatedTime(LocalDateTime.of(2025, 1, 14, 9, 0, 0));
         session.setUpdatedTime(LocalDateTime.of(2025, 1, 15, 11, 0, 0));
 
@@ -47,7 +47,7 @@ class SessionResponseAssemblerTest {
         SessionResponse result = SessionResponseAssembler.toResponse(session);
 
         // then
-        assertEquals("CLOSED", result.status());
+        assertEquals("DELETED", result.status());
     }
 
     @Test

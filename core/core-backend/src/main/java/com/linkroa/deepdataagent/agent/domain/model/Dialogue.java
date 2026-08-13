@@ -1,6 +1,7 @@
 package com.linkroa.deepdataagent.agent.domain.model;
 
 import com.linkroa.deepdataagent.agent.domain.valueobject.DialogueStatus;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -27,9 +28,23 @@ public class Dialogue {
         this.messages = new ArrayList<>();
     }
 
-    public Dialogue(String sessionId, String userQuestion) {
+    /**
+     * 构造方法
+     * <p>对用户问题做防御性校验：不允许为空/空白，且长度不超过 {@link DataAnalysisQuery#MAX_QUESTION_LENGTH}。</p>
+     *
+     * @param sessionId 会话 ID
+     * @param text      用户问题文本
+     * @throws IllegalArgumentException 当 text 为空、空白或超过长度上限时抛出
+     */
+    public Dialogue(String sessionId, String text) {
+        if (!StringUtils.hasText(text)) {
+            throw new IllegalArgumentException("用户问题不能为空");
+        }
+        if (text.length() > DataAnalysisQuery.MAX_QUESTION_LENGTH) {
+            throw new IllegalArgumentException("用户问题长度不能超过 " + DataAnalysisQuery.MAX_QUESTION_LENGTH + " 字符");
+        }
         this.sessionId = sessionId;
-        this.userQuestion = userQuestion;
+        this.userQuestion = text;
         this.status = DialogueStatus.PENDING;
         this.deleted = 0;
         this.startTime = LocalDateTime.now();

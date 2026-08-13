@@ -125,9 +125,6 @@ public class TavilyWebSearchService implements WebSearchService {
 
                 results.add(SearchResult.of(title, url, snippet, content));
             }
-
-            log.debug("Tavily 搜索返回 {} 条结果", results.size());
-
         } catch (Exception e) {
             log.error("解析 Tavily 响应失败", e);
         }

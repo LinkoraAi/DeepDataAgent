@@ -34,7 +34,7 @@ import java.util.Map;
  * 所有接口统一路径，通过type字段区分数据源类型。</p>
  */
 @RestController
-@RequestMapping("/datasource")
+@RequestMapping("/api/datasource")
 public class DatasourceController {
 
     private final DatasourceApplicationService applicationService;

@@ -39,19 +39,21 @@ public final class MessageResponseAssembler {
         String textContent = "";
         String toolCalls = null;
         String toolResult = null;
+        String toolCallId = null;
 
         if (content != null && type != null) {
             switch (type) {
                 case TOOL_CALL -> {
-                    // TOOL_CALL: title 为工具名，input 为入参，result 为结果（合并后同一条消息携带）
+                    // TOOL_CALL: title 为工具名，input 为入参；结果由独立的 TOOL_RESULT 消息承载
                     toolCalls = content.title();
                     textContent = content.input() != null ? content.input() : "";
-                    toolResult = content.result();
+                    toolCallId = content.toolCallId();
                 }
                 case TOOL_RESULT -> {
                     // TOOL_RESULT: title 为工具名，result 为返回结果 JSON
                     toolCalls = content.title();
                     toolResult = content.result();
+                    toolCallId = content.toolCallId();
                 }
                 case THINKING -> {
                     // THINKING: result 为思考过程文本
@@ -67,15 +69,21 @@ public final class MessageResponseAssembler {
             }
         }
 
+        // THINKING 消息统一映射为 thinking 角色（内部角色为 ASSISTANT），便于前端历史回放识别思考块
+        String roleStr = (type == MessageType.THINKING) ? "thinking"
+                : (role != null ? role.name().toLowerCase() : null);
         return new MessageResponse(
-                message.getSequenceNumber(),
+                message.getMessageNumber(),
                 sessionId,
                 dialogueId,
-                role != null ? role.name().toLowerCase() : null,
+                roleStr,
+                type != null ? type.name() : null,
                 textContent,
                 toolCalls,
                 toolResult,
-                formatDateTime(message.getStartTime())
+                toolCallId,
+                formatDateTime(message.getStartTime()),
+                message.getStatus() != null ? message.getStatus().name() : null
         );
     }
 

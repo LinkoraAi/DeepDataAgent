@@ -21,9 +21,15 @@ public interface AgentSessionRepository {
 
     AgentSession save(AgentSession session);
 
-    void updateStatus(String id, com.linkroa.deepdataagent.agent.domain.valueobject.SessionStatus status);
-
     void updateTitle(String id, String title);
+
+    /**
+     * 软删除会话
+     * <p>将会话状态置为 DELETED 并标记逻辑删除，与全局 is_deleted 逻辑删除约定保持一致。</p>
+     *
+     * @param sessionId 会话 ID
+     */
+    void softDelete(String sessionId);
 
     void touchLastMessage(String id);
 

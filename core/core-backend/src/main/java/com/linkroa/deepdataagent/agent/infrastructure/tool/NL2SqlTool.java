@@ -41,15 +41,15 @@ public class NL2SqlTool {
     public String generateSql(
             @ToolParam(name = "datasourceId", required = true,
                        description = "The ID of the datasource connection") Long datasourceId,
-            @ToolParam(name = "userQuestion", required = true,
-                       description = "The user's natural language question") String userQuestion,
+            @ToolParam(name = "text", required = true,
+                       description = "The user's natural language question") String text,
             @ToolParam(name = "schemaInfo", required = true,
                        description = "The schema info obtained from the retrieve_schema tool") String schemaInfo,
             @ToolParam(name = "sessionId", required = true,
                        description = "The session ID from the user message (format: UUID)") String sessionId,
             ToolCallParam toolCallParam
     ) {
-        log.info("NL2SqlTool: generating SQL for question='{}', sessionId={}", userQuestion, sessionId);
+        log.info("NL2SqlTool: generating SQL for question='{}', sessionId={}", text, sessionId);
         try {
             if (sessionId == null || sessionId.isBlank()) {
                 log.error("NL2SqlTool: sessionId parameter is empty");
@@ -78,9 +78,8 @@ public class NL2SqlTool {
             }
             
             String sqlDialect = resolveSqlDialect(datasourceId);
-            String sql = nl2SqlService.convert(modelConfigId, userQuestion, schemaInfo, sqlDialect, sessionId);
-            log.info("NL2SqlTool: SQL generated: {}", sql);
-            return sql;
+            return nl2SqlService.convert(modelConfigId, text, schemaInfo, sqlDialect, sessionId);
+
         } catch (Exception e) {
             log.error("NL2SqlTool: failed to generate SQL", e);
             return AgentToolResponse.error("Failed to generate SQL: " + e.getMessage());

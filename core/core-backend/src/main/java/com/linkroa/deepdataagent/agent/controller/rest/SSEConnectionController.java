@@ -24,7 +24,7 @@ import java.util.UUID;
  * </ul>
  */
 @RestController
-@RequestMapping("/agent/sse")
+@RequestMapping("/api/agent/sse")
 public class SSEConnectionController {
 
     private static final Logger log = LoggerFactory.getLogger(SSEConnectionController.class);

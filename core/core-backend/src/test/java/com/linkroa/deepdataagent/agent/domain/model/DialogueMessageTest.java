@@ -37,7 +37,7 @@ class DialogueMessageTest {
     @Test
     void should_initializeFields_when_constructed_given_validParams() {
         // then
-        assertEquals(1L, message.getSequenceNumber());
+        assertEquals(1L, message.getMessageNumber());
         assertEquals(MessageRole.USER, message.getRole());
         assertEquals(MessageType.MESSAGE, message.getMessageType());
         assertNotNull(message.getContent());
@@ -53,7 +53,7 @@ class DialogueMessageTest {
         DialogueMessage empty = new DialogueMessage();
 
         // then
-        assertNull(empty.getSequenceNumber());
+        assertNull(empty.getMessageNumber());
         assertNull(empty.getRole());
         assertNull(empty.getMessageType());
         assertNull(empty.getContent());
@@ -118,7 +118,7 @@ class DialogueMessageTest {
         DialogueMessage userMsg = DialogueMessage.userMessage(10L, "用户问题");
 
         // then
-        assertEquals(10L, userMsg.getSequenceNumber());
+        assertEquals(10L, userMsg.getMessageNumber());
         assertEquals(MessageRole.USER, userMsg.getRole());
         assertEquals(MessageType.MESSAGE, userMsg.getMessageType());
         assertEquals("用户问题", userMsg.getContent().result());
@@ -136,7 +136,7 @@ class DialogueMessageTest {
                 20L, MessageRole.ASSISTANT, MessageType.MESSAGE);
 
         // then
-        assertEquals(20L, inProgressMsg.getSequenceNumber());
+        assertEquals(20L, inProgressMsg.getMessageNumber());
         assertEquals(MessageRole.ASSISTANT, inProgressMsg.getRole());
         assertEquals(MessageType.MESSAGE, inProgressMsg.getMessageType());
         assertEquals("", inProgressMsg.getContent().result());
@@ -154,7 +154,7 @@ class DialogueMessageTest {
         LocalDateTime newEndTime = LocalDateTime.now().plusHours(2);
 
         // when
-        message.setSequenceNumber(99L);
+        message.setMessageNumber(99L);
         message.setRole(MessageRole.ASSISTANT);
         message.setMessageType(MessageType.TOOL_CALL);
         message.setContent(DialogueContent.text("新内容"));
@@ -163,7 +163,7 @@ class DialogueMessageTest {
         message.setEndTime(newEndTime);
 
         // then
-        assertEquals(99L, message.getSequenceNumber());
+        assertEquals(99L, message.getMessageNumber());
         assertEquals(MessageRole.ASSISTANT, message.getRole());
         assertEquals(MessageType.TOOL_CALL, message.getMessageType());
         assertEquals("新内容", message.getContent().result());

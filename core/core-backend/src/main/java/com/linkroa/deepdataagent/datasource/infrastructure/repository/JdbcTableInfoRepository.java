@@ -57,7 +57,7 @@ public class JdbcTableInfoRepository implements TableInfoRepository {
 
     @Override
     public List<TableInfo> findByDatabaseSchemaIdAndKeyword(Long databaseSchemaId, String keyword, int page, int size) {
-        return mapper.selectByDatabaseSchemaIdAndKeyword(databaseSchemaId, keyword, (long) (page - 1) * size, size)
+        return mapper.selectByDatabaseSchemaIdAndKeyword(databaseSchemaId, keyword, (long) Math.max(0, page - 1) * size, size)
                 .stream()
                 .map(DatasourcePersistenceMapper::toDomain)
                 .toList();

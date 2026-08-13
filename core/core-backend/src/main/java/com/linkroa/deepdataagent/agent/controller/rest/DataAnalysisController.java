@@ -23,8 +23,9 @@ import org.springframework.web.bind.annotation.RestController;
  * 具体的编排逻辑（SSE 连接、事件总线、执行池）已下沉到 {@link DataAnalysisApplicationService#executeAnalysis}。</p>
  */
 @RestController
-@RequestMapping("/agent/data-analysis")
-public class DataAnalysisController {
+@RequestMapping("/api/agent/data-analysis")
+public class
+DataAnalysisController {
 
     private static final Logger log = LoggerFactory.getLogger(DataAnalysisController.class);
 
