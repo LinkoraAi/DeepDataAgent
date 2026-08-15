@@ -1,0 +1,31 @@
+# ===========================================================
+# DeepDataAgent - 基础建设：Redis 单组件编排
+# 仅启动 Redis 8（Schema 缓存、限流与分布式锁）。
+#
+# 用法（在项目根目录执行）：
+#   docker compose -f docker/docker-compose.infra.redis.yaml up -d
+#
+# 说明：数据卷 deepdataagent_redisdata 与全量编排共用，切换编排方式数据不丢失
+# 注意：单组件编排独立运行（不依赖共享网络），服务通信走宿主机网关 host.docker.internal
+# ===========================================================
+
+name: deepdataagent-redis
+
+services:
+  redis:
+    image: redis:8.10.0-alpine
+    command: [ "redis-server", "--requirepass", "${REDIS_PASSWORD:-redis}", "--appendonly", "yes" ]
+    healthcheck:
+      test: [ "CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:-redis} ping | grep -q PONG" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  redisdata:
+    name: deepdataagent_redisdata

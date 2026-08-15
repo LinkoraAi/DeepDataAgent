@@ -5,17 +5,46 @@ spring:
   application:
     name: deepdataagent-backend
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/postgres}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://host.docker.internal:5432/postgres}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: ${SPRING_DATASOURCE_MAX_POOL_SIZE:10}
+  flyway:
+    # SQL 版本管理：迁移脚本位于 classpath:db/migration，V{n}__{描述}.sql 一经应用不可修改
+    enabled: true
+    locations: classpath:db/migration
+    # 兼容存量库：schema 非空但无迁移历史时自动基线到 V1（V1 被跳过，全新库正常完整执行）
+    baseline-on-migrate: true
+    # 允许乱序执行迁移（例如已应用 V2 后合入 V1.1 补丁），各版本号必须全局唯一
+    out-of-order: true
+    # 迁移前跳过对已应用脚本的 checksum 校验（配合 out-of-order / 存量脚本调整场景）
+    validate-on-migrate: true
+    # migrate 前自动执行 repair，清理 schema history 中的失败记录与 obsolete 描述
+    repair-on-migrate: false
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
+      host: ${REDIS_HOST:host.docker.internal}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:redis}
+
+# ---------- OpenSandbox：代码解释器沙箱接入 ----------
+# 默认面向 Docker 部署：服务间经宿主机网关 host.docker.internal 互访；
+# 本地原生启动或远程主机部署时，用同名环境变量（APP_OPENSANDBOX_*）覆盖即可
+app:
+  opensandbox:
+    protocol: ${APP_OPENSANDBOX_PROTOCOL:http}
+    # OpenSandbox 服务端地址（host:port），对应 compose 的 8090:8080 端口映射
+    domain: ${APP_OPENSANDBOX_DOMAIN:host.docker.internal:8090}
+    # 须与 deploy/opensandbox/opensandbox.toml 的 [server] api_key 保持一致
+    api-key: ${APP_OPENSANDBOX_API_KEY:deepdataagent-internal-key}
+    # 经服务端中转发起请求（沙箱端口无需再单独暴露给后端）
+    use-server-proxy: ${APP_OPENSANDBOX_USE_SERVER_PROXY:true}
+    # 沙箱默认执行镜像（对齐 OpenSandbox 官方示例验证过的版本）
+    default-image: ${APP_OPENSANDBOX_DEFAULT_IMAGE:opensandbox/code-interpreter:v1.1.0}
+    # 单次沙箱执行超时上限（秒）
+    default-timeout-seconds: ${APP_OPENSANDBOX_DEFAULT_TIMEOUT_SECONDS:1800}
 
 datasource:
   encryption:

@@ -1,0 +1,39 @@
+# ===========================================================
+# DeepDataAgent - 基础建设：OpenSandbox 单组件编排
+# 仅启动 OpenSandbox 代码解释器沙箱。
+#
+# 用法（在项目根目录执行）：
+#   docker compose -f docker/docker-compose.infra.opensandbox.yaml up --build
+#
+# 注意：单组件编排独立运行（不依赖共享网络），服务通信走宿主机网关 host.docker.internal
+# ===========================================================
+
+name: deepdataagent-opensandbox
+
+services:
+  opensandbox:
+    build:
+      context: ..
+      dockerfile: docker/opensandbox/Dockerfile
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+    # 端口 8090 发布至宿主机，供后端经 host.docker.internal:8090 访问
+    ports:
+      - "8090:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: [ "CMD", "curl", "-fsS", "http://localhost:8080/health" ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../deploy/opensandbox/opensandbox.toml:/app/opensandbox.toml:ro
+      # 持久化 OpenSandbox 服务端元数据（~/.opensandbox/opensandbox.db）
+      - opensandboxdata:/root/.opensandbox
+
+volumes:
+  opensandboxdata:
+    name: deepdataagent_opensandboxdata

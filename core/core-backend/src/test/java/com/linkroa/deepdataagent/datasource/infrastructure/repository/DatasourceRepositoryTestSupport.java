@@ -12,7 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 数据源持久层集成测试基类。
  * <p>底层数据库已由 SQLite 切换为 PostgreSQL，测试通过 {@code spring.datasource.*} 注入
  * 本地 PG 连接（环境变量 {@code TEST_PG_URL} / {@code TEST_PG_USERNAME} / {@code TEST_PG_PASSWORD}），
- * 表结构由幂等的 PG 建表脚本经 {@code spring.sql.init} 初始化（外部维护，测试不负责建表逻辑）。
+ * 表结构由 Flyway 迁移（classpath:db/migration）在应用启动时自动初始化，测试不负责建表逻辑。
  * 若未配置环境变量则快速失败并给出明确提示；集成测试被排除在常规构建（surefire）之外，需显式执行。</p>
  */
 @Tag("integration")
@@ -29,10 +29,6 @@ abstract class DatasourceRepositoryTestSupport {
     /** 本地 PostgreSQL 密码环境变量 */
     private static final String ENV_PG_PASSWORD = "TEST_PG_PASSWORD";
 
-    /** PG 建表脚本（与主数据源绑定的 agent + datasource 两张表结构） */
-    private static final String SCHEMA_LOCATIONS =
-            "classpath:datasource-schema-postgresql.sql,classpath:agent-schema-postgresql.sql";
-
     @DynamicPropertySource
     static void registerProperties(DynamicPropertyRegistry registry) {
         String url = System.getenv(ENV_PG_URL);
@@ -45,7 +41,5 @@ abstract class DatasourceRepositoryTestSupport {
         registry.add("spring.datasource.username", () -> System.getenv().getOrDefault(ENV_PG_USERNAME, "postgres"));
         registry.add("spring.datasource.password", () -> System.getenv().getOrDefault(ENV_PG_PASSWORD, "postgres"));
         registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
-        registry.add("spring.sql.init.mode", () -> "always");
-        registry.add("spring.sql.init.schema-locations", () -> SCHEMA_LOCATIONS);
     }
 }

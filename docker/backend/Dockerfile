@@ -1,0 +1,30 @@
+FROM maven:3.9.16-eclipse-temurin-21 AS build
+
+WORKDIR /workspace
+
+COPY pom.xml ./
+COPY core/pom.xml core/pom.xml
+COPY core/core-backend/pom.xml core/core-backend/pom.xml
+
+RUN mvn -q -pl core/core-backend -am dependency:go-offline -DskipTests
+
+COPY . .
+
+RUN mvn -q -pl core/core-backend -am clean package -DskipTests
+
+FROM eclipse-temurin:21.0.11_10-jre-alpine
+
+WORKDIR /app
+
+RUN apk add --no-cache wget \
+    && addgroup -S app \
+    && adduser -S app -G app \
+    && chown -R app:app /app
+
+COPY --from=build /workspace/core/core-backend/target/core-backend-*.jar /app/app.jar
+
+USER app
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]

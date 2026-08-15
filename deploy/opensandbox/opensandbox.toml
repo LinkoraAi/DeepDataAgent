@@ -1,19 +1,57 @@
-## 完整配置： https://github.com/alibaba/OpenSandbox/blob/main/server/configuration.md
+# OpenSandbox Server 配置
+# 完整配置参考：https://github.com/opensandbox-group/OpenSandbox/blob/main/server/configuration.md
+# 官方示例：opensandbox-server init-config ~/.sandbox.toml --example docker
 
 [server]
 host = "0.0.0.0"
 port = 8080
-log_level = "INFO"
+# 沙箱 TTL 上限（秒），与官方示例一致；后端默认超时 1800s，远低于此上限
+max_sandbox_timeout_seconds = 86400
+# API Key 认证：所有接口（除 /health、/docs、/redoc 外）必须携带 OPEN-SANDBOX-API-KEY 请求头，
+# 与后端 OPEN_SANDBOX_API_KEY 保持一致
 api_key = "deepdataagent-internal-key"
+
+[log]
+level = "INFO"
 
 [runtime]
 type = "docker"
-execd_image = "opensandbox/execd:v1.0.6"
+execd_image = "opensandbox/execd:v1.0.22"
+
+[storage]
+# bind 挂载的白名单前缀；空列表表示允许所有宿主路径（与官方示例一致，生产建议显式列出允许路径）
+allowed_host_paths = []
+
+[store]
+# 服务端管理的元数据持久化（沙箱生命周期状态）；
+# 通过 Docker 卷挂载 ~/.opensandbox 以在容器重建后保留状态
+type = "sqlite"
+path = "~/.opensandbox/opensandbox.db"
 
 [docker]
+# 服务本身运行在容器中（bridge 模式），通过 host_ip 将沙箱端点改写到宿主机可达地址，
+# 供后端经 host.docker.internal 访问；对应 README「Docker Compose 部署」最佳实践
 network_mode = "bridge"
 host_ip = "host.docker.internal"
+# bridge 模式下沙箱端口映射的宿主机端口范围（默认值，可依据防火墙策略收窄）
+port_range_min = 40000
+port_range_max = 60000
+# 安全加固：丢弃危险 capabilities 并阻止特权提升（与官方示例一致）
 drop_capabilities = ["AUDIT_WRITE", "MKNOD", "NET_ADMIN", "NET_RAW", "SYS_ADMIN", "SYS_MODULE", "SYS_PTRACE", "SYS_TIME", "SYS_TTY_CONFIG"]
 no_new_privileges = true
-pids_limit = 512
+# 空字符串表示使用 Docker 默认 seccomp 配置
+seccomp_profile = ""
+# 每个沙箱容器的进程数上限（官方默认 4096，防止 fork 炸弹影响宿主机）
+pids_limit = 4096
 
+[ingress]
+mode = "direct"
+
+[egress]
+# 仅当创建请求携带 networkPolicy 时启用 egress sidecar
+image = "opensandbox/egress:v1.1.6"
+mode = "dns"
+
+[renew_intent]
+# 按访问自动续期（实验特性），默认关闭
+enabled = false

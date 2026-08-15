@@ -1,0 +1,23 @@
+# ===========================================================
+# DeepDataAgent - 前端纯服务编排
+# 仅启动前端（Nginx 托管 Vue 构建产物）。Nginx 通过宿主机网关
+# host.docker.internal:18080 反代后端，不依赖任何共享 Docker 网络。
+#
+# 用法（在项目根目录执行）：
+#   docker compose -f docker/docker-compose.frontend.yaml up --build
+#   （先启动后端：docker compose -f docker/docker-compose.backend.yaml up --build）
+# ===========================================================
+
+name: deepdataagent-frontend
+
+services:
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend/Dockerfile
+    extra_hosts:
+      # Linux 下将 host.docker.internal 解析到宿主机网关；Docker Desktop 自带映射，冗余添加无副作用
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8080:80"
+    restart: unless-stopped
