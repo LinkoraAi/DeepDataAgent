@@ -109,7 +109,8 @@ export const DEMO_USER_ID = 'demo-user';
 export const DEMO_AGENT_ID = 'qwen-analyst';
 export const DEMO_AGENT_VERSION = '1.0.0';
 
-export const API_BASE = '/api/agent';
+/** Agent REST 基路径（v1 版本化，后端路径前缀 /api/v1/agent）。 */
+export const API_BASE = '/api/v1/agent';
 
 // ==================== REST 接口 ====================
 

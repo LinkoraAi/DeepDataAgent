@@ -7,6 +7,7 @@ import com.linkroa.deepdataagent.runtime.controller.request.SendEventRequest;
 import com.linkroa.deepdataagent.runtime.controller.response.SendMessageResponse;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.infrastructure.config.AgentRuntimeProperties;
+import com.linkroa.deepdataagent.runtime.infrastructure.config.ApiVersioningConfig;
 import com.linkroa.deepdataagent.runtime.infrastructure.sse.ChatEventCodec;
 import com.linkroa.deepdataagent.runtime.infrastructure.sse.SseEmitterRegistry;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
@@ -33,18 +34,18 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Agent 聊天事件 REST 控制器。
+ * Agent 聊天事件 REST 控制器（v1 版本，URL 前缀 {@code /api/v1/agent/sessions/{sessionId}/events}）。
  * <ul>
- *   <li>{@code POST /sessions/{sessionId}/events}：发送消息触发执行；
+ *   <li>{@code POST /api/v1/agent/sessions/{sessionId}/events}：发送消息触发执行；
  *       请求头含 {@code Accept: text/event-stream} 时返回 SSE 流（立即返回 emitter，
  *       执行由虚拟线程托管，事件经注册表实时推送），否则返回 {@code 202 Accepted} + {@code run_id}；</li>
- *   <li>{@code GET /sessions/{sessionId}/events/stream}：按 {@code after_sequence_num}
+ *   <li>{@code GET /api/v1/agent/sessions/{sessionId}/events/stream}：按 {@code after_sequence_num}
  *       回放历史事件 + 实时订阅后续事件（先注册后回放，消除事件丢失窗口；潜在重复因
  *       event_id 幂等由客户端去重过滤）。</li>
  * </ul>
  */
 @RestController
-@RequestMapping("/api/agent/sessions/{sessionId}/events")
+@RequestMapping(path = "/agent/sessions/{sessionId}/events", version = ApiVersioningConfig.CURRENT_API_VERSION)
 public class AgentChatEventController {
 
     private static final Logger log = LoggerFactory.getLogger(AgentChatEventController.class);

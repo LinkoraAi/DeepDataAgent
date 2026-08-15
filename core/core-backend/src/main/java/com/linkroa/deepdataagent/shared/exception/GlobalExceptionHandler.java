@@ -6,6 +6,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.validation.BindException;
+import org.springframework.web.accept.InvalidApiVersionException;
+import org.springframework.web.accept.MissingApiVersionException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -160,6 +162,35 @@ public class GlobalExceptionHandler {
     public void handleAsyncRequestTimeoutException(AsyncRequestTimeoutException e) {
         log.warn("SSE 连接超时: {}", e.getMessage());
         // 不返回任何内容，SSE 连接已超时，无法响应
+    }
+
+    /**
+     * 处理 API 版本无效异常（未知版本 / 无法解析）
+     * <p>API 版本化（Spring 7）校验失败时抛出，如请求 {@code /api/v9/...} 但
+     * 接口仅声明版本 1。此类异常为 {@code ResponseStatusException} 子类，
+     * 需在兜底 Exception 处理器之前显式处理，返回 400 而非 500。</p>
+     *
+     * @param e 版本无效异常
+     * @return 包含错误信息的ApiResponse
+     */
+    @ExceptionHandler(InvalidApiVersionException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ApiResponse<Void> handleInvalidApiVersionException(InvalidApiVersionException e) {
+        log.warn("API 版本无效: {}", e.getReason());
+        return ApiResponse.error("400", e.getReason());
+    }
+
+    /**
+     * 处理缺失 API 版本异常
+     *
+     * @param e 缺失版本异常
+     * @return 包含错误信息的ApiResponse
+     */
+    @ExceptionHandler(MissingApiVersionException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ApiResponse<Void> handleMissingApiVersionException(MissingApiVersionException e) {
+        log.warn("API 版本缺失: {}", e.getReason());
+        return ApiResponse.error("400", e.getReason());
     }
 
     /**

@@ -14,6 +14,7 @@ import com.linkroa.deepdataagent.runtime.domain.model.ExecutionRound;
 import com.linkroa.deepdataagent.runtime.domain.model.RunTrace;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.controller.response.ChatEventResponse;
+import com.linkroa.deepdataagent.runtime.infrastructure.config.ApiVersioningConfig;
 import com.linkroa.deepdataagent.shared.result.ApiResponse;
 import jakarta.annotation.Resource;
 import jakarta.validation.Valid;
@@ -29,11 +30,11 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * Agent 会话管理 REST 控制器（统一前缀 {@code /api/agent/sessions}）。
+ * Agent 会话管理 REST 控制器（统一前缀 {@code /api/v1/agent/sessions}，v1 版本）。
  * <p>会话生命周期（创建 / 查询 / 分页 / 终止）+ 轮次与事件回放 + 链路追踪查询。</p>
  */
 @RestController
-@RequestMapping("/api/agent/sessions")
+@RequestMapping(path = "/agent/sessions", version = ApiVersioningConfig.CURRENT_API_VERSION)
 public class AgentSessionController {
 
     @Resource
