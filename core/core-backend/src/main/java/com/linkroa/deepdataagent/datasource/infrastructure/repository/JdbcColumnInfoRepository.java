@@ -5,30 +5,28 @@ import com.linkroa.deepdataagent.datasource.domain.repository.ColumnInfoReposito
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.DatasourcePersistenceMapper;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.ColumnInfoEntity;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.mapper.ColumnInfoMapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.stereotype.Repository;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 @Repository
 public class JdbcColumnInfoRepository implements ColumnInfoRepository {
 
-    private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-
     private final ColumnInfoMapper mapper;
+    private final DatasourcePersistenceMapper persistenceMapper;
 
-    public JdbcColumnInfoRepository(ColumnInfoMapper mapper) {
+    public JdbcColumnInfoRepository(ColumnInfoMapper mapper,
+                                    DatasourcePersistenceMapper persistenceMapper) {
         this.mapper = mapper;
+        this.persistenceMapper = persistenceMapper;
     }
 
     @Override
     public ColumnInfo save(ColumnInfo columnInfo) {
-        ColumnInfoEntity entity = DatasourcePersistenceMapper.toEntity(columnInfo);
+        ColumnInfoEntity entity = persistenceMapper.toEntity(columnInfo);
         entity.setId(null);
-        entity.setCreatedAt(now());
-        entity.setUpdatedAt(now());
-        entity.setIsDeleted(0);
+        // 基础字段由 MybatisPlusMetaObjectHandler 自动填充
         mapper.insert(entity);
         return findByTableId(columnInfo.tableId()).stream()
                 .filter(item -> item.id().equals(entity.getId()))
@@ -38,8 +36,8 @@ public class JdbcColumnInfoRepository implements ColumnInfoRepository {
 
     @Override
     public ColumnInfo update(ColumnInfo columnInfo) {
-        ColumnInfoEntity entity = DatasourcePersistenceMapper.toEntity(columnInfo);
-        entity.setUpdatedAt(now());
+        ColumnInfoEntity entity = persistenceMapper.toEntity(columnInfo);
+        // updated_at/updated_by 由 MybatisPlusMetaObjectHandler 自动填充
         mapper.updateById(entity);
         return findByTableId(columnInfo.tableId()).stream()
                 .filter(item -> item.id().equals(columnInfo.id()))
@@ -51,7 +49,7 @@ public class JdbcColumnInfoRepository implements ColumnInfoRepository {
     public List<ColumnInfo> findByTableId(Long tableId) {
         return mapper.selectByTableId(tableId)
                 .stream()
-                .map(DatasourcePersistenceMapper::toDomain)
+                .map(persistenceMapper::toDomain)
                 .toList();
     }
 
@@ -62,10 +60,8 @@ public class JdbcColumnInfoRepository implements ColumnInfoRepository {
 
     @Override
     public void softDeleteByTableId(Long tableId) {
-        mapper.softDeleteByTableId(tableId);
-    }
-
-    private static String now() {
-        return LocalDateTime.now().format(TIME_FORMATTER);
+        // 逻辑删除由 MyBatis-Plus @TableLogic 内建实现
+        mapper.delete(Wrappers.<ColumnInfoEntity>lambdaQuery()
+                .eq(ColumnInfoEntity::getTableId, tableId));
     }
 }

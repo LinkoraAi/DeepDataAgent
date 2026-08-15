@@ -1,6 +1,6 @@
 package com.linkroa.deepdataagent.datasource.controller.response;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -24,6 +24,6 @@ public record ApiSchemaDetailResponse(
     ApiPaginationConfigResponse paginationConfig,
     List<PreOperationConfigResponse> preOperationConfigs,
     List<ApiFieldResponse> fields,
-    LocalDateTime createdAt,
-    LocalDateTime updatedAt
+    OffsetDateTime createdAt,
+    OffsetDateTime updatedAt
 ) {}

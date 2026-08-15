@@ -1,6 +1,6 @@
 package com.linkroa.deepdataagent.datasource.domain.model;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * API字段领域模型
@@ -13,7 +13,7 @@ public record ApiField(
         String jsonPath,
         String fieldType,
         String description,
-        LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt
 ) {
 }

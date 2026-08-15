@@ -6,14 +6,16 @@ import com.linkroa.deepdataagent.datasource.domain.model.*;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceType;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.mapstruct.Mapper;
 
 /**
  * 数据源组装器
- * <p>负责Command到领域模型的转换。</p>
+ * <p>负责Command到领域模型的转换，含合并与默认值逻辑。</p>
  */
-public class DatasourceAssembler {
+@Mapper(componentModel = "spring")
+public interface DatasourceAssembler {
 
-    public static DatasourceConnection toDatasourceConnection(CreateDatasourceCommand command) {
+    default DatasourceConnection toDatasourceConnection(CreateDatasourceCommand command) {
         JdbcConnectionConfig jdbcConfig = null;
 
         if (command.type() == DatasourceType.JDBC && command.jdbcConfig() != null) {
@@ -36,7 +38,7 @@ public class DatasourceAssembler {
         );
     }
 
-    public static DatasourceConnection toDatasourceConnection(UpdateDatasourceCommand command, DatasourceConnection existing) {
+    default DatasourceConnection toDatasourceConnection(UpdateDatasourceCommand command, DatasourceConnection existing) {
         JdbcConnectionConfig jdbcConfig = existing.jdbcConnectionConfig();
         if (command.jdbcConfig() != null) {
             // 如果新密码为空,保留原有密码

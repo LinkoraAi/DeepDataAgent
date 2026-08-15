@@ -6,7 +6,8 @@ import com.linkroa.deepdataagent.datasource.domain.model.enums.JdbcType;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.regex.Pattern;
 
 /**
@@ -20,8 +21,8 @@ public record DatasourceConnection(
         DatasourceStatus status,
         JdbcConnectionConfig jdbcConnectionConfig,
         String description,
-        LocalDateTime createdAt,
-        LocalDateTime updatedAt,
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt,
         String createdBy,
         String updatedBy
 ) {
@@ -104,8 +105,8 @@ public record DatasourceConnection(
                 DatasourceStatus.ENABLED,
                 jdbcConfig,
                 description,
-                LocalDateTime.now(),
-                LocalDateTime.now(),
+                OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
+                OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 null,
                 null
         );
@@ -135,8 +136,8 @@ public record DatasourceConnection(
             DatasourceStatus status,
             JdbcConnectionConfig jdbcConfig,
             String description,
-            LocalDateTime createdAt,
-            LocalDateTime updatedAt,
+            OffsetDateTime createdAt,
+            OffsetDateTime updatedAt,
             String createdBy,
             String updatedBy
     ) {

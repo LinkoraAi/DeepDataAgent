@@ -8,7 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -163,8 +164,8 @@ public class ApiResponseParser {
                     fieldPath,
                     fieldType,
                     null,
-                    LocalDateTime.now(),
-                    LocalDateTime.now()
+                    OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
+                    OffsetDateTime.now(ZoneId.of("Asia/Shanghai"))
             ));
 
             if (fieldValue instanceof Map<?, ?> nestedMap) {

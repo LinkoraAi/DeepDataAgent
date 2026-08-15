@@ -1,6 +1,6 @@
 package com.linkroa.deepdataagent.datasource.controller.response;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * API Schema摘要响应
@@ -13,6 +13,6 @@ public record ApiSchemaSummaryResponse(
     String method,
     String bodyType,
     String jsonPathConfig,
-    LocalDateTime createdAt,
-    LocalDateTime updatedAt
+    OffsetDateTime createdAt,
+    OffsetDateTime updatedAt
 ) {}

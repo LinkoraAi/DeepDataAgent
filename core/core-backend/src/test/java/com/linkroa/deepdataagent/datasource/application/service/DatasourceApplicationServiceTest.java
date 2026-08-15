@@ -1,5 +1,6 @@
 package com.linkroa.deepdataagent.datasource.application.service;
 
+import com.linkroa.deepdataagent.datasource.application.assembler.DatasourceAssembler;
 import com.linkroa.deepdataagent.datasource.application.command.ApiFieldCommand;
 import com.linkroa.deepdataagent.datasource.application.command.ApiSchemaCommand;
 import com.linkroa.deepdataagent.datasource.application.command.CreateDatasourceCommand;
@@ -7,6 +8,7 @@ import com.linkroa.deepdataagent.datasource.application.command.JdbcConfigComman
 import com.linkroa.deepdataagent.datasource.application.command.TestConnectionCommand;
 import com.linkroa.deepdataagent.datasource.application.command.UpdateDatasourceCommand;
 import com.linkroa.deepdataagent.datasource.application.query.TableListQuery;
+import com.linkroa.deepdataagent.datasource.controller.response.DatasourceResponseMapper;
 import com.linkroa.deepdataagent.datasource.domain.model.*;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.*;
 import com.linkroa.deepdataagent.datasource.domain.repository.*;
@@ -21,9 +23,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mapstruct.factory.Mappers;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -56,7 +60,9 @@ class DatasourceApplicationServiceTest {
                 connectionRepository, strategyFactory, domainService,
                 transactionTemplate, databaseSchemaRepository, tableInfoRepository,
                 columnInfoRepository, apiSchemaRepository, apiFieldRepository,
-                apiResponseParser, apiPaginationHandler
+                apiResponseParser, apiPaginationHandler,
+                Mappers.getMapper(DatasourceResponseMapper.class),
+                Mappers.getMapper(DatasourceAssembler.class)
         );
     }
 
@@ -606,7 +612,7 @@ class DatasourceApplicationServiceTest {
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         when(apiSchemaRepository.save(any())).thenAnswer(inv -> {
             ApiSchema s = inv.getArgument(0);
-            return new ApiSchema(1L, 1L, s.name(), s.url(), s.method(), s.config(), LocalDateTime.now(), LocalDateTime.now(), null, null);
+            return new ApiSchema(1L, 1L, s.name(), s.url(), s.method(), s.config(), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
         });
 
         var result = service.saveApiSchema(1L, schemaCommand);
@@ -624,7 +630,7 @@ class DatasourceApplicationServiceTest {
                 null, null, null, null, null, null, null, null, null, null, null, null, null, List.of(fieldDto));
         when(apiSchemaRepository.save(any())).thenAnswer(inv -> {
             ApiSchema s = inv.getArgument(0);
-            return new ApiSchema(1L, 1L, s.name(), s.url(), s.method(), s.config(), LocalDateTime.now(), LocalDateTime.now(), null, null);
+            return new ApiSchema(1L, 1L, s.name(), s.url(), s.method(), s.config(), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
         });
 
         service.saveApiSchema(1L, schemaCommand);
@@ -639,7 +645,7 @@ class DatasourceApplicationServiceTest {
                 null, null, null, ApiAuthType.BASIC_AUTH, "user", "pass", null, null, null, null, null, null, null, null);
         when(apiSchemaRepository.save(any())).thenAnswer(inv -> {
             ApiSchema s = inv.getArgument(0);
-            return new ApiSchema(1L, 1L, s.name(), s.url(), s.method(), s.config(), LocalDateTime.now(), LocalDateTime.now(), null, null);
+            return new ApiSchema(1L, 1L, s.name(), s.url(), s.method(), s.config(), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
         });
 
         service.saveApiSchema(1L, schemaCommand);
@@ -654,7 +660,7 @@ class DatasourceApplicationServiceTest {
                 null, null, null, null, null, null, "PAGE_BASED", "page", "size", "$.total", 20, 30, null, null);
         when(apiSchemaRepository.save(any())).thenAnswer(inv -> {
             ApiSchema s = inv.getArgument(0);
-            return new ApiSchema(1L, 1L, s.name(), s.url(), s.method(), s.config(), LocalDateTime.now(), LocalDateTime.now(), null, null);
+            return new ApiSchema(1L, 1L, s.name(), s.url(), s.method(), s.config(), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
         });
 
         service.saveApiSchema(1L, schemaCommand);
@@ -722,8 +728,8 @@ class DatasourceApplicationServiceTest {
         ApiRequestConfig config = new ApiRequestConfig(null, null, null, null, null, 180, null,
                 new ApiAuthConfig(ApiAuthType.NO_AUTH, null, null), null, null);
         ApiSchema schema = new ApiSchema(1L, 1L, "test-api", "http://example.com", HttpMethod.GET,
-                config, LocalDateTime.now(), LocalDateTime.now(), null, null);
-        ApiField field = new ApiField(1L, 1L, "id", "ID", "$.id", "number", "desc", LocalDateTime.now(), LocalDateTime.now());
+                config, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
+        ApiField field = new ApiField(1L, 1L, "id", "ID", "$.id", "number", "desc", OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")));
         when(apiSchemaRepository.findById(1L)).thenReturn(Optional.of(schema));
         when(apiFieldRepository.findByApiSchemaId(1L)).thenReturn(List.of(field));
 

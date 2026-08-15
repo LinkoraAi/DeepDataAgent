@@ -1,6 +1,6 @@
 package com.linkroa.deepdataagent.datasource.controller.response;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -21,52 +21,7 @@ public record TableResponse(
     String jsonPath,
     List<ApiFieldResponse> fields,
     ApiPaginationConfigResponse paginationConfig,
-    LocalDateTime createdAt,
-    LocalDateTime updatedAt
+    OffsetDateTime createdAt,
+    OffsetDateTime updatedAt
 ) {
-    /**
-     * 从 JDBC TableInfo 创建响应
-     */
-    public static TableResponse fromTableInfo(com.linkroa.deepdataagent.datasource.domain.model.TableInfo tableInfo) {
-        return new TableResponse(
-                tableInfo.id(),
-                "JDBC",
-                tableInfo.databaseSchemaId(),
-                null,
-                tableInfo.tableName(),
-                tableInfo.tableComment(),
-                tableInfo.tableCustomComment(),
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                tableInfo.createdAt(),
-                tableInfo.updatedAt()
-        );
-    }
-
-    /**
-     * 从 API Schema 创建响应
-     */
-    public static TableResponse fromApiSchema(com.linkroa.deepdataagent.datasource.domain.model.ApiSchema apiSchema) {
-        return new TableResponse(
-                apiSchema.id(),
-                "API",
-                null,
-                apiSchema.connectionId(),
-                apiSchema.name(),
-                null,
-                null,
-                null,
-                apiSchema.url(),
-                apiSchema.method() != null ? apiSchema.method().name() : null,
-                apiSchema.config() != null ? apiSchema.config().jsonPathConfig() : null,
-                null,
-                null,
-                apiSchema.createdAt(),
-                apiSchema.updatedAt()
-        );
-    }
 }

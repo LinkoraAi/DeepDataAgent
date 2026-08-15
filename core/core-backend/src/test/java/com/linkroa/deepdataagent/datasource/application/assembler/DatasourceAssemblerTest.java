@@ -8,6 +8,7 @@ import com.linkroa.deepdataagent.datasource.domain.model.*;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mapstruct.factory.Mappers;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
@@ -18,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith(MockitoExtension.class)
 class DatasourceAssemblerTest {
 
+    private final DatasourceAssembler assembler = Mappers.getMapper(DatasourceAssembler.class);
+
     @Test
     void should_mapJdbcFields_when_toDatasourceConnection_given_jdbcCreateCommand() {
         JdbcConfigCommand jdbcConfig = new JdbcConfigCommand("localhost", 3306, "testdb", "root", "pass", null);
@@ -25,7 +28,7 @@ class DatasourceAssemblerTest {
                 "test-ds", DatasourceType.JDBC, JdbcType.MYSQL, "desc", jdbcConfig, null
         );
 
-        DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command);
+        DatasourceConnection result = assembler.toDatasourceConnection(command);
 
         assertEquals("test-ds", result.name());
         assertEquals(DatasourceType.JDBC, result.type());
@@ -45,14 +48,14 @@ class DatasourceAssemblerTest {
                 "test-ds", DatasourceType.JDBC, JdbcType.MYSQL, null, jdbcConfig, null
         );
 
-        DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command);
+        DatasourceConnection result = assembler.toDatasourceConnection(command);
 
         assertEquals(3306, result.jdbcConnectionConfig().port());
     }
 
     @Test
     void should_handleNullExistingJdbcConnection_when_update_given_existingConnectionWithNullJdbcConfig() {
-        // given: 现有连接没有 jdbcConnectionConfig（API 类型），更新命令提供 JDBC 配置
+        // given: 鐜版湁杩炴帴娌℃湁 jdbcConnectionConfig锛圓PI 绫诲瀷锛夛紝鏇存柊鍛戒护鎻愪緵 JDBC 閰嶇疆
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "api-ds", DatasourceType.API, null, DatasourceStatus.ENABLED,
                 null, "API desc", null, null, null, null
@@ -63,7 +66,7 @@ class DatasourceAssemblerTest {
                 new JdbcConfigCommand("new-host", 3306, "newdb", "newuser", "newpass", null)
         );
 
-        DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command, existing);
+        DatasourceConnection result = assembler.toDatasourceConnection(command, existing);
 
         assertEquals("updated-ds", result.name());
         assertEquals("new-host", result.jdbcConnectionConfig().host());
@@ -87,7 +90,7 @@ class DatasourceAssemblerTest {
                 "api-ds", DatasourceType.API, null, "API desc", null, List.of(apiSchema)
         );
 
-        DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command);
+        DatasourceConnection result = assembler.toDatasourceConnection(command);
 
         assertEquals("api-ds", result.name());
         assertEquals(DatasourceType.API, result.type());
@@ -106,7 +109,7 @@ class DatasourceAssemblerTest {
                 1L, "new-name", "new desc", null
         );
 
-        DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command, existing);
+        DatasourceConnection result = assembler.toDatasourceConnection(command, existing);
 
         assertEquals(1L, result.id());
         assertEquals("new-name", result.name());
@@ -129,7 +132,7 @@ class DatasourceAssemblerTest {
                 1L, null, null, null
         );
 
-        DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command, existing);
+        DatasourceConnection result = assembler.toDatasourceConnection(command, existing);
 
         assertEquals("old-name", result.name());
         assertEquals("old-host", result.jdbcConnectionConfig().host());
@@ -144,7 +147,7 @@ class DatasourceAssemblerTest {
                 "test-ds", DatasourceType.JDBC, JdbcType.MYSQL, "desc", jdbcConfig, null
         );
 
-        DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command);
+        DatasourceConnection result = assembler.toDatasourceConnection(command);
 
         assertEquals(3307, result.jdbcConnectionConfig().port());
     }
@@ -162,7 +165,7 @@ class DatasourceAssemblerTest {
                 new JdbcConfigCommand("new-host", 3307, "newdb", "newuser", "", null)
         );
 
-        DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command, existing);
+        DatasourceConnection result = assembler.toDatasourceConnection(command, existing);
 
         assertEquals("oldpass", result.jdbcConnectionConfig().password());
         assertEquals("new-host", result.jdbcConnectionConfig().host());
@@ -181,7 +184,7 @@ class DatasourceAssemblerTest {
                 new JdbcConfigCommand("new-host", null, "newdb", "newuser", "newpass", null)
         );
 
-        DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command, existing);
+        DatasourceConnection result = assembler.toDatasourceConnection(command, existing);
 
         assertEquals(3306, result.jdbcConnectionConfig().port());
     }
@@ -198,7 +201,7 @@ class DatasourceAssemblerTest {
                 1L, "  ", "new desc", null
         );
 
-        DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command, existing);
+        DatasourceConnection result = assembler.toDatasourceConnection(command, existing);
 
         assertEquals("old-name", result.name());
     }
@@ -215,21 +218,21 @@ class DatasourceAssemblerTest {
                 1L, "new-name", "  ", null
         );
 
-        DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command, existing);
+        DatasourceConnection result = assembler.toDatasourceConnection(command, existing);
 
         assertEquals("old desc", result.description());
     }
 
     @Test
     void should_throwException_when_toDatasourceConnection_given_jdbcTypeAndNullJdbcConfig() {
-        // given: JDBC 类型但 jdbcConfig 为 null（DatasourceConnection 校验会抛出异常）
+        // given: JDBC 绫诲瀷浣?jdbcConfig 涓?null锛圖atasourceConnection 鏍￠獙浼氭姏鍑哄紓甯革級
         CreateDatasourceCommand command = new CreateDatasourceCommand(
                 "jdbc-ds", DatasourceType.JDBC, JdbcType.MYSQL, "desc", null, null
         );
 
-        // when & then: 应该抛出 IllegalArgumentException，因为 JDBC 类型必须提供连接配置
+        // when & then: 搴旇鎶涘嚭 IllegalArgumentException锛屽洜涓?JDBC 绫诲瀷蹇呴』鎻愪緵杩炴帴閰嶇疆
         assertThrows(IllegalArgumentException.class, () ->
-                DatasourceAssembler.toDatasourceConnection(command)
+                assembler.toDatasourceConnection(command)
         );
     }
 
@@ -240,7 +243,7 @@ class DatasourceAssemblerTest {
                 "api-ds", DatasourceType.API, null, "API desc", jdbcConfig, null
         );
 
-        DatasourceConnection result = DatasourceAssembler.toDatasourceConnection(command);
+        DatasourceConnection result = assembler.toDatasourceConnection(command);
 
         assertEquals("api-ds", result.name());
         assertEquals(DatasourceType.API, result.type());

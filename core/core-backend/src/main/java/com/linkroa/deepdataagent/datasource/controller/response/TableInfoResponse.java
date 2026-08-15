@@ -1,8 +1,6 @@
 package com.linkroa.deepdataagent.datasource.controller.response;
 
-import com.linkroa.deepdataagent.datasource.domain.model.TableInfo;
-
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 表信息响应
@@ -13,18 +11,7 @@ public record TableInfoResponse(
         String tableName,
         String tableComment,
         String tableCustomComment,
-        LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt
 ) {
-    public static TableInfoResponse from(TableInfo tableInfo) {
-        return new TableInfoResponse(
-                tableInfo.id(),
-                tableInfo.databaseSchemaId(),
-                tableInfo.tableName(),
-                tableInfo.tableComment(),
-                tableInfo.tableCustomComment(),
-                tableInfo.createdAt(),
-                tableInfo.updatedAt()
-        );
-    }
 }

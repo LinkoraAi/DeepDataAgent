@@ -1,6 +1,6 @@
 package com.linkroa.deepdataagent.datasource.domain.model;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 列信息领域模型
@@ -12,7 +12,7 @@ public record ColumnInfo(
         String dataType,
         String columnComment,
         String columnCustomComment,
-        LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt
 ) {
 }

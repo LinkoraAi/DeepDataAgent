@@ -28,7 +28,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +50,8 @@ public class DatasourceApplicationService {
     private final ApiFieldRepository apiFieldRepository;
     private final ApiResponseParser apiResponseParser;
     private final ApiPaginationHandler apiPaginationHandler;
+    private final DatasourceResponseMapper responseMapper;
+    private final DatasourceAssembler datasourceAssembler;
 
     public DatasourceApplicationService(
             DatasourceConnectionRepository connectionRepository,
@@ -61,7 +64,9 @@ public class DatasourceApplicationService {
             ApiSchemaRepository apiSchemaRepository,
             ApiFieldRepository apiFieldRepository,
             ApiResponseParser apiResponseParser,
-            ApiPaginationHandler apiPaginationHandler
+            ApiPaginationHandler apiPaginationHandler,
+            DatasourceResponseMapper responseMapper,
+            DatasourceAssembler datasourceAssembler
     ) {
         this.connectionRepository = connectionRepository;
         this.strategyFactory = strategyFactory;
@@ -74,6 +79,8 @@ public class DatasourceApplicationService {
         this.apiFieldRepository = apiFieldRepository;
         this.apiResponseParser = apiResponseParser;
         this.apiPaginationHandler = apiPaginationHandler;
+        this.responseMapper = responseMapper;
+        this.datasourceAssembler = datasourceAssembler;
     }
 
     public List<DatasourceTypeResponse> getSupportedTypes() {
@@ -94,7 +101,7 @@ public class DatasourceApplicationService {
         if (command.type() == DatasourceType.JDBC && command.jdbcConfig() != null) {
             DatasourceValidator.validatePostgresqlSchema(command.subType(), command.jdbcConfig().schema());
         }
-        DatasourceConnection connection = DatasourceAssembler.toDatasourceConnection(command);
+        DatasourceConnection connection = datasourceAssembler.toDatasourceConnection(command);
         return transactionTemplate.execute(status -> {
             DatasourceConnection saved = connectionRepository.save(connection);
             if (saved.type() == DatasourceType.API && ObjectUtils.isNotEmpty(command.apiSchemas())) {
@@ -119,7 +126,7 @@ public class DatasourceApplicationService {
         if (command.jdbcConfig() != null) {
             DatasourceValidator.validatePostgresqlSchema(existing.subType(), command.jdbcConfig().schema());
         }
-        DatasourceConnection updated = DatasourceAssembler.toDatasourceConnection(command, existing);
+        DatasourceConnection updated = datasourceAssembler.toDatasourceConnection(command, existing);
         DatasourceConnection saved = transactionTemplate.execute(status -> connectionRepository.update(updated));
         // JDBC 数据源更新成功后重新同步元数据（置于事务外，避免远程调用占用数据库连接）
         if (saved.type() == DatasourceType.JDBC) {
@@ -417,7 +424,7 @@ public class DatasourceApplicationService {
         ApiSchema schema = new ApiSchema(
             null, connectionId, schemaCommand.name(), schemaCommand.url(),
             schemaCommand.method() != null ? schemaCommand.method() : HttpMethod.GET,
-            requestConfig, LocalDateTime.now(), LocalDateTime.now(), null, null
+            requestConfig, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null
         );
         ApiSchema savedSchema = apiSchemaRepository.save(schema);
 
@@ -426,7 +433,7 @@ public class DatasourceApplicationService {
                 ApiField field = new ApiField(
                     null, savedSchema.id(), f.originalName(), f.displayName(),
                     f.jsonPath(), f.fieldType(), f.description(),
-                    LocalDateTime.now(), LocalDateTime.now()
+                    OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), OffsetDateTime.now(ZoneId.of("Asia/Shanghai"))
                 );
                 apiFieldRepository.save(field);
             }
@@ -495,7 +502,7 @@ public class DatasourceApplicationService {
 
         ApiSchema updatedSchema = new ApiSchema(
                 existing.id(), existing.connectionId(), name, url,
-                method, updatedConfig, existing.createdAt(), LocalDateTime.now(),
+                method, updatedConfig, existing.createdAt(), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 existing.createdBy(), existing.updatedBy()
         );
 
@@ -507,7 +514,7 @@ public class DatasourceApplicationService {
                     ApiField field = new ApiField(
                             null, schemaId, f.originalName(), f.displayName(),
                             f.jsonPath(), f.fieldType(), f.description(),
-                            LocalDateTime.now(), LocalDateTime.now()
+                            OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), OffsetDateTime.now(ZoneId.of("Asia/Shanghai"))
                     );
                     apiFieldRepository.save(field);
                 }
@@ -537,7 +544,7 @@ public class DatasourceApplicationService {
         ApiSchema schema = apiSchemaRepository.findById(schemaId)
                 .orElseThrow(() -> new DeepDataAgentException("API表不存在"));
         List<ApiField> fields = apiFieldRepository.findByApiSchemaId(schemaId);
-        return toApiSchemaDetailResponse(schema, fields);
+        return responseMapper.toApiSchemaDetailResponse(schema, fields);
     }
 
     public List<ApiSchema> listApiSchemas(Long connectionId) {
@@ -727,32 +734,6 @@ public class DatasourceApplicationService {
     private ApiAuthType parseAuthTypeFromRequest(String authType) {
         if (authType == null) return ApiAuthType.NO_AUTH;
         return ApiAuthType.fromRequestString(authType);
-    }
-
-    private ApiSchemaDetailResponse toApiSchemaDetailResponse(ApiSchema schema, List<ApiField> fields) {
-        ApiRequestConfig config = schema.config() != null ? schema.config() : ApiRequestConfig.defaultConfig();
-        return new ApiSchemaDetailResponse(
-                schema.id(), schema.connectionId(), schema.name(), schema.url(),
-                schema.method() != null ? schema.method().name() : null,
-                config.headers(), config.params(), config.body(),
-                config.bodyType() != null ? config.bodyType().name() : null,
-                config.jsonPathConfig(), config.timeout(), config.retryCount(),
-                config.authConfig() != null ? new ApiAuthConfigResponse(config.authConfig().authType().name(), config.authConfig().username()) : null,
-                config.paginationConfig() != null ? new ApiPaginationConfigResponse(
-                        config.paginationConfig().paginationType() != null ? config.paginationConfig().paginationType().name() : null,
-                        config.paginationConfig().pageParamName(), config.paginationConfig().sizeParamName(),
-                        config.paginationConfig().totalCountJsonPath(), config.paginationConfig().pageSize(),
-                        config.paginationConfig().maxPages()
-                ) : null,
-                config.preOperationConfigs() != null ? config.preOperationConfigs().stream().map(p -> new PreOperationConfigResponse(
-                        p.enabled(), p.url(), p.method() != null ? p.method().name() : null,
-                        p.headers(), p.params(), p.body(),
-                        p.bodyType() != null ? p.bodyType().name() : null,
-                        p.paramMappings() != null ? p.paramMappings().stream().map(m -> new ParamMappingResponse(m.paramName(), m.paramLocation(), m.jsonPath())).toList() : null
-                )).toList() : null,
-                fields.stream().map(f -> new ApiFieldResponse(f.id(), f.apiSchemaId(), f.originalName(), f.displayName(), f.jsonPath(), f.fieldType(), f.description())).toList(),
-                schema.createdAt(), schema.updatedAt()
-        );
     }
 
     public record PaginatedResult<T>(List<T> data, long total, int page, int size) {

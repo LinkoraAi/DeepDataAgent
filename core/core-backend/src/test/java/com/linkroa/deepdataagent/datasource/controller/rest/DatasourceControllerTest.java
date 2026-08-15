@@ -1,5 +1,6 @@
 package com.linkroa.deepdataagent.datasource.controller.rest;
 
+import com.linkroa.deepdataagent.datasource.application.assembler.DatasourceCommandAssembler;
 import com.linkroa.deepdataagent.datasource.application.command.CreateDatasourceCommand;
 import com.linkroa.deepdataagent.datasource.application.command.ParseApiResponseCommand;
 import com.linkroa.deepdataagent.datasource.application.command.TestConnectionCommand;
@@ -18,7 +19,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mapstruct.factory.Mappers;
 
 import java.util.List;
 import java.util.Map;
@@ -32,6 +35,12 @@ class DatasourceControllerTest {
 
     @Mock
     private DatasourceApplicationService datasourceService;
+
+    @Spy
+    private DatasourceResponseMapper responseMapper = Mappers.getMapper(DatasourceResponseMapper.class);
+
+    @Spy
+    private DatasourceCommandAssembler commandAssembler = Mappers.getMapper(DatasourceCommandAssembler.class);
 
     @InjectMocks
     private DatasourceController controller;

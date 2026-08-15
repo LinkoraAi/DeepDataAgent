@@ -4,6 +4,9 @@ server:
 spring:
   application:
     name: deepdataagent-backend
+  jackson:
+    # 系统统一使用中国时区：JSON 时间序列化/反序列化对齐 Asia/Shanghai
+    time-zone: Asia/Shanghai
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://host.docker.internal:5432/postgres}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
@@ -11,6 +14,8 @@ spring:
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: ${SPRING_DATASOURCE_MAX_POOL_SIZE:10}
+      # 每个连接建立时将会话时区对齐中国时区（与迁移脚本 SET TIME ZONE 保持一致，TIMESTAMPTZ 写入/读取口径统一）
+      connection-init-sql: SET TIME ZONE 'Asia/Shanghai'
   flyway:
     # SQL 版本管理：迁移脚本位于 classpath:db/migration，V{n}__{描述}.sql 一经应用不可修改
     enabled: true
@@ -54,6 +59,12 @@ mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
   mapper-locations: classpath*:mapper/**/*.xml
+  global-config:
+    db-config:
+      # 逻辑删除全局配置：is_deleted = 1 表示已删除，0 表示未删除
+      logic-delete-field: isDeleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
 
 management:
   endpoint:

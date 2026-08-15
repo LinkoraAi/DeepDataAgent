@@ -12,6 +12,7 @@ import com.linkroa.deepdataagent.datasource.controller.request.*;
 import com.linkroa.deepdataagent.datasource.domain.model.PreOperationConfig;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.*;
 import org.junit.jupiter.api.Test;
+import org.mapstruct.factory.Mappers;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -21,6 +22,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class DatasourceCommandAssemblerTest {
 
+    private final DatasourceCommandAssembler assembler = Mappers.getMapper(DatasourceCommandAssembler.class);
+
     @Test
     void should_createCreateDatasourceCommand_when_toCreateCommand_given_validRequest() {
         JdbcConfigRequest jdbcConfig = new JdbcConfigRequest("localhost", 3306, "testdb", "root", "pass", null);
@@ -28,7 +31,7 @@ class DatasourceCommandAssemblerTest {
                 "test-ds", "JDBC", "MYSQL", null, jdbcConfig, null
         );
 
-        CreateDatasourceCommand command = DatasourceCommandAssembler.toCreateCommand(request);
+        CreateDatasourceCommand command = assembler.toCreateCommand(request);
 
         assertEquals("test-ds", command.name());
         assertEquals(DatasourceType.JDBC, command.type());
@@ -41,7 +44,7 @@ class DatasourceCommandAssemblerTest {
                 1L, "updated-ds", "desc", null
         );
 
-        UpdateDatasourceCommand command = DatasourceCommandAssembler.toUpdateCommand(request);
+        UpdateDatasourceCommand command = assembler.toUpdateCommand(request);
 
         assertEquals(1L, command.id());
         assertEquals("updated-ds", command.name());
@@ -56,7 +59,7 @@ class DatasourceCommandAssemblerTest {
                 1L, "test-jdbc", "JDBC", "MYSQL", "test description", jdbcConfig, null
         );
 
-        TestConnectionCommand command = DatasourceCommandAssembler.toTestCommand(request);
+        TestConnectionCommand command = assembler.toTestCommand(request);
 
         assertEquals(1L, command.id());
         assertEquals("JDBC", command.type());
@@ -80,7 +83,7 @@ class DatasourceCommandAssemblerTest {
                 2L, "test-api", "API", null, "test api description", null, apiSchema
         );
 
-        TestConnectionCommand command = DatasourceCommandAssembler.toTestCommand(request);
+        TestConnectionCommand command = assembler.toTestCommand(request);
 
         assertEquals(2L, command.id());
         assertEquals("API", command.type());
@@ -100,7 +103,7 @@ class DatasourceCommandAssemblerTest {
     void should_createListDatasourceQuery_when_toListQuery_given_validRequest() {
         ListDatasourceRequest request = new ListDatasourceRequest("keyword", "API", "ENABLED", 1, 10);
 
-        ListDatasourceQuery query = DatasourceCommandAssembler.toListQuery(request);
+        ListDatasourceQuery query = assembler.toListQuery(request);
 
         assertEquals("keyword", query.keyword());
         assertEquals(DatasourceType.API, query.type());
@@ -112,7 +115,7 @@ class DatasourceCommandAssemblerTest {
     void should_createListDatasourceQuery_withDefaults_when_toListQuery_given_nullPageAndSize() {
         ListDatasourceRequest request = new ListDatasourceRequest(null, null, null, null, null);
 
-        ListDatasourceQuery query = DatasourceCommandAssembler.toListQuery(request);
+        ListDatasourceQuery query = assembler.toListQuery(request);
 
         assertEquals(1, query.page());
         assertEquals(20, query.size());
@@ -122,7 +125,7 @@ class DatasourceCommandAssemblerTest {
     void should_createTableListQuery_when_toTableListQuery_given_validRequest() {
         ListTablesRequest request = new ListTablesRequest(1L, "JDBC", "user", 0, 50);
 
-        TableListQuery query = DatasourceCommandAssembler.toTableListQuery(request);
+        TableListQuery query = assembler.toTableListQuery(request);
 
         assertEquals(1L, query.connectionId());
         assertEquals("user", query.keyword());
@@ -131,7 +134,7 @@ class DatasourceCommandAssemblerTest {
     @Test
     void should_returnApiFields_when_toApiFields_given_nullList() {
         ApiAuthConfigRequest authConfig = new ApiAuthConfigRequest(null, null, null);
-        ParseApiResponseCommand command = DatasourceCommandAssembler.toParseCommand(
+        ParseApiResponseCommand command = assembler.toParseCommand(
                 new ParseApiResponseRequest(1L, "http://api.test.com", "GET", null, null, null,
                         null, "$.data", null, null, authConfig, null, null)
         );
@@ -156,7 +159,7 @@ class DatasourceCommandAssemblerTest {
                 "api-ds", "API", null, "desc", null, List.of(apiSchema)
         );
 
-        CreateDatasourceCommand command = DatasourceCommandAssembler.toCreateCommand(request);
+        CreateDatasourceCommand command = assembler.toCreateCommand(request);
 
         assertEquals("api-ds", command.name());
         assertEquals(DatasourceType.API, command.type());
@@ -184,7 +187,7 @@ class DatasourceCommandAssemblerTest {
                 new JdbcConfigRequest("localhost", 3306, "db", "root", "pass", null), null
         );
 
-        CreateDatasourceCommand command = DatasourceCommandAssembler.toCreateCommand(request);
+        CreateDatasourceCommand command = assembler.toCreateCommand(request);
 
         assertNull(command.apiSchemas());
     }
@@ -200,7 +203,7 @@ class DatasourceCommandAssemblerTest {
                 "api-ds", "API", null, "desc", null, List.of(apiSchema)
         );
 
-        CreateDatasourceCommand command = DatasourceCommandAssembler.toCreateCommand(request);
+        CreateDatasourceCommand command = assembler.toCreateCommand(request);
 
         assertEquals(ApiAuthType.NO_AUTH, command.apiSchemas().get(0).authType());
         assertNull(command.apiSchemas().get(0).authUsername());
@@ -219,7 +222,7 @@ class DatasourceCommandAssemblerTest {
                 "api-ds", "API", null, "desc", null, List.of(apiSchema)
         );
 
-        CreateDatasourceCommand command = DatasourceCommandAssembler.toCreateCommand(request);
+        CreateDatasourceCommand command = assembler.toCreateCommand(request);
 
         assertEquals(ApiAuthType.NO_AUTH, command.apiSchemas().get(0).authType());
     }
@@ -238,7 +241,7 @@ class DatasourceCommandAssemblerTest {
                 "api-ds", "API", null, "desc", null, List.of(apiSchema)
         );
 
-        CreateDatasourceCommand command = DatasourceCommandAssembler.toCreateCommand(request);
+        CreateDatasourceCommand command = assembler.toCreateCommand(request);
 
         assertEquals("PAGE_BASED", command.apiSchemas().get(0).paginationType());
         assertEquals("size", command.apiSchemas().get(0).pageSizeParamName());
@@ -265,7 +268,7 @@ class DatasourceCommandAssemblerTest {
                 "api-ds", "API", null, "desc", null, List.of(apiSchema)
         );
 
-        CreateDatasourceCommand command = DatasourceCommandAssembler.toCreateCommand(request);
+        CreateDatasourceCommand command = assembler.toCreateCommand(request);
 
         assertNotNull(command.apiSchemas().get(0).preOperationConfigs());
         assertEquals(1, command.apiSchemas().get(0).preOperationConfigs().size());
@@ -283,7 +286,7 @@ class DatasourceCommandAssemblerTest {
                 "{}", "JSON", "$.data", 30, 3, authConfig, null, null
         );
 
-        ParseApiResponseCommand command = DatasourceCommandAssembler.toParseCommand(request);
+        ParseApiResponseCommand command = assembler.toParseCommand(request);
 
         assertEquals(1L, command.connectionId());
         assertEquals("http://api.test.com", command.url());
@@ -307,7 +310,7 @@ class DatasourceCommandAssemblerTest {
                 null, null, null, null, "$.data", null, null, null, null, null
         );
 
-        ParseApiResponseCommand command = DatasourceCommandAssembler.toParseCommand(request);
+        ParseApiResponseCommand command = assembler.toParseCommand(request);
 
         assertNull(command.authType());
         assertNull(command.authUsername());
@@ -325,7 +328,7 @@ class DatasourceCommandAssemblerTest {
         CreateApiSchemaRequest request = new CreateApiSchemaRequest(1L, schema);
 
         // when
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommandFromCreate(request);
+        ApiSchemaCommand result = assembler.toApiSchemaCommandFromCreate(request);
 
         // then
         assertNotNull(result);
@@ -339,13 +342,13 @@ class DatasourceCommandAssemblerTest {
         CreateApiSchemaRequest request = new CreateApiSchemaRequest(1L, null);
 
         assertThrows(IllegalArgumentException.class, () ->
-                DatasourceCommandAssembler.toApiSchemaCommandFromCreate(request)
+                assembler.toApiSchemaCommandFromCreate(request)
         );
     }
 
     @Test
     void should_returnNull_when_toApiSchemaCommand_given_nullRequest() {
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommand(null);
+        ApiSchemaCommand result = assembler.toApiSchemaCommand(null);
 
         assertNull(result);
     }
@@ -358,7 +361,7 @@ class DatasourceCommandAssemblerTest {
                 null, null, null, null
         );
 
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommand(apiSchema);
+        ApiSchemaCommand result = assembler.toApiSchemaCommand(apiSchema);
 
         assertEquals("  ", result.bodyType());
     }
@@ -371,7 +374,7 @@ class DatasourceCommandAssemblerTest {
                 null, null, null, null
         );
 
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommand(apiSchema);
+        ApiSchemaCommand result = assembler.toApiSchemaCommand(apiSchema);
 
         assertNull(result.method());
     }
@@ -384,7 +387,7 @@ class DatasourceCommandAssemblerTest {
                 null, null, null, null
         );
 
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommand(apiSchema);
+        ApiSchemaCommand result = assembler.toApiSchemaCommand(apiSchema);
 
         assertEquals(ApiAuthType.NO_AUTH, result.authType());
         assertNull(result.authUsername());
@@ -399,7 +402,7 @@ class DatasourceCommandAssemblerTest {
                 null, null, null, null
         );
 
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommand(apiSchema);
+        ApiSchemaCommand result = assembler.toApiSchemaCommand(apiSchema);
 
         assertNull(result.paginationType());
         assertNull(result.pageSizeParamName());
@@ -412,7 +415,7 @@ class DatasourceCommandAssemblerTest {
     @Test
     void should_throwException_when_toApiSchemaCommandFromCreate_given_nullRequest() {
         assertThrows(IllegalArgumentException.class, () ->
-                DatasourceCommandAssembler.toApiSchemaCommandFromCreate(null)
+                assembler.toApiSchemaCommandFromCreate(null)
         );
     }
 
@@ -426,7 +429,7 @@ class DatasourceCommandAssemblerTest {
                 null, null, preOps, null
         );
 
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommand(apiSchema);
+        ApiSchemaCommand result = assembler.toApiSchemaCommand(apiSchema);
 
         assertNotNull(result.preOperationConfigs());
         assertEquals(1, result.preOperationConfigs().size());
@@ -446,7 +449,7 @@ class DatasourceCommandAssemblerTest {
                 null, null, List.of(preOp), null
         );
 
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommand(apiSchema);
+        ApiSchemaCommand result = assembler.toApiSchemaCommand(apiSchema);
 
         assertNotNull(result.preOperationConfigs());
         assertEquals(1, result.preOperationConfigs().size());
@@ -465,7 +468,7 @@ class DatasourceCommandAssemblerTest {
                 null, null, List.of(preOp), null
         );
 
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommand(apiSchema);
+        ApiSchemaCommand result = assembler.toApiSchemaCommand(apiSchema);
 
         assertEquals(HttpMethod.GET, result.preOperationConfigs().get(0).method());
     }
@@ -482,7 +485,7 @@ class DatasourceCommandAssemblerTest {
                 null, null, List.of(preOp), null
         );
 
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommand(apiSchema);
+        ApiSchemaCommand result = assembler.toApiSchemaCommand(apiSchema);
 
         assertFalse(result.preOperationConfigs().get(0).enabled());
     }
@@ -499,7 +502,7 @@ class DatasourceCommandAssemblerTest {
                 null, null, List.of(preOp), null
         );
 
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommand(apiSchema);
+        ApiSchemaCommand result = assembler.toApiSchemaCommand(apiSchema);
 
         assertNull(result.preOperationConfigs().get(0).bodyType());
     }
@@ -516,7 +519,7 @@ class DatasourceCommandAssemblerTest {
                 null, null, List.of(preOp), null
         );
 
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommand(apiSchema);
+        ApiSchemaCommand result = assembler.toApiSchemaCommand(apiSchema);
 
         assertNull(result.preOperationConfigs().get(0).bodyType());
     }
@@ -530,7 +533,7 @@ class DatasourceCommandAssemblerTest {
                 authConfig, null, null, null
         );
 
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommand(apiSchema);
+        ApiSchemaCommand result = assembler.toApiSchemaCommand(apiSchema);
 
         assertEquals(ApiAuthType.NO_AUTH, result.authType());
     }
@@ -546,7 +549,7 @@ class DatasourceCommandAssemblerTest {
                 2L, "test-api", "API", null, "test api description", null, apiSchema
         );
 
-        TestConnectionCommand command = DatasourceCommandAssembler.toTestCommand(request);
+        TestConnectionCommand command = assembler.toTestCommand(request);
 
         assertNull(command.apiAuthType());
         assertNull(command.apiAuthUsername());
@@ -557,7 +560,7 @@ class DatasourceCommandAssemblerTest {
     void should_useDefaultPage_when_toTableListQuery_given_nullPage() {
         ListTablesRequest request = new ListTablesRequest(1L, "JDBC", "user", null, 50);
 
-        TableListQuery query = DatasourceCommandAssembler.toTableListQuery(request);
+        TableListQuery query = assembler.toTableListQuery(request);
 
         assertEquals(1, query.page());
     }
@@ -566,7 +569,7 @@ class DatasourceCommandAssemblerTest {
     void should_useDefaultSize_when_toTableListQuery_given_nullSize() {
         ListTablesRequest request = new ListTablesRequest(1L, "JDBC", "user", 0, null);
 
-        TableListQuery query = DatasourceCommandAssembler.toTableListQuery(request);
+        TableListQuery query = assembler.toTableListQuery(request);
 
         assertEquals(50, query.size());
     }
@@ -581,7 +584,7 @@ class DatasourceCommandAssemblerTest {
                 "{}", "JSON", "$.data", 30, 3, authConfig, paginationConfig, null
         );
 
-        ParseApiResponseCommand command = DatasourceCommandAssembler.toParseCommand(request);
+        ParseApiResponseCommand command = assembler.toParseCommand(request);
 
         assertNull(command.paginationType());
         assertNull(command.pageParamName());
@@ -596,7 +599,7 @@ class DatasourceCommandAssemblerTest {
         CreateApiSchemaRequest request = new CreateApiSchemaRequest(1L, null);
 
         assertThrows(IllegalArgumentException.class, () ->
-                DatasourceCommandAssembler.toApiSchemaCommandFromCreate(request)
+                assembler.toApiSchemaCommandFromCreate(request)
         );
     }
 
@@ -607,7 +610,7 @@ class DatasourceCommandAssemblerTest {
                 "test-ds", "JDBC", null, null, jdbcConfig, null
         );
 
-        CreateDatasourceCommand command = DatasourceCommandAssembler.toCreateCommand(request);
+        CreateDatasourceCommand command = assembler.toCreateCommand(request);
 
         assertEquals("test-ds", command.name());
         assertEquals(DatasourceType.JDBC, command.type());
@@ -622,7 +625,7 @@ class DatasourceCommandAssemblerTest {
                 null, null, null, null
         );
 
-        ApiSchemaCommand result = DatasourceCommandAssembler.toApiSchemaCommand(apiSchema);
+        ApiSchemaCommand result = assembler.toApiSchemaCommand(apiSchema);
 
         assertNull(result.method());
     }
@@ -633,7 +636,7 @@ class DatasourceCommandAssemblerTest {
                 1L, "test", "JDBC", "MYSQL", "desc", null, null
         );
 
-        TestConnectionCommand command = DatasourceCommandAssembler.toTestCommand(request);
+        TestConnectionCommand command = assembler.toTestCommand(request);
 
         assertNull(command.host());
         assertNull(command.port());

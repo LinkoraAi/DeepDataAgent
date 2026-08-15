@@ -1,32 +1,51 @@
 package com.linkroa.deepdataagent.datasource.infrastructure.persistence.mapper;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.DatasourceConnectionEntity;
 import org.apache.ibatis.annotations.Mapper;
-import org.apache.ibatis.annotations.Param;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 @Mapper
 public interface DatasourceConnectionMapper extends BaseMapper<DatasourceConnectionEntity> {
 
-    DatasourceConnectionEntity selectByName(@Param("name") String name);
+    default DatasourceConnectionEntity selectByName(String name) {
+        return selectOne(Wrappers.<DatasourceConnectionEntity>lambdaQuery()
+                .eq(e -> e.getName(), name)
+                .last("LIMIT 1"));
+    }
 
-    List<DatasourceConnectionEntity> selectAll();
+    default List<DatasourceConnectionEntity> selectAll() {
+        return selectList(Wrappers.<DatasourceConnectionEntity>lambdaQuery()
+                .orderByDesc(e -> e.getUpdatedAt()));
+    }
 
-    List<DatasourceConnectionEntity> selectByCondition(@Param("keyword") String keyword,
-                                                       @Param("type") String type,
-                                                       @Param("status") String status,
-                                                       @Param("offset") long offset,
-                                                       @Param("size") int size);
+    default List<DatasourceConnectionEntity> selectByCondition(String keyword, String type, String status,
+                                                               long offset, int size) {
+        return selectList(buildCondition(keyword, type, status)
+                .orderByAsc(e -> e.getCreatedAt())
+                .last("LIMIT " + size + " OFFSET " + offset));
+    }
 
-    long countByCondition(@Param("keyword") String keyword,
-                          @Param("type") String type,
-                          @Param("status") String status);
+    default long countByCondition(String keyword, String type, String status) {
+        return selectCount(buildCondition(keyword, type, status));
+    }
 
-    int updateStatus(@Param("id") Long id, @Param("status") String status, @Param("updatedAt") String updatedAt);
+    default int updateStatus(Long id, String status) {
+        return update(null, Wrappers.<DatasourceConnectionEntity>lambdaUpdate()
+                .set(e -> e.getStatus(), status)
+                .set(e -> e.getUpdatedAt(), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")))
+                .eq(e -> e.getId(), id));
+    }
 
-    DatasourceConnectionEntity selectByIdAndNotDeleted(@Param("id") Long id);
-
-    int softDeleteById(@Param("id") Long id, @Param("updatedAt") String updatedAt);
+    private LambdaQueryWrapper<DatasourceConnectionEntity> buildCondition(String keyword, String type, String status) {
+        return Wrappers.<DatasourceConnectionEntity>lambdaQuery()
+                .like(keyword != null && !keyword.isBlank(), e -> e.getName(), keyword)
+                .eq(type != null && !type.isBlank(), e -> e.getType(), type)
+                .eq(status != null && !status.isBlank(), e -> e.getStatus(), status);
+    }
 }

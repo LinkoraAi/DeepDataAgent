@@ -5,53 +5,51 @@ import com.linkroa.deepdataagent.datasource.domain.repository.TableInfoRepositor
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.DatasourcePersistenceMapper;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.TableInfoEntity;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.mapper.TableInfoMapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.stereotype.Repository;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
 
 @Repository
 public class JdbcTableInfoRepository implements TableInfoRepository {
 
-    private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-
     private final TableInfoMapper mapper;
+    private final DatasourcePersistenceMapper persistenceMapper;
 
-    public JdbcTableInfoRepository(TableInfoMapper mapper) {
+    public JdbcTableInfoRepository(TableInfoMapper mapper,
+                                   DatasourcePersistenceMapper persistenceMapper) {
         this.mapper = mapper;
+        this.persistenceMapper = persistenceMapper;
     }
 
     @Override
     public TableInfo save(TableInfo tableInfo) {
-        TableInfoEntity entity = DatasourcePersistenceMapper.toEntity(tableInfo);
+        TableInfoEntity entity = persistenceMapper.toEntity(tableInfo);
         entity.setId(null);
-        entity.setCreatedAt(now());
-        entity.setUpdatedAt(now());
-        entity.setIsDeleted(0);
+        // 基础字段由 MybatisPlusMetaObjectHandler 自动填充
         mapper.insert(entity);
         return findById(entity.getId()).orElse(tableInfo);
     }
 
     @Override
     public TableInfo update(TableInfo tableInfo) {
-        TableInfoEntity entity = DatasourcePersistenceMapper.toEntity(tableInfo);
-        entity.setUpdatedAt(now());
+        TableInfoEntity entity = persistenceMapper.toEntity(tableInfo);
+        // updated_at/updated_by 由 MybatisPlusMetaObjectHandler 自动填充
         mapper.updateById(entity);
         return findById(tableInfo.id()).orElse(tableInfo);
     }
 
     @Override
     public Optional<TableInfo> findById(Long id) {
-        return Optional.ofNullable(DatasourcePersistenceMapper.toDomain(mapper.selectById(id)));
+        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectById(id)));
     }
 
     @Override
     public List<TableInfo> findByDatabaseSchemaId(Long databaseSchemaId) {
         return mapper.selectByDatabaseSchemaId(databaseSchemaId)
                 .stream()
-                .map(DatasourcePersistenceMapper::toDomain)
+                .map(persistenceMapper::toDomain)
                 .toList();
     }
 
@@ -59,7 +57,7 @@ public class JdbcTableInfoRepository implements TableInfoRepository {
     public List<TableInfo> findByDatabaseSchemaIdAndKeyword(Long databaseSchemaId, String keyword, int page, int size) {
         return mapper.selectByDatabaseSchemaIdAndKeyword(databaseSchemaId, keyword, (long) Math.max(0, page - 1) * size, size)
                 .stream()
-                .map(DatasourcePersistenceMapper::toDomain)
+                .map(persistenceMapper::toDomain)
                 .toList();
     }
 
@@ -75,15 +73,13 @@ public class JdbcTableInfoRepository implements TableInfoRepository {
 
     @Override
     public void softDeleteByDatabaseSchemaId(Long databaseSchemaId) {
-        mapper.softDeleteByDatabaseSchemaId(databaseSchemaId);
+        // 逻辑删除由 MyBatis-Plus @TableLogic 内建实现
+        mapper.delete(Wrappers.<TableInfoEntity>lambdaQuery()
+                .eq(TableInfoEntity::getDatabaseSchemaId, databaseSchemaId));
     }
 
     @Override
     public void softDeleteById(Long id) {
-        mapper.softDeleteById(id);
-    }
-
-    private static String now() {
-        return LocalDateTime.now().format(TIME_FORMATTER);
+        mapper.deleteById(id);
     }
 }

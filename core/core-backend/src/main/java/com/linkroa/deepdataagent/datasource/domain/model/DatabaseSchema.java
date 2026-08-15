@@ -1,6 +1,6 @@
 package com.linkroa.deepdataagent.datasource.domain.model;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 数据库Schema领域模型
@@ -10,7 +10,7 @@ public record DatabaseSchema(
         Long connectionId,
         String schemaName,
         String description,
-        LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt
 ) {
 }

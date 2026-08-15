@@ -3,7 +3,8 @@ package com.linkroa.deepdataagent.datasource.infrastructure.adapter;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -39,28 +40,29 @@ public class ApiExpressionEvaluator {
             return value == null ? "" : value.toString();
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        OffsetDateTime now = OffsetDateTime.now(ZoneId.of("Asia/Shanghai"));
+        LocalDate today = now.toLocalDate();
         return switch (expression) {
-            case "today", "yyyy-MM-dd" -> LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-            case "yyyyMMdd" -> LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+            case "today", "yyyy-MM-dd" -> today.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+            case "yyyyMMdd" -> today.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
             case "yyyy-MM-dd HH:mm:ss" -> now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
             case "timestamp" -> String.valueOf(System.currentTimeMillis());
             case "year" -> String.valueOf(now.getYear());
             case "month" -> String.valueOf(now.getMonthValue());
             case "day" -> String.valueOf(now.getDayOfMonth());
-            default -> evaluateDateExpression(expression, now);
+            default -> evaluateDateExpression(expression, now, today);
         };
     }
 
-    private String evaluateDateExpression(String expression, LocalDateTime now) {
+    private String evaluateDateExpression(String expression, OffsetDateTime now, LocalDate today) {
         if (expression.startsWith("today")) {
-            return evaluateTodayExpression(expression);
+            return evaluateTodayExpression(expression, today);
         }
         if (expression.contains(":")) {
             String[] parts = expression.split(":", 2);
             String format = parts[0];
             String operation = parts[1];
-            LocalDateTime result = applyOffset(now, operation);
+            OffsetDateTime result = applyOffset(now, operation);
             try {
                 return result.format(DateTimeFormatter.ofPattern(format));
             } catch (IllegalArgumentException e) {
@@ -74,19 +76,18 @@ public class ApiExpressionEvaluator {
         }
     }
 
-    private String evaluateTodayExpression(String expression) {
-        LocalDate date = LocalDate.now();
+    private String evaluateTodayExpression(String expression, LocalDate today) {
         if (expression.equals("today")) {
-            return date.toString();
+            return today.toString();
         }
         if (expression.matches("today[+-]\\d+")) {
             int offset = Integer.parseInt(expression.substring(5));
-            return date.plusDays(offset).toString();
+            return today.plusDays(offset).toString();
         }
         return "${" + expression + "}";
     }
 
-    private LocalDateTime applyOffset(LocalDateTime now, String operation) {
+    private OffsetDateTime applyOffset(OffsetDateTime now, String operation) {
         if (operation == null || operation.length() < 3) {
             return now;
         }

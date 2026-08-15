@@ -17,28 +17,38 @@ import com.linkroa.deepdataagent.datasource.domain.model.enums.ApiAuthType;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.BodyType;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceType;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.HttpMethod;
+import org.mapstruct.Mapper;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * 数据源命令工厂
- * <p>负责将 Controller 层的 Request 对象转换为 Application 层的 Command/Query 对象，
- * 封装类型转换和默认值处理逻辑。</p>
+ * 数据源命令转换器
+ * <p>负责将 Controller 层的 Request 对象转换为 Application 层的 Command/Query 对象。
+ * 字段一一对应的映射由 MapStruct 自动生成；涉及枚举解析、默认值与嵌套取值的
+ * 映射在 default 方法中显式实现。</p>
  */
-public final class DatasourceCommandAssembler {
+@Mapper(componentModel = "spring")
+public interface DatasourceCommandAssembler {
 
-    private DatasourceCommandAssembler() {
-    }
+    // ===== 字段同名直转，MapStruct 自动生成 =====
+
+    JdbcConfigCommand toJdbcConfigCommand(JdbcConfigRequest request);
+
+    ApiFieldCommand toApiFieldCommand(ApiFieldRequest request);
+
+    ParamMapping toParamMapping(ParamMappingRequest request);
+
+    // ===== Create =====
 
     /**
      * 将 CreateDatasourceRequest 转换为 CreateDatasourceCommand
      * <p>注意：只有JDBC类型的数据源才有子类型，API类型没有子类型</p>
      */
-    public static CreateDatasourceCommand toCreateCommand(CreateDatasourceRequest request) {
+    default CreateDatasourceCommand toCreateCommand(CreateDatasourceRequest request) {
         var type = DatasourceValidator.parseDatasourceType(request.type());
         var subType = type == DatasourceType.JDBC ? DatasourceValidator.parseJdbcType(request.subType()) : null;
-        
+
         return new CreateDatasourceCommand(
                 request.name(),
                 type,
@@ -49,23 +59,7 @@ public final class DatasourceCommandAssembler {
         );
     }
 
-    /**
-     * 将 JdbcConfigRequest 转换为 JdbcConfigCommand
-     */
-    private static JdbcConfigCommand toJdbcConfigCommand(JdbcConfigRequest request) {
-        if (request == null) return null;
-
-        return new JdbcConfigCommand(
-                request.host(),
-                request.port(),
-                request.database(),
-                request.username(),
-                request.password(),
-                request.schema()
-        );
-    }
-
-    public static ApiSchemaCommand toApiSchemaCommandFromCreate(CreateApiSchemaRequest request) {
+    default ApiSchemaCommand toApiSchemaCommandFromCreate(CreateApiSchemaRequest request) {
         if (request == null || request.schema() == null) {
             throw new IllegalArgumentException("API表配置(schema)不能为空");
         }
@@ -75,18 +69,18 @@ public final class DatasourceCommandAssembler {
     /**
      * 将 ApiSchemaRequest 列表转换为 ApiSchemaCommand 列表
      */
-    private static List<ApiSchemaCommand> toApiSchemaCommands(List<ApiSchemaRequest> requests) {
+    default List<ApiSchemaCommand> toApiSchemaCommands(List<ApiSchemaRequest> requests) {
         if (requests == null) return null;
 
         return requests.stream()
-                .map(DatasourceCommandAssembler::toApiSchemaCommand)
+                .map(this::toApiSchemaCommand)
                 .toList();
     }
 
     /**
      * 将 ApiSchemaRequest 转换为 ApiSchemaCommand
      */
-    public static ApiSchemaCommand toApiSchemaCommand(ApiSchemaRequest request) {
+    default ApiSchemaCommand toApiSchemaCommand(ApiSchemaRequest request) {
         if (request == null) return null;
 
         return new ApiSchemaCommand(
@@ -117,25 +111,25 @@ public final class DatasourceCommandAssembler {
     /**
      * 将 PreOperationConfigRequest 列表转换为 PreOperationConfig 列表
      */
-    private static List<PreOperationConfig> toPreOperationConfigs(List<PreOperationConfigRequest> requests) {
+    default List<PreOperationConfig> toPreOperationConfigs(List<PreOperationConfigRequest> requests) {
         if (requests == null) return null;
 
         return requests.stream()
-                .map(DatasourceCommandAssembler::toPreOperationConfig)
+                .map(this::toPreOperationConfig)
                 .toList();
     }
 
     /**
      * 将 PreOperationConfigRequest 转换为 PreOperationConfig
      */
-    private static PreOperationConfig toPreOperationConfig(PreOperationConfigRequest request) {
+    default PreOperationConfig toPreOperationConfig(PreOperationConfigRequest request) {
         if (request == null) {
             return null;
         }
         List<ParamMapping> paramMappings = null;
         if (request.paramMappings() != null) {
             paramMappings = request.paramMappings().stream()
-                    .map(r -> new ParamMapping(r.paramName(), r.paramLocation(), r.jsonPath()))
+                    .map(this::toParamMapping)
                     .toList();
         }
         return new PreOperationConfig(
@@ -153,24 +147,18 @@ public final class DatasourceCommandAssembler {
     /**
      * 将 ApiFieldRequest 列表转换为 ApiFieldCommand 列表
      */
-    private static List<ApiFieldCommand> toApiFieldCommands(List<ApiFieldRequest> requests) {
+    default List<ApiFieldCommand> toApiFieldCommands(List<ApiFieldRequest> requests) {
         if (requests == null) return null;
 
         return requests.stream()
-                .map(r -> new ApiFieldCommand(
-                        r.originalName(),
-                        r.displayName(),
-                        r.jsonPath(),
-                        r.fieldType(),
-                        r.description()
-                ))
+                .map(this::toApiFieldCommand)
                 .toList();
     }
 
     /**
      * 解析认证类型
      */
-    private static ApiAuthType parseAuthType(ApiAuthConfigRequest request) {
+    private ApiAuthType parseAuthType(ApiAuthConfigRequest request) {
         if (request == null || request.authType() == null) {
             return ApiAuthType.NO_AUTH;
         }
@@ -180,7 +168,7 @@ public final class DatasourceCommandAssembler {
     /**
      * 将 UpdateDatasourceRequest 转换为 UpdateDatasourceCommand
      */
-    public static UpdateDatasourceCommand toUpdateCommand(UpdateDatasourceRequest request) {
+    default UpdateDatasourceCommand toUpdateCommand(UpdateDatasourceRequest request) {
         return new UpdateDatasourceCommand(
                 request.id(),
                 request.name(),
@@ -193,7 +181,7 @@ public final class DatasourceCommandAssembler {
      * 将 TestConnectionRequest 转换为 TestConnectionCommand
      * <p>注意：只有JDBC类型的数据源才有子类型，API类型没有子类型</p>
      */
-    public static TestConnectionCommand toTestCommand(TestConnectionRequest request) {
+    default TestConnectionCommand toTestCommand(TestConnectionRequest request) {
         String host = request.jdbcConfig() != null ? request.jdbcConfig().host() : null;
         Integer port = request.jdbcConfig() != null ? request.jdbcConfig().port() : null;
         String database = request.jdbcConfig() != null ? request.jdbcConfig().database() : null;
@@ -220,7 +208,7 @@ public final class DatasourceCommandAssembler {
             apiAuthUsername = authConfig.username();
             apiAuthPassword = authConfig.password();
         }
-        
+
         var type = DatasourceValidator.parseDatasourceType(request.type());
         var subType = type == DatasourceType.JDBC ? request.subType() : null;
 
@@ -251,7 +239,7 @@ public final class DatasourceCommandAssembler {
     /**
      * 将 ListDatasourceRequest 转换为 ListDatasourceQuery
      */
-    public static ListDatasourceQuery toListQuery(ListDatasourceRequest request) {
+    default ListDatasourceQuery toListQuery(ListDatasourceRequest request) {
         return new ListDatasourceQuery(
                 request.keyword(),
                 DatasourceValidator.parseDatasourceTypeOrNull(request.type()),
@@ -264,7 +252,7 @@ public final class DatasourceCommandAssembler {
     /**
      * 将 ListTablesRequest 转换为 TableListQuery
      */
-    public static TableListQuery toTableListQuery(ListTablesRequest request) {
+    default TableListQuery toTableListQuery(ListTablesRequest request) {
         return new TableListQuery(
                 request.connectionId(),
                 request.keyword(),
@@ -276,7 +264,7 @@ public final class DatasourceCommandAssembler {
     /**
      * 将 ParseApiResponseRequest 转换为 ParseApiResponseCommand
      */
-    public static ParseApiResponseCommand toParseCommand(ParseApiResponseRequest request) {
+    default ParseApiResponseCommand toParseCommand(ParseApiResponseRequest request) {
         return new ParseApiResponseCommand(
                 request.connectionId(),
                 request.url(),

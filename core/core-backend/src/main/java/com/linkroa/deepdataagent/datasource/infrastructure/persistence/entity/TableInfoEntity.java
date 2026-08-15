@@ -1,21 +1,17 @@
 package com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity;
 
-import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.linkroa.deepdataagent.shared.infrastructure.persistence.entity.BaseEntity;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 
 @Data
+@EqualsAndHashCode(callSuper = true)
 @TableName("table_info")
-public class TableInfoEntity {
+public class TableInfoEntity extends BaseEntity {
 
-    @TableId(value = "id", type = IdType.AUTO)
-    private Long id;
     private Long databaseSchemaId;
     private String tableName;
     private String tableComment;
     private String tableCustomComment;
-    private String createdAt;
-    private String updatedAt;
-    private Integer isDeleted;
 }

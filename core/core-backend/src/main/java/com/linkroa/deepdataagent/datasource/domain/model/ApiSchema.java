@@ -2,7 +2,7 @@ package com.linkroa.deepdataagent.datasource.domain.model;
 
 import com.linkroa.deepdataagent.datasource.domain.model.enums.HttpMethod;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * API Schema领域模型
@@ -14,8 +14,8 @@ public record ApiSchema(
         String url,
         HttpMethod method,
         ApiRequestConfig config,
-        LocalDateTime createdAt,
-        LocalDateTime updatedAt,
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt,
         String createdBy,
         String updatedBy
 ) {

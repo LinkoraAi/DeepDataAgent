@@ -38,9 +38,13 @@ import java.util.Map;
 public class DatasourceController {
 
     private final DatasourceApplicationService applicationService;
+    private final DatasourceResponseMapper responseMapper;
+    private final DatasourceCommandAssembler commandAssembler;
 
-    public DatasourceController(DatasourceApplicationService applicationService) {
+    public DatasourceController(DatasourceApplicationService applicationService, DatasourceResponseMapper responseMapper, DatasourceCommandAssembler commandAssembler) {
         this.applicationService = applicationService;
+        this.responseMapper = responseMapper;
+        this.commandAssembler = commandAssembler;
     }
 
     /**
@@ -54,7 +58,7 @@ public class DatasourceController {
 
     @PostMapping("/test-connection")
     public ApiResponse<String> testConnection(@Valid @RequestBody TestConnectionRequest request) {
-        TestConnectionCommand command = DatasourceCommandAssembler.toTestCommand(request);
+        TestConnectionCommand command = commandAssembler.toTestCommand(request);
         DatasourceConnectionStrategy.ConnectionTestResult result = applicationService.testConnection(command);
         if (!result.success()) {
             throw new DeepDataAgentException(result.message());
@@ -64,14 +68,14 @@ public class DatasourceController {
 
     @PostMapping("/create")
     public ApiResponse<String> create(@Valid @RequestBody CreateDatasourceRequest request) {
-        CreateDatasourceCommand command = DatasourceCommandAssembler.toCreateCommand(request);
+        CreateDatasourceCommand command = commandAssembler.toCreateCommand(request);
         applicationService.createDatasource(command);
         return ApiResponse.success("新增数据源成功");
     }
 
     @PostMapping("/update")
     public ApiResponse<String> update(@Valid @RequestBody UpdateDatasourceRequest request) {
-        UpdateDatasourceCommand command = DatasourceCommandAssembler.toUpdateCommand(request);
+        UpdateDatasourceCommand command = commandAssembler.toUpdateCommand(request);
         applicationService.updateDatasource(command);
         return ApiResponse.success("更新数据源成功");
     }
@@ -101,7 +105,7 @@ public class DatasourceController {
      */
     @PostMapping("/api/parse-response")
     public ApiResponse<ParseApiResponseResult> parseResponse(@Valid @RequestBody ParseApiResponseRequest request) {
-        ParseApiResponseCommand command = DatasourceCommandAssembler.toParseCommand(request);
+        ParseApiResponseCommand command = commandAssembler.toParseCommand(request);
         ParseApiResponseResult result = applicationService.parseApiResponse(command);
         return ApiResponse.success(result);
     }
@@ -114,10 +118,10 @@ public class DatasourceController {
 
     @PostMapping("/list")
     public ApiResponse<PaginatedResponse<DatasourceConnectionResponse>> list(@Valid @RequestBody ListDatasourceRequest request) {
-        ListDatasourceQuery query = DatasourceCommandAssembler.toListQuery(request);
+        ListDatasourceQuery query = commandAssembler.toListQuery(request);
         DatasourceApplicationService.PaginatedResult<DatasourceConnection> result = applicationService.listDatasources(query);
         List<DatasourceConnectionResponse> responses = result.data().stream()
-                .map(DatasourceConnectionResponse::from)
+                .map(responseMapper::toConnectionResponse)
                 .toList();
         return ApiResponse.success(new PaginatedResponse<>(responses, result.total(), result.page(), result.size()));
     }
@@ -129,14 +133,14 @@ public class DatasourceController {
         if (type == DatasourceType.API) {
             List<ApiSchema> schemas = applicationService.listApiSchemas(request.connectionId());
             List<TableResponse> responses = schemas.stream()
-                .map(TableResponse::fromApiSchema)
+                .map(responseMapper::tableResponseFromApiSchema)
                 .toList();
             return ApiResponse.success(new PaginatedResponse<>(responses, responses.size(), 1, responses.size()));
         } else {
-            TableListQuery query = DatasourceCommandAssembler.toTableListQuery(request);
+            TableListQuery query = commandAssembler.toTableListQuery(request);
             DatasourceApplicationService.PaginatedResult<TableInfo> result = applicationService.listTables(query);
             List<TableResponse> responses = result.data().stream()
-                .map(TableResponse::fromTableInfo)
+                .map(responseMapper::tableResponseFromTableInfo)
                 .toList();
             return ApiResponse.success(new PaginatedResponse<>(responses, result.total(), result.page(), result.size()));
         }
@@ -148,13 +152,13 @@ public class DatasourceController {
         if (type == DatasourceType.API) {
             List<ApiField> fields = applicationService.listApiFields(request.schemaId());
             List<ColumnInfoResponse> responses = fields.stream()
-                    .map(ColumnInfoResponse::fromApiField)
+                    .map(responseMapper::columnInfoResponseFromApiField)
                     .toList();
             return ApiResponse.success(responses);
         } else {
             List<ColumnInfo> columns = applicationService.listColumns(request.tableId());
             List<ColumnInfoResponse> responses = columns.stream()
-                    .map(ColumnInfoResponse::from)
+                    .map(responseMapper::toColumnInfoResponse)
                     .toList();
             return ApiResponse.success(responses);
         }
@@ -174,7 +178,7 @@ public class DatasourceController {
 
     @PostMapping("/api-schema/create")
     public ApiResponse<String> createApiSchema(@Valid @RequestBody CreateApiSchemaRequest request) {
-        ApiSchemaCommand schemaCommand = DatasourceCommandAssembler.toApiSchemaCommandFromCreate(request);
+        ApiSchemaCommand schemaCommand = commandAssembler.toApiSchemaCommandFromCreate(request);
         applicationService.createApiSchema(request.connectionId(), schemaCommand);
         return ApiResponse.success("创建API表成功");
     }
