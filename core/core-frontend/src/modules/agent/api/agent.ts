@@ -1,0 +1,275 @@
+/**
+ * Agent 运行时接口层（REST + SSE）。
+ * <p>对齐后端 Managed Agents 风格契约：会话管理走统一 ApiResponse 包装，
+ * 消息发送采用 {@code POST /sessions/{sessionId}/events}（Accept: text/event-stream）
+ * 直连 SSE，事件字段与 {@code ChatEventResponse} 一致。</p>
+ */
+
+// ==================== 类型定义 ====================
+
+/** 统一响应包装（shared/result/ApiResponse）。 */
+export interface ApiResponse<T> {
+  success: boolean;
+  code: string;
+  message: string;
+  data: T;
+}
+
+/** 聊天事件 DTO（与后端 ChatEventResponse 对齐）。 */
+export interface ChatEventDto {
+  eventId: string;
+  sessionId: string;
+  roundId: string | null;
+  eventType: string;
+  payload: string;
+  sequenceNum: number;
+  createdAt: string;
+}
+
+/** 会话 DTO。 */
+export interface SessionDto {
+  sessionId: string;
+  userId: string;
+  agentId: string;
+  agentVersion: string;
+  status: string;
+  metadata: string | null;
+  sandboxId: string | null;
+  title: string | null;
+  lastActiveAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 执行轮次 DTO。 */
+export interface RoundDto {
+  roundId: string;
+  sessionId: string;
+  runId: string;
+  roundNumber: number;
+  input: string;
+  output: string | null;
+  status: string;
+  replayedFromRoundId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 发送消息回执（202 / SSE 直连）。 */
+export interface SendMessageResult {
+  roundId: string | null;
+  runId: string | null;
+  stopReason: string | null;
+}
+
+/** SSE 事件行（event name + data）。 */
+export interface SseEventLine {
+  event: string;
+  data: string;
+}
+
+/** 分页结果。 */
+export interface PaginatedResponse<T> {
+  list: T[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+/** content-blocks 块（对齐后端 AgentScopeEventAdapter：text/thinking/tool_call/tool_result/progress）。 */
+export interface ContentBlock {
+  type: string;
+  blockId?: string;
+  toolCallId?: string;
+  name?: string;
+  text?: string;
+  input?: Record<string, unknown>;
+  output?: string;
+  truncated?: boolean;
+}
+
+/** 聊天事件类型（与后端 ChatEventType 小写枚举名对齐）。 */
+export const CHAT_EVENT_TYPES = {
+  RUN_START: 'run_start',
+  THINKING: 'thinking',
+  MESSAGE: 'message',
+  TOOL_CALL: 'tool_call',
+  TOOL_CALL_OUTPUT: 'tool_call_output',
+  SUMMARY: 'summary',
+  RUN_END: 'run_end',
+  RUN_ERROR: 'run_error',
+  SESSION_STATUS: 'session_status',
+  ERROR: 'error',
+  AGENT_PROGRESS: 'agent_progress',
+  EXCEED_MAX_ITERS: 'exceed_max_iters',
+} as const;
+
+/** 默认演示身份（当前无用户体系，落地后替换为真实身份）。 */
+export const DEMO_USER_ID = 'demo-user';
+export const DEMO_AGENT_ID = 'qwen-analyst';
+export const DEMO_AGENT_VERSION = '1.0.0';
+
+export const API_BASE = '/api/agent';
+
+// ==================== REST 接口 ====================
+
+async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, init);
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`请求失败(${response.status}): ${text.slice(0, 200)}`);
+  }
+  const wrapper = (await response.json()) as ApiResponse<T>;
+  if (!wrapper.success) {
+    throw new Error(`${wrapper.code}: ${wrapper.message}`);
+  }
+  return wrapper.data;
+}
+
+/** 创建会话。 */
+export function createSession(options?: { title?: string; metadata?: string }): Promise<SessionDto> {
+  return fetchJson<SessionDto>(`${API_BASE}/sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userId: DEMO_USER_ID,
+      agentId: DEMO_AGENT_ID,
+      agentVersion: DEMO_AGENT_VERSION,
+      title: options?.title ?? null,
+      metadata: options?.metadata ?? null,
+    }),
+  });
+}
+
+/** 分页查询会话。 */
+export function listSessions(userId = DEMO_USER_ID, page = 1, size = 20): Promise<PaginatedResponse<SessionDto>> {
+  const query = new URLSearchParams({ userId, page: String(page), size: String(size) });
+  return fetchJson<PaginatedResponse<SessionDto>>(`${API_BASE}/sessions?${query}`);
+}
+
+/** 会话详情。 */
+export function getSession(sessionId: string): Promise<SessionDto> {
+  return fetchJson<SessionDto>(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+/** 终止会话。 */
+export async function terminateSession(sessionId: string): Promise<void> {
+  await fetchJson<string>(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+}
+
+/** 轮次列表。 */
+export function listRounds(sessionId: string): Promise<RoundDto[]> {
+  return fetchJson<RoundDto[]>(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/rounds`);
+}
+
+/** 单轮事件回放。 */
+export function roundEvents(sessionId: string, roundId: string): Promise<ChatEventDto[]> {
+  return fetchJson<ChatEventDto[]>(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/rounds/${encodeURIComponent(roundId)}/events`,
+  );
+}
+
+// ==================== SSE 接口 ====================
+
+/** 发送消息（SSE 直连）：消费本轮完整事件流，逐事件回调。 */
+export async function sendMessageStream(
+  sessionId: string,
+  content: string,
+  onEvent: (line: SseEventLine) => void,
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/events`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({ type: 'message', content }),
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`发送消息失败(${response.status}): ${text.slice(0, 200)}`);
+  }
+  const body = response.body;
+  if (!body) {
+    throw new Error('当前浏览器不支持响应流读取');
+  }
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    let separatorIndex = buffer.indexOf('\n\n');
+    while (separatorIndex >= 0) {
+      const block = buffer.slice(0, separatorIndex);
+      buffer = buffer.slice(separatorIndex + 2);
+      const line = parseSseBlock(block);
+      if (line !== null) {
+        onEvent(line);
+      }
+      separatorIndex = buffer.indexOf('\n\n');
+    }
+  }
+}
+
+/** 打开实时订阅流（回放 after_sequence_num 之后事件 + 实时订阅）。 */
+export function openEventStream(
+  sessionId: string,
+  afterSequenceNum = 0,
+  onError?: (error: string) => void,
+): EventSource {
+  const query = new URLSearchParams({ after_sequence_num: String(afterSequenceNum) });
+  const source = new EventSource(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/events/stream?${query}`);
+  source.onerror = () => onError?.('事件订阅连接中断，正在重试…');
+  return source;
+}
+
+// ==================== 解析工具 ====================
+
+/**
+ * 解析单条 SSE 块（可能多条 {@code data:} 行）。
+ * 返回 {@code event}（缺省 message）与拼接后的 {@code data}；无数据返回 null。
+ */
+export function parseSseBlock(block: string): SseEventLine | null {
+  let event = 'message';
+  let data = '';
+  for (const rawLine of block.split('\n')) {
+    const line = rawLine.replace(/\r$/, '');
+    if (line.startsWith('event:')) {
+      event = line.slice(6).trim();
+    } else if (line.startsWith('data:')) {
+      data += line.slice(5).replace(/^ /, '');
+    }
+  }
+  return data ? { event, data } : null;
+}
+
+/** 解析 SSE data 为聊天事件 DTO。 */
+export function parseChatEvent(data: string): ChatEventDto {
+  return JSON.parse(data) as ChatEventDto;
+}
+
+/**
+ * 从事件 payload 中提取 content-blocks 数组。
+ * <p>后端 content-blocks 结构：{@code {"content":[{"type":"text|thinking|tool_call|tool_result",...}],"is_last":bool}}。
+ * 非 content-blocks 载荷（run_start / run_end / session_status 等扁平 JSON）返回空数组。</p>
+ */
+export function parseContentBlocks(payload: Record<string, unknown>): ContentBlock[] {
+  const content = payload['content'];
+  if (!Array.isArray(content)) {
+    return [];
+  }
+  return content.filter((item): item is ContentBlock => {
+    if (typeof item !== 'object' || item === null) {
+      return false;
+    }
+    const block = item as Record<string, unknown>;
+    return typeof block['type'] === 'string';
+  });
+}

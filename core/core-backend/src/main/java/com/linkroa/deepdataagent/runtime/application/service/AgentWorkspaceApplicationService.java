@@ -3,6 +3,7 @@ package com.linkroa.deepdataagent.runtime.application.service;
 import com.linkroa.deepdataagent.runtime.controller.response.AgentWorkspaceResponse;
 import com.linkroa.deepdataagent.shared.config.OpenSandboxProperties;
 import com.linkroa.deepdataagent.shared.config.SqliteProperties;
+import jakarta.annotation.Resource;
 import java.util.List;
 import org.springframework.stereotype.Service;
 
@@ -11,16 +12,10 @@ public class AgentWorkspaceApplicationService {
 
     private static final List<String> BOUNDED_CONTEXTS = List.of("agent", "skills", "memory", "datasource");
 
-    private final OpenSandboxProperties openSandboxProperties;
-    private final SqliteProperties sqliteProperties;
-
-    public AgentWorkspaceApplicationService(
-            OpenSandboxProperties openSandboxProperties,
-            SqliteProperties sqliteProperties
-    ) {
-        this.openSandboxProperties = openSandboxProperties;
-        this.sqliteProperties = sqliteProperties;
-    }
+    @Resource
+    private OpenSandboxProperties openSandboxProperties;
+    @Resource
+    private SqliteProperties sqliteProperties;
 
     public AgentWorkspaceResponse describeWorkspace() {
         return new AgentWorkspaceResponse(

@@ -114,6 +114,13 @@
             <artifactId>agentscope-extensions-model-openai</artifactId>
             <version>${agentscope.version}</version>
         </dependency>
+        <!-- AgentScope 官方 PostgreSQL 扩展：AgentState 状态存储（agentscope.agentscope_sessions）与
+             沙箱快照（agentscope_snapshots）持久化，扩展自动建表（createIfNotExist=true），不引入自研状态存储 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-postgresql</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
         <dependency>
             <groupId>com.jayway.jsonpath</groupId>
             <artifactId>json-path</artifactId>

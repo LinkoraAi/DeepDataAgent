@@ -301,7 +301,8 @@ COMMENT ON COLUMN chat_event.created_by      IS '创建人';
 COMMENT ON COLUMN chat_event.updated_by      IS '更新人';
 COMMENT ON COLUMN chat_event.is_deleted      IS '删除标记(0=未删除,1=已删除)';
 
--- 按 session + sequence 查询（回放用）
-CREATE INDEX idx_chat_event_session_seq ON chat_event (session_id, sequence_num);
+-- 按 session + sequence 查询（回放用）；唯一约束保障「MAX+1 内存分配」在数据库层兜底，
+-- 从根上杜绝并发/异常上下文下 (session_id, sequence_num) 重复，保证回放与实时流一致
+CREATE UNIQUE INDEX idx_chat_event_session_seq ON chat_event (session_id, sequence_num);
 -- 按 round 查询（单轮回放用）
 CREATE INDEX idx_chat_event_round ON chat_event (round_id);

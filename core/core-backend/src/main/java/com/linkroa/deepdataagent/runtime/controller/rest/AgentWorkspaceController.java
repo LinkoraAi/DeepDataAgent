@@ -3,6 +3,7 @@ package com.linkroa.deepdataagent.runtime.controller.rest;
 import com.linkroa.deepdataagent.runtime.application.service.AgentWorkspaceApplicationService;
 import com.linkroa.deepdataagent.runtime.controller.response.AgentWorkspaceResponse;
 import com.linkroa.deepdataagent.shared.result.ApiResponse;
+import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -11,11 +12,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/agent")
 public class AgentWorkspaceController {
 
-    private final AgentWorkspaceApplicationService workspaceApplicationService;
-
-    public AgentWorkspaceController(AgentWorkspaceApplicationService workspaceApplicationService) {
-        this.workspaceApplicationService = workspaceApplicationService;
-    }
+    @Resource
+    private AgentWorkspaceApplicationService workspaceApplicationService;
 
     @GetMapping("/workspace")
     public ApiResponse<AgentWorkspaceResponse> workspace() {

@@ -37,6 +37,9 @@ spring:
 # ---------- OpenSandbox：代码解释器沙箱接入 ----------
 # 默认面向 Docker 部署：服务间经宿主机网关 host.docker.internal 互访；
 # 本地原生启动或远程主机部署时，用同名环境变量（APP_OPENSANDBOX_*）覆盖即可
+# ---------- Agent 运行时（AgentScope Harness 装配参数） ----------
+# 模型字符串 ID（dashscope:qwen-plus / openai:... 等，经 AgentScope ModelRegistry 解析）；
+# Docker 沙箱由 backend 调用宿主机 Docker daemon（compose 需挂载 /var/run/docker.sock 或 DIND）
 app:
   opensandbox:
     protocol: ${APP_OPENSANDBOX_PROTOCOL:http}
@@ -50,6 +53,25 @@ app:
     default-image: ${APP_OPENSANDBOX_DEFAULT_IMAGE:opensandbox/code-interpreter:v1.1.0}
     # 单次沙箱执行超时上限（秒）
     default-timeout-seconds: ${APP_OPENSANDBOX_DEFAULT_TIMEOUT_SECONDS:1800}
+  agent:
+    model-id: ${APP_AGENT_MODEL_ID:dashscope:qwen-plus}
+    system-prompt: ${APP_AGENT_SYSTEM_PROMPT:}
+    max-iters: ${APP_AGENT_MAX_ITERS:20}
+    sandbox-image: ${APP_AGENT_SANDBOX_IMAGE:ubuntu:22.04}
+    # 沙箱内存上限（字节，默认 4GB）
+    sandbox-memory-bytes: ${APP_AGENT_SANDBOX_MEMORY_BYTES:4294967296}
+    # 沙箱 CPU 核数
+    sandbox-cpu-count: ${APP_AGENT_SANDBOX_CPU_COUNT:2}
+    workspace-root: ${APP_AGENT_WORKSPACE_ROOT:./.agent-workspace}
+    # SSE 连接空闲超时（毫秒）
+    sse-timeout: ${APP_AGENT_SSE_TIMEOUT:300000}
+    # AgentScope 官方 PG 扩展自动建 schema/表（agentscope.agentscope_sessions / agentscope_snapshots）
+    state-schema: ${APP_AGENT_STATE_SCHEMA:agentscope}
+    state-table: ${APP_AGENT_STATE_TABLE:agentscope_sessions}
+    # 进程重启后将残留 RUNNING 会话恢复为 IDLE，对应轮次置 INTERRUPTED
+    startup-recovery-enabled: ${APP_AGENT_STARTUP_RECOVERY_ENABLED:true}
+    # 工具调用超时（毫秒）
+    tool-timeout: ${APP_AGENT_TOOL_TIMEOUT:120000}
 
 datasource:
   encryption:
