@@ -138,7 +138,6 @@ CREATE UNIQUE INDEX uk_api_schema_field ON api_field (api_schema_id, original_na
 CREATE TABLE agent_session (
     id BIGSERIAL PRIMARY KEY,
     session_id VARCHAR(64) NOT NULL,
-    tenant_id VARCHAR(64) NOT NULL,
     user_id VARCHAR(64) NOT NULL,
     agent_id VARCHAR(64) NOT NULL,
     agent_version VARCHAR(32) NOT NULL,
@@ -157,7 +156,6 @@ CREATE TABLE agent_session (
 COMMENT ON TABLE  agent_session                  IS 'Agent会话表';
 COMMENT ON COLUMN agent_session.id                IS '主键ID';
 COMMENT ON COLUMN agent_session.session_id        IS '会话唯一标识';
-COMMENT ON COLUMN agent_session.tenant_id         IS '租户ID';
 COMMENT ON COLUMN agent_session.user_id           IS '用户ID';
 COMMENT ON COLUMN agent_session.agent_id          IS 'Agent业务ID';
 COMMENT ON COLUMN agent_session.agent_version     IS 'Agent配置版本号';
@@ -172,7 +170,6 @@ COMMENT ON COLUMN agent_session.created_by        IS '创建人';
 COMMENT ON COLUMN agent_session.updated_by        IS '更新人';
 COMMENT ON COLUMN agent_session.is_deleted        IS '删除标记(0=未删除,1=已删除)';
 
-CREATE INDEX idx_agent_session_tenant_id ON agent_session(tenant_id);
 CREATE INDEX idx_agent_session_user_id ON agent_session(user_id);
 CREATE INDEX idx_agent_session_agent_id ON agent_session(agent_id);
 CREATE INDEX idx_agent_session_last_active_at ON agent_session(last_active_at DESC);
@@ -185,7 +182,6 @@ CREATE TABLE execution_round (
     round_id VARCHAR(64) NOT NULL,
     session_id VARCHAR(64) NOT NULL,
     run_id VARCHAR(64),
-    tenant_id VARCHAR(64) NOT NULL,
     round_number INTEGER NOT NULL,
     input TEXT NOT NULL,
     output TEXT,
@@ -203,7 +199,6 @@ COMMENT ON COLUMN execution_round.id                   IS '主键ID';
 COMMENT ON COLUMN execution_round.round_id             IS '轮次唯一标识';
 COMMENT ON COLUMN execution_round.session_id           IS '所属会话ID';
 COMMENT ON COLUMN execution_round.run_id               IS '关联OpenAPI层runId';
-COMMENT ON COLUMN execution_round.tenant_id            IS '租户ID（多租户隔离）';
 COMMENT ON COLUMN execution_round.round_number         IS '轮次序号';
 COMMENT ON COLUMN execution_round.input                IS '输入内容';
 COMMENT ON COLUMN execution_round.output               IS '输出内容';
@@ -216,7 +211,6 @@ COMMENT ON COLUMN execution_round.replayed_from_round_id IS '重放来源轮次I
 COMMENT ON COLUMN execution_round.is_deleted           IS '删除标记(0=未删除,1=已删除)';
 
 CREATE INDEX idx_execution_round_session_id ON execution_round(session_id);
-CREATE INDEX idx_execution_round_tenant_id ON execution_round(tenant_id);
 CREATE INDEX idx_execution_round_run_id ON execution_round(run_id);
 
 -- 链路追踪表（OTel Span 模型）
@@ -226,7 +220,6 @@ CREATE TABLE run_trace (
     span_id VARCHAR(64) NOT NULL,
     parent_span_id VARCHAR(64),
     round_id VARCHAR(64) NOT NULL,
-    tenant_id VARCHAR(64) NOT NULL,
     span_name VARCHAR(128) NOT NULL,
     span_kind VARCHAR(32) NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'OK',
@@ -254,7 +247,6 @@ COMMENT ON COLUMN run_trace.trace_id             IS '追踪ID（同一轮次共�
 COMMENT ON COLUMN run_trace.span_id              IS 'Span唯一标识';
 COMMENT ON COLUMN run_trace.parent_span_id       IS '父Span ID（树形结构）';
 COMMENT ON COLUMN run_trace.round_id             IS '所属轮次ID';
-COMMENT ON COLUMN run_trace.tenant_id            IS '租户ID（多租户隔离）';
 COMMENT ON COLUMN run_trace.span_name            IS 'Span名称（agent.run/llm.call/tool.call/sandbox.exec）';
 COMMENT ON COLUMN run_trace.span_kind            IS 'Span类型（INTERNAL/CLIENT/SERVER）';
 COMMENT ON COLUMN run_trace.status               IS '状态: OK/ERROR';
@@ -277,7 +269,6 @@ COMMENT ON COLUMN run_trace.is_deleted           IS '删除标记(0=未删除,1=
 
 CREATE INDEX idx_run_trace_trace_id ON run_trace(trace_id);
 CREATE INDEX idx_run_trace_round_id ON run_trace(round_id);
-CREATE INDEX idx_run_trace_tenant_id ON run_trace(tenant_id);
 CREATE INDEX idx_run_trace_span_id ON run_trace(span_id);
 
 -- 聊天事件表（事件流存储，用于 SSE 回放和实时推送）
@@ -286,7 +277,6 @@ CREATE TABLE chat_event (
     event_id VARCHAR(64) NOT NULL,
     session_id VARCHAR(64) NOT NULL,
     round_id VARCHAR(64) NOT NULL,
-    tenant_id VARCHAR(64) NOT NULL,
     event_type VARCHAR(64) NOT NULL,
     payload JSONB,
     sequence_num BIGINT          NOT NULL,
@@ -302,7 +292,6 @@ COMMENT ON COLUMN chat_event.id              IS '主键ID';
 COMMENT ON COLUMN chat_event.event_id        IS '事件唯一 ID';
 COMMENT ON COLUMN chat_event.session_id      IS '所属会话ID';
 COMMENT ON COLUMN chat_event.round_id        IS '所属轮次ID';
-COMMENT ON COLUMN chat_event.tenant_id       IS '租户ID';
 COMMENT ON COLUMN chat_event.event_type      IS '事件类型';
 COMMENT ON COLUMN chat_event.payload         IS '事件数据（JSONB）';
 COMMENT ON COLUMN chat_event.sequence_num    IS '会话内递增序列号';
@@ -316,5 +305,3 @@ COMMENT ON COLUMN chat_event.is_deleted      IS '删除标记(0=未删除,1=已�
 CREATE INDEX idx_chat_event_session_seq ON chat_event (session_id, sequence_num);
 -- 按 round 查询（单轮回放用）
 CREATE INDEX idx_chat_event_round ON chat_event (round_id);
--- 按 tenant 过滤（多租户隔离）
-CREATE INDEX idx_chat_event_tenant ON chat_event (tenant_id);
