@@ -4,16 +4,9 @@
  * 消息发送采用 {@code POST /sessions/{sessionId}/events}（Accept: text/event-stream）
  * 直连 SSE，事件字段与 {@code ChatEventResponse} 一致。</p>
  */
+import { fetchJson, type PaginatedResponse } from '@/shared/api/http';
 
 // ==================== 类型定义 ====================
-
-/** 统一响应包装（shared/result/ApiResponse）。 */
-export interface ApiResponse<T> {
-  success: boolean;
-  code: string;
-  message: string;
-  data: T;
-}
 
 /** 聊天事件 DTO（与后端 ChatEventResponse 对齐）。 */
 export interface ChatEventDto {
@@ -68,14 +61,6 @@ export interface SseEventLine {
   data: string;
 }
 
-/** 分页结果。 */
-export interface PaginatedResponse<T> {
-  list: T[];
-  total: number;
-  page: number;
-  size: number;
-}
-
 /** content-blocks 块（对齐后端 AgentScopeEventAdapter：text/thinking/tool_call/tool_result/progress）。 */
 export interface ContentBlock {
   type: string;
@@ -106,38 +91,32 @@ export const CHAT_EVENT_TYPES = {
 
 /** 默认演示身份（当前无用户体系，落地后替换为真实身份）。 */
 export const DEMO_USER_ID = 'demo-user';
-export const DEMO_AGENT_ID = 'qwen-analyst';
-export const DEMO_AGENT_VERSION = '1.0.0';
 
 /** Agent REST 基路径（v1 版本化，后端路径前缀 /api/v1/agent）。 */
 export const API_BASE = '/api/v1/agent';
 
 // ==================== REST 接口 ====================
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`请求失败(${response.status}): ${text.slice(0, 200)}`);
-  }
-  const wrapper = (await response.json()) as ApiResponse<T>;
-  if (!wrapper.success) {
-    throw new Error(`${wrapper.code}: ${wrapper.message}`);
-  }
-  return wrapper.data;
+/** 会话创建入参（Agent 与发布号必填，取代旧 demo 硬编码）。 */
+export interface CreateSessionOptions {
+  agentId: string;
+  /** 发布号（十进制字符串，如 "1"）；从 Agent 版本列表选择。 */
+  agentVersion: string;
+  title?: string;
+  metadata?: string;
 }
 
 /** 创建会话。 */
-export function createSession(options?: { title?: string; metadata?: string }): Promise<SessionDto> {
+export function createSession(options: CreateSessionOptions): Promise<SessionDto> {
   return fetchJson<SessionDto>(`${API_BASE}/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       userId: DEMO_USER_ID,
-      agentId: DEMO_AGENT_ID,
-      agentVersion: DEMO_AGENT_VERSION,
-      title: options?.title ?? null,
-      metadata: options?.metadata ?? null,
+      agentId: options.agentId,
+      agentVersion: options.agentVersion,
+      title: options.title ?? null,
+      metadata: options.metadata ?? null,
     }),
   });
 }

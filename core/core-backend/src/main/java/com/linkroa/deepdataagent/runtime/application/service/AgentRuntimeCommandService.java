@@ -10,7 +10,6 @@ import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
 import com.linkroa.deepdataagent.runtime.domain.event.EventBroadcaster;
 import com.linkroa.deepdataagent.runtime.domain.factory.AgentFactoryPort;
 import com.linkroa.deepdataagent.runtime.domain.factory.BuiltAgent;
-import com.linkroa.deepdataagent.runtime.domain.gateway.AgentToolGateway;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentRunState;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSessionContext;
@@ -27,7 +26,6 @@ import com.linkroa.deepdataagent.runtime.domain.repository.ChatEventRepository;
 import com.linkroa.deepdataagent.runtime.domain.repository.ExecutionRoundRepository;
 import com.linkroa.deepdataagent.runtime.domain.repository.RunTraceRepository;
 import com.linkroa.deepdataagent.runtime.domain.repository.SessionRegistry;
-import com.linkroa.deepdataagent.runtime.infrastructure.config.AgentRuntimeProperties;
 import com.linkroa.deepdataagent.runtime.infrastructure.util.PayloadSanitizer;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import jakarta.annotation.Resource;
@@ -88,11 +86,9 @@ public class AgentRuntimeCommandService {
     @Resource
     private EventBroadcaster eventBroadcaster;
     @Resource
-    private AgentRuntimeProperties properties;
-    @Resource
     private AgentRuntimeAssembler assembler;
     @Resource
-    private AgentToolGateway toolGateway;
+    private RuntimeAgentAssemblyResolver runtimeAgentAssemblyResolver;
     @Resource
     private SessionRegistry sessionRegistry;
     @Resource
@@ -110,8 +106,12 @@ public class AgentRuntimeCommandService {
 
     /**
      * 创建会话（IDLE 初始态，懒构建 agent）。
+     * <p>前置校验：agentId + 发布号必须绑定真实 Agent 版本台账（发布号非十进制 /
+     * Agent 不存在或已归档 → 404），不允许无全局回退。</p>
      */
     public AgentSession createSession(CreateSessionCommand command) {
+        // 运行时装配解析即校验链：发布号格式 / Agent 存在且未归档 / 版本存在 / profile 存在（免解密）
+        runtimeAgentAssemblyResolver.assertResolvable(command.agentId(), command.agentVersion());
         return transactionTemplate.execute(status -> sessionRepository.save(assembler.toSession(command)));
     }
 
@@ -217,7 +217,9 @@ public class AgentRuntimeCommandService {
         BuiltAgent agent = null;
         boolean registered = false;
         try {
-            agent = agentFactory.build(assembler.toSpec(session, properties, toolGateway.availableToolNames()));
+            // 实时装配：领域规格（无全局回退）+ 模型访问配置（凭证/API 端点仅注入工厂装配）
+            RuntimeAgentAssemblyResolver.AssembledAssembly assembly = runtimeAgentAssemblyResolver.assemble(session);
+            agent = agentFactory.build(assembly.spec(), assembly.modelAccess());
             // 在跑执行注册（会话级聚合内的 CAS 串行守卫 + 断连中断入口）
             registered = context.sessionContext().registerActiveRun(roundId, agent);
             if (!registered) {

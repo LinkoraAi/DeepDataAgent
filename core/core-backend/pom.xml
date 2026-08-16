@@ -196,6 +196,12 @@
                                 <exclude>**/com/linkroa/deepdataagent/**/infrastructure/adapter/**</exclude>
                                 <exclude>**/com/linkroa/deepdataagent/**/sandbox/**</exclude>
                                 <exclude>**/com/linkroa/deepdataagent/**/infrastructure/sse/**</exclude>
+                                <!-- 声明式/生成式/数据库集成层（无单测价值，依赖集成测试验证）：
+                                     MyBatis-Plus Mapper 接口、MapStruct 持久化映射器、Jdbc 仓储 -->
+                                <exclude>**/com/linkroa/deepdataagent/**/persistence/mapper/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/agent/**/infrastructure/persistence/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/agent/**/infrastructure/repository/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/datasource/**/infrastructure/repository/**</exclude>
                             </excludes>
                         </configuration>
                     </execution>
@@ -247,6 +253,12 @@
                                 <exclude>**/com/linkroa/deepdataagent/**/infrastructure/adapter/**</exclude>
                                 <exclude>**/com/linkroa/deepdataagent/**/sandbox/**</exclude>
                                 <exclude>**/com/linkroa/deepdataagent/**/infrastructure/sse/**</exclude>
+                                <!-- 声明式/生成式/数据库集成层（无单测价值，依赖集成测试验证）：
+                                     MyBatis-Plus Mapper 接口、MapStruct 持久化映射器、Jdbc 仓储 -->
+                                <exclude>**/com/linkroa/deepdataagent/**/persistence/mapper/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/agent/**/infrastructure/persistence/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/agent/**/infrastructure/repository/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/datasource/**/infrastructure/repository/**</exclude>
                             </excludes>
                         </configuration>
                     </execution>

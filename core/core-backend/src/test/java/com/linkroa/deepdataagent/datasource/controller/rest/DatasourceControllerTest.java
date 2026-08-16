@@ -15,6 +15,7 @@ import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceType;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.HttpMethod;
 import com.linkroa.deepdataagent.datasource.domain.strategy.DatasourceConnectionStrategy;
 import com.linkroa.deepdataagent.shared.result.ApiResponse;
+import com.linkroa.deepdataagent.shared.result.PaginatedResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;

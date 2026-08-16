@@ -23,7 +23,9 @@ import type { NavigationItem } from '@/shared/types/navigation';
 
 const navItems: NavigationItem[] = [
   { label: 'Agent', to: '/agent' },
-  { label: 'Skills', to: '/skills' },
+  { label: 'Agent 管理', to: '/agent/management' },
+  { label: '模型配置', to: '/agent/model-profiles' },
+  { label: '技能管理', to: '/agent/skills' },
   { label: 'Memory', to: '/memory' },
   { label: 'Datasource', to: '/datasource' },
 ];

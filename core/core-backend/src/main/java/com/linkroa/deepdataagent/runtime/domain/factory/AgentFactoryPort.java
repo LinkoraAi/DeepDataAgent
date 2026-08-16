@@ -1,6 +1,7 @@
 package com.linkroa.deepdataagent.runtime.domain.factory;
 
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec;
+import com.linkroa.deepdataagent.runtime.domain.model.ModelAccess;
 
 /**
  * Agent 组装出向端口（依赖倒置）。
@@ -16,8 +17,9 @@ public interface AgentFactoryPort {
     /**
      * 装配全新的 Agent 实例（每次构建，无缓存）。
      *
-     * @param spec 装配规格
+     * @param spec        装配规格（领域模型，不承载凭证）
+     * @param modelAccess 模型访问配置（凭证/API 端点，仅注入工厂装配）
      * @return 不透明句柄（用后须 {@code close()}
      */
-    BuiltAgent build(AgentAssemblySpec spec);
+    BuiltAgent build(AgentAssemblySpec spec, ModelAccess modelAccess);
 }

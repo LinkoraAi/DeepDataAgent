@@ -4,6 +4,7 @@ import com.linkroa.deepdataagent.shared.result.ApiResponse;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.validation.BindException;
 import org.springframework.web.accept.InvalidApiVersionException;
@@ -137,6 +138,50 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 处理资源不存在异常（HTTP 404）
+     * <p>Agent / 模型配置 / 技能 / 版本等资源不存在时抛出</p>
+     *
+     * @param e 资源不存在异常
+     * @return 包含错误信息的ApiResponse
+     */
+    @ExceptionHandler(ResourceNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ApiResponse<Void> handleResourceNotFoundException(ResourceNotFoundException e) {
+        log.warn("资源不存在: {}", e.getMessage());
+        return ApiResponse.error("404", e.getMessage());
+    }
+
+    /**
+     * 处理资源冲突异常（HTTP 409）
+     * <p>名称重复、仍被引用不可删除等冲突场景抛出</p>
+     *
+     * @param e 资源冲突异常
+     * @return 包含错误信息的ApiResponse
+     */
+    @ExceptionHandler(ResourceConflictException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ApiResponse<Void> handleResourceConflictException(ResourceConflictException e) {
+        log.warn("资源冲突: {}", e.getMessage());
+        return ApiResponse.error("409", e.getMessage());
+    }
+
+    /**
+     * 处理数据库唯一键冲突异常（HTTP 409）
+     * <p>并发写入撞唯一索引 / 唯一约束时由 Spring 包装为 {@link DuplicateKeyException}
+     * 抛出（如 Agent 并发重名、技能并发发布版本号撞 {@code uk_skill_version}），
+     * 防止落兜底 500，统一转译为资源冲突语义提示客户端重试。</p>
+     *
+     * @param e 唯一键冲突异常
+     * @return 包含错误信息的ApiResponse
+     */
+    @ExceptionHandler(DuplicateKeyException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ApiResponse<Void> handleDuplicateKeyException(DuplicateKeyException e) {
+        log.warn("唯一键冲突: {}", e.getMostSpecificCause().getMessage());
+        return ApiResponse.error("409", "资源已存在或已被并发占用，请刷新后重试");
+    }
+
+    /**
      * 处理异步请求不可用异常
      * <p>当客户端断开 SSE 连接后，后端尝试 flush 或 completeWithError 时会抛出此异常。
      * 属于正常行为（如用户切换会话中断了正在进行的分析），无需记录为 ERROR 级别。</p>
@@ -191,6 +236,20 @@ public class GlobalExceptionHandler {
     public ApiResponse<Void> handleMissingApiVersionException(MissingApiVersionException e) {
         log.warn("API 版本缺失: {}", e.getReason());
         return ApiResponse.error("400", e.getReason());
+    }
+
+    /**
+     * 处理技能内容缺失异常（HTTP 500）
+     * <p>技能版本记录存在但实际存储内容缺失（存储损坏），属数据一致性问题</p>
+     *
+     * @param e 内容缺失异常
+     * @return 包含错误信息的ApiResponse
+     */
+    @ExceptionHandler(SkillContentMissingException.class)
+    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+    public ApiResponse<Void> handleSkillContentMissingException(SkillContentMissingException e) {
+        log.error("技能内容缺失（存储损坏）: {}", e.getMessage());
+        return ApiResponse.error("500", "技能内容缺失，请检查存储状态");
     }
 
     /**

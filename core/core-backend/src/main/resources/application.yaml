@@ -24,7 +24,7 @@ spring:
     baseline-on-migrate: true
     # 允许乱序执行迁移（例如已应用 V2 后合入 V1.1 补丁），各版本号必须全局唯一
     out-of-order: true
-    # 迁移前跳过对已应用脚本的 checksum 校验（配合 out-of-order / 存量脚本调整场景）
+    # 迁移前对已应用脚本进行 checksum 校验（V{n} 一经应用不可修改，防止脚本被篡改）
     validate-on-migrate: true
     # migrate 前自动执行 repair，清理 schema history 中的失败记录与 obsolete 描述
     repair-on-migrate: false
@@ -54,15 +54,12 @@ app:
     # 单次沙箱执行超时上限（秒）
     default-timeout-seconds: ${APP_OPENSANDBOX_DEFAULT_TIMEOUT_SECONDS:1800}
   agent:
-    model-id: ${APP_AGENT_MODEL_ID:dashscope:qwen-plus}
-    system-prompt: ${APP_AGENT_SYSTEM_PROMPT:}
-    max-iters: ${APP_AGENT_MAX_ITERS:20}
+    # Docker 沙箱执行镜像（供沙箱装载工作区语义使用）
     sandbox-image: ${APP_AGENT_SANDBOX_IMAGE:ubuntu:22.04}
     # 沙箱内存上限（字节，默认 4GB）
     sandbox-memory-bytes: ${APP_AGENT_SANDBOX_MEMORY_BYTES:4294967296}
     # 沙箱 CPU 核数
     sandbox-cpu-count: ${APP_AGENT_SANDBOX_CPU_COUNT:2}
-    workspace-root: ${APP_AGENT_WORKSPACE_ROOT:./.agent-workspace}
     # SSE 连接空闲超时（毫秒）
     sse-timeout: ${APP_AGENT_SSE_TIMEOUT:300000}
     # AgentScope 官方 PG 扩展自动建 schema/表（agentscope.agentscope_sessions / agentscope_snapshots）
@@ -72,10 +69,23 @@ app:
     startup-recovery-enabled: ${APP_AGENT_STARTUP_RECOVERY_ENABLED:true}
     # 工具调用超时（毫秒）
     tool-timeout: ${APP_AGENT_TOOL_TIMEOUT:120000}
+    skills:
+      # 技能包本地存储根目录（LOCAL_FILE 存储类型）
+      root: ${APP_AGENT_SKILLS_ROOT:./data/skills}
+      # 技能包存储类型（本期仅支持 LOCAL_FILE，OSS 预留）
+      storage-type: ${APP_AGENT_SKILLS_STORAGE_TYPE:LOCAL_FILE}
+      # 单个技能包上传大小上限（字节，默认 50MB）
+      max-size: ${APP_AGENT_SKILLS_MAX_SIZE:52428800}
 
 datasource:
   encryption:
     key: ${DATASOURCE_ENCRYPTION_KEY:deepdataagent-pwd}
+
+# 模型配置（agent BC）：凭证独立加密密钥（AES/GCM），与 datasource 密钥完全隔离。
+# 无默认值：生产部署必须通过环境变量 APP_MODEL_ENCRYPTION_KEY 显式配置，未配置时启动即失败
+model:
+  encryption:
+    key: ${APP_MODEL_ENCRYPTION_KEY}
 
 mybatis-plus:
   configuration:

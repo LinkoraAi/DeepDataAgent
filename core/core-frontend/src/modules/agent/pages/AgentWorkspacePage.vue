@@ -1,6 +1,23 @@
 <template>
   <div class="agent-chat">
     <aside class="agent-chat__side">
+      <t-card title="Agent 配置" :bordered="true" class="side-card">
+        <div class="agent-config">
+          <t-select
+            v-model="selectedAgentId"
+            :options="agentOptions"
+            placeholder="选择 Agent"
+            :clearable="false"
+            @change="handleAgentChange"
+          />
+          <t-select
+            v-model="selectedVersionNumber"
+            :options="versionOptions"
+            placeholder="选择发布号"
+            class="agent-config__version"
+          />
+        </div>
+      </t-card>
       <t-card title="会话" :bordered="true" class="side-card">
         <template #actions>
           <t-button size="small" theme="primary" variant="text" @click="ensureSession">新建</t-button>
@@ -79,6 +96,7 @@ import {
   sendMessageStream,
   type ChatEventDto,
 } from '../api/agent';
+import { listAgentVersions, listAgents, type AgentDto, type AgentVersionDto } from '../api/agents';
 
 /** UI 消息模型。 */
 interface UiMessage {
@@ -99,6 +117,19 @@ const sending = ref(false);
 const loadingHistory = ref(false);
 const error = ref('');
 const messageScroller = ref<HTMLElement | null>(null);
+
+// —— Agent 选择（取代 demo 硬编码，会话创建绑定真实 Agent + 发布号）——
+const agents = ref<AgentDto[]>([]);
+const versions = ref<AgentVersionDto[]>([]);
+const selectedAgentId = ref('');
+const selectedVersionNumber = ref<number | undefined>(undefined);
+
+const agentOptions = computed(() =>
+  agents.value.map((agent) => ({ label: agent.name, value: agent.agentId })),
+);
+const versionOptions = computed(() =>
+  versions.value.map((version) => ({ label: `v${version.versionNumber}`, value: version.versionNumber })),
+);
 
 const session = computed(() =>
   sessionId.value ? { sessionId: sessionId.value, status: sessionStatus.value } : null,
@@ -136,15 +167,73 @@ function lastAssistant(): UiMessage {
   return created;
 }
 
-/** 确保存在可用会话（demo 身份自动创建）。 */
+/** 加载 Agent 列表并默认选中首个（自动加载其发布号）。 */
+async function loadAgents(): Promise<void> {
+  try {
+    const page = await listAgents({ size: 100 });
+    agents.value = page.list;
+    const first = agents.value[0];
+    if (!first) {
+      error.value = '暂无可用 Agent，请先在「Agent 管理」创建并发布版本';
+      return;
+    }
+    selectedAgentId.value = first.agentId;
+    await loadVersions(first.agentId);
+  } catch (e) {
+    error.value = `Agent 列表加载失败: ${(e as Error).message}`;
+  }
+}
+
+/** 加载指定 Agent 的版本列表，默认选最新发布号。 */
+async function loadVersions(agentId: string): Promise<void> {
+  try {
+    const list = await listAgentVersions(agentId);
+    versions.value = list;
+    selectedVersionNumber.value = list[0]?.versionNumber;
+  } catch (e) {
+    error.value = `版本列表加载失败: ${(e as Error).message}`;
+  }
+}
+
+/** Agent 切换：重置当前会话与历史，重新加载版本。 */
+function handleAgentChange(agentId: string): void {
+  resetSession();
+  if (agentId) {
+    void loadVersions(agentId);
+  } else {
+    versions.value = [];
+    selectedVersionNumber.value = undefined;
+  }
+}
+
+/** 重置会话与消息（Agent 切换 / 新建时调用）。 */
+function resetSession(): void {
+  sessionId.value = '';
+  sessionStatus.value = '';
+  rounds.value = [];
+  messages.value = [];
+  error.value = '';
+}
+
+/** 确保存在可用会话（绑定侧边栏选择的 Agent + 发布号，如无活跃会话则自动创建）。 */
 async function ensureSession(): Promise<void> {
+  const agentId = selectedAgentId.value;
+  const versionNumber = selectedVersionNumber.value;
+  if (!agentId || versionNumber === undefined) {
+    error.value = '请先创建 Agent 并选择发布号';
+    return;
+  }
+  const agentVersion = String(versionNumber);
+  // 限定当前 Agent + 发布号的活跃会话，避免复用其他 Agent 的会话
   const page = await listSessions();
-  const existing = page.list.find((item) => item.status !== 'TERMINATED');
+  const existing = page.list.find(
+    (item) => item.agentId === agentId && item.agentVersion === agentVersion && item.status !== 'TERMINATED',
+  );
   if (existing) {
     sessionId.value = existing.sessionId;
     sessionStatus.value = existing.status;
   } else {
-    const created = await createSession();
+    const created = await createSession({ agentId, agentVersion });
     sessionId.value = created.sessionId;
     sessionStatus.value = created.status;
   }
@@ -345,6 +434,7 @@ async function refreshRounds(): Promise<void> {
 
 onMounted(async () => {
   try {
+    await loadAgents();
     await ensureSession();
     await loadHistory();
   } catch (e) {
@@ -373,6 +463,12 @@ onMounted(async () => {
 .side-card {
   display: flex;
   flex-direction: column;
+}
+
+.agent-config {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .session-info__id {

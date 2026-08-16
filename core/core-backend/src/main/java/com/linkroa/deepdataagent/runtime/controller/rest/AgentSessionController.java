@@ -5,7 +5,6 @@ import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeCommand
 import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeQueryService;
 import com.linkroa.deepdataagent.runtime.controller.request.CreateSessionRequest;
 import com.linkroa.deepdataagent.runtime.controller.response.AgentRuntimeResponseMapper;
-import com.linkroa.deepdataagent.runtime.controller.response.PaginatedResponse;
 import com.linkroa.deepdataagent.runtime.controller.response.RoundResponse;
 import com.linkroa.deepdataagent.runtime.controller.response.RunTraceResponse;
 import com.linkroa.deepdataagent.runtime.controller.response.SessionResponse;
@@ -14,8 +13,9 @@ import com.linkroa.deepdataagent.runtime.domain.model.ExecutionRound;
 import com.linkroa.deepdataagent.runtime.domain.model.RunTrace;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.controller.response.ChatEventResponse;
-import com.linkroa.deepdataagent.runtime.infrastructure.config.ApiVersioningConfig;
+import com.linkroa.deepdataagent.shared.constant.api.ApiVersionConstants;
 import com.linkroa.deepdataagent.shared.result.ApiResponse;
+import com.linkroa.deepdataagent.shared.result.PaginatedResponse;
 import jakarta.annotation.Resource;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -34,7 +34,7 @@ import java.util.List;
  * <p>会话生命周期（创建 / 查询 / 分页 / 终止）+ 轮次与事件回放 + 链路追踪查询。</p>
  */
 @RestController
-@RequestMapping(path = "/agent/sessions", version = ApiVersioningConfig.CURRENT_API_VERSION)
+@RequestMapping(path = "/agent/sessions", version = ApiVersionConstants.CURRENT_API_VERSION)
 public class AgentSessionController {
 
     @Resource

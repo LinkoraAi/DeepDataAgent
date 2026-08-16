@@ -14,12 +14,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class AgentAssemblySpecTest {
 
     @Test
-    void should_buildSpec_when_of_given_validInputs() {
+    void should_buildSpec_when_construct_given_validInputs() {
         // given
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("ubuntu:22.04", 8L, 2L);
 
         // when
-        AgentAssemblySpec spec = AgentAssemblySpec.of(
+        AgentAssemblySpec spec = new AgentAssemblySpec(
                 "agent-a", "数据分析Agent", "描述", "dashscope:qwen-plus", "你是助手",
                 List.of("query_datasource", "execute_sql"), 20, sandbox);
 
@@ -32,27 +32,25 @@ class AgentAssemblySpecTest {
     }
 
     @Test
-    void should_defaultEmptyTools_when_of_given_nullToolNames() {
-        // given
+    void should_throw_when_construct_given_nullToolNames() {
+        // given（工具名集合缺失，规格构造拒绝，不做静默降级）
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("ubuntu:22.04", null, null);
 
-        // when
-        AgentAssemblySpec spec = AgentAssemblySpec.of(
-                "agent-a", "数据分析Agent", "描述", "dashscope:qwen-plus", "你是助手",
-                null, 20, sandbox);
-
-        // then
-        assertEquals(List.of(), spec.toolNames());
+        // when & then
+        assertThrows(IllegalArgumentException.class,
+                () -> new AgentAssemblySpec(
+                        "agent-a", "数据分析Agent", "描述", "dashscope:qwen-plus", "你是助手",
+                        null, 20, sandbox));
     }
 
     @Test
-    void should_copyTools_when_of_given_mutableToolNames() {
+    void should_copyTools_when_construct_given_mutableToolNames() {
         // given
         List<String> mutable = new java.util.ArrayList<>(List.of("tool-a"));
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("ubuntu:22.04", null, null);
 
         // when
-        AgentAssemblySpec spec = AgentAssemblySpec.of(
+        AgentAssemblySpec spec = new AgentAssemblySpec(
                 "agent-a", "数据分析Agent", "描述", "dashscope:qwen-plus", "你是助手",
                 mutable, 20, sandbox);
         mutable.add("tool-b");
@@ -69,7 +67,7 @@ class AgentAssemblySpecTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> AgentAssemblySpec.of("", "数据分析Agent", "描述", "dashscope:qwen-plus",
+                () -> new AgentAssemblySpec("", "数据分析Agent", "描述", "dashscope:qwen-plus",
                         "你是助手", List.of(), 20, sandbox));
     }
 
@@ -80,7 +78,7 @@ class AgentAssemblySpecTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> AgentAssemblySpec.of("agent-a", " ", "描述", "dashscope:qwen-plus",
+                () -> new AgentAssemblySpec("agent-a", " ", "描述", "dashscope:qwen-plus",
                         "你是助手", List.of(), 20, sandbox));
     }
 
@@ -91,7 +89,7 @@ class AgentAssemblySpecTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> AgentAssemblySpec.of("agent-a", "n".repeat(129), "描述", "dashscope:qwen-plus",
+                () -> new AgentAssemblySpec("agent-a", "n".repeat(129), "描述", "dashscope:qwen-plus",
                         "你是助手", List.of(), 20, sandbox));
     }
 
@@ -102,7 +100,7 @@ class AgentAssemblySpecTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> AgentAssemblySpec.of("agent-a", "数据分析Agent", "描述", " ",
+                () -> new AgentAssemblySpec("agent-a", "数据分析Agent", "描述", " ",
                         "你是助手", List.of(), 20, sandbox));
     }
 
@@ -113,7 +111,7 @@ class AgentAssemblySpecTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> AgentAssemblySpec.of("agent-a", "数据分析Agent", "描述", "dashscope:qwen-plus",
+                () -> new AgentAssemblySpec("agent-a", "数据分析Agent", "描述", "dashscope:qwen-plus",
                         "你是助手", List.of(), 0, sandbox));
     }
 

@@ -41,5 +41,7 @@ abstract class DatasourceRepositoryTestSupport {
         registry.add("spring.datasource.username", () -> System.getenv().getOrDefault(ENV_PG_USERNAME, "postgres"));
         registry.add("spring.datasource.password", () -> System.getenv().getOrDefault(ENV_PG_PASSWORD, "postgres"));
         registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
+        // application.yaml 中 model.encryption.key 无默认值（强制生产显式配置），集成测试补默认值避免启动失败
+        registry.add("model.encryption.key", () -> "integration-test-model-secret");
     }
 }

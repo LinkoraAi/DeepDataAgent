@@ -1,5 +1,6 @@
 package com.linkroa.deepdataagent.runtime.infrastructure.config;
 
+import com.linkroa.deepdataagent.shared.constant.api.ApiVersionConstants;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.server.RequestPath;
 import org.springframework.web.bind.annotation.RestController;
@@ -8,28 +9,29 @@ import org.springframework.web.servlet.config.annotation.PathMatchConfigurer;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * 运行时 API 版本化配置（基于 Spring Framework 7 一等公民 API Versioning）。
+ * 运行时与 Agent 管理 API 版本化配置（基于 Spring Framework 7 一等公民 API Versioning）。
  * <p>采用<b>路径版本化</b>策略：URL 形态为 {@code /api/v{主版本}/...}（如
- * {@code GET /api/v1/agent/sessions}），版本段 {@code v1} 由
- * {@link org.springframework.web.accept.PathApiVersionResolver} 从请求路径
+ * {@code GET /api/v1/agent/sessions}、{@code GET /api/v1/agent/agents}），版本段
+ * {@code v1} 由 {@link org.springframework.web.accept.PathApiVersionResolver} 从请求路径
  * 第 2 段（index 1）解析，并经语义化解析器归一为版本号 {@code 1.0.0}，与控制器
  * {@code @RequestMapping(version = "1")} 声明匹配。</p>
- * <p>范围控制：仅对 {@code com.linkroa.deepdataagent.runtime.controller} 包下的
- * REST 控制器挂载 {@code /api/{version}} 路径前缀；datasource 等其他上下文的
- * 控制器路径形态保持 {@code /api/datasource/...} 不变，版本解析谓词返回 false
- * 时回落到默认版本，避免误解析非版本段而影响既有接口。</p>
+ * <p>范围控制：仅对 {@code com.linkroa.deepdataagent.runtime.controller} 与
+ * {@code com.linkroa.deepdataagent.agent.controller} 包下的 REST 控制器挂载
+ * {@code /api/{version}} 路径前缀；datasource 等其他上下文的控制器路径形态保持
+ * {@code /api/datasource/...} 不变，版本解析谓词返回 false 时回落到默认版本，
+ * 避免误解析非版本段而影响既有接口。</p>
  */
 @Configuration(proxyBeanMethods = false)
 public class ApiVersioningConfig implements WebMvcConfigurer {
 
-    /** 当前运行时 API 主版本号（语义化版本，URL 形态 {@code /api/v1/...}）。 */
-    public static final String CURRENT_API_VERSION = "1";
-
     /** 版本化路径前缀：{@code version} 以 URI 变量形式声明，供版本段解析与路径匹配共用。 */
     private static final String VERSIONED_PATH_PREFIX = "/api/{version}";
 
-    /** 启用版本化的运行时控制器包前缀。 */
-    private static final String RUNTIME_CONTROLLER_PACKAGE = "com.linkroa.deepdataagent.runtime.controller";
+    /** 启用版本化的控制器包前缀（运行时 + Agent 管理）。 */
+    private static final String[] VERSIONED_CONTROLLER_PACKAGES = {
+            "com.linkroa.deepdataagent.runtime.controller",
+            "com.linkroa.deepdataagent.agent.controller"
+    };
 
     /**
      * 注册版本解析器：从请求路径第 2 段（index 1）提取版本，格式须为 {@code v{主版本}}
@@ -40,27 +42,34 @@ public class ApiVersioningConfig implements WebMvcConfigurer {
     public void configureApiVersioning(ApiVersionConfigurer configurer) {
         configurer
                 .usePathSegment(1, this::isVersionedRequestPath)
-                .setDefaultVersion(CURRENT_API_VERSION);
+                .setDefaultVersion(ApiVersionConstants.CURRENT_API_VERSION);
     }
 
     /**
-     * 为运行时控制器统一挂载 {@code /api/{version}} 路径前缀，控制器内只需声明
-     * 业务路径（如 {@code /agent/sessions}），最终映射形如
-     * {@code /api/{version}/agent/sessions}。
+     * 为版本化控制器统一挂载 {@code /api/{version}} 路径前缀，控制器内只需声明
+     * 业务路径（如 {@code /agent/sessions}、{@code /agent/model-profiles}），
+     * 最终映射形如 {@code /api/{version}/agent/sessions}。
      */
     @Override
     public void configurePathMatch(PathMatchConfigurer configurer) {
-        configurer.addPathPrefix(VERSIONED_PATH_PREFIX, this::isRuntimeController);
+        configurer.addPathPrefix(VERSIONED_PATH_PREFIX, this::isVersionedController);
     }
 
     /**
-     * 判断控制器类型是否属于启用版本化的运行时上下文。
-     * <p>仅对 runtime 上下文下标注 {@link RestController} 的类生效，
-     * 其余上下文（datasource 等）接口路径形态保持不变。</p>
+     * 判断控制器类型是否属于启用版本化的上下文（runtime / agent）。
+     * <p>其余上下文（datasource 等）接口路径形态保持不变。</p>
      */
-    private boolean isRuntimeController(Class<?> controllerType) {
-        return controllerType.isAnnotationPresent(RestController.class)
-                && controllerType.getPackageName().startsWith(RUNTIME_CONTROLLER_PACKAGE);
+    private boolean isVersionedController(Class<?> controllerType) {
+        if (!controllerType.isAnnotationPresent(RestController.class)) {
+            return false;
+        }
+        String packageName = controllerType.getPackageName();
+        for (String pkg : VERSIONED_CONTROLLER_PACKAGES) {
+            if (packageName.startsWith(pkg)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -5,8 +5,12 @@ import com.linkroa.deepdataagent.runtime.domain.factory.BuiltAgent;
 import com.linkroa.deepdataagent.runtime.domain.gateway.AgentToolGateway;
 import com.linkroa.deepdataagent.runtime.domain.gateway.AgentToolGateway.ToolDescriptor;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec;
+import com.linkroa.deepdataagent.runtime.domain.model.ModelAccess;
 import com.linkroa.deepdataagent.runtime.infrastructure.config.AgentRuntimeProperties;
 import io.agentscope.core.message.ToolResultBlock;
+import io.agentscope.core.model.Model;
+import io.agentscope.core.model.ModelCreationContext;
+import io.agentscope.core.model.ModelRegistry;
 import io.agentscope.core.tool.AgentTool;
 import io.agentscope.core.tool.ToolCallParam;
 import io.agentscope.core.tool.Toolkit;
@@ -31,7 +35,9 @@ import java.util.Map;
  * AgentScope Harness 组装工厂（{@link AgentFactoryPort} 实现）。
  * <p>采用「每请求构建 + 用后释放」生命周期：{@link #build} 每次装配全新
  * {@link HarnessAgent}（不缓存、无跨请求共享可变状态），调用方在轮次结束后经
- * {@link BuiltAgent#close()} 释放。工具集经 {@link Toolkit#registerAgentTool} 注册
+ * {@link BuiltAgent#close()} 释放。模型经 {@link #resolveModel} 解析：
+ * 台账凭证/API 端点（{@link ModelAccess}）注入 {@link ModelCreationContext}，
+ * 无凭证则交由注册表默认解析。工具集经 {@link Toolkit#registerAgentTool} 注册
  * {@link AgentToolGateway} 暴露的真实基础工具（非 schema 骨架），工具执行受
  * {@code app.agent.tool-timeout} 超时保护。</p>
  */
@@ -50,11 +56,11 @@ public class AgentscopeHarnessAgentFactory implements AgentFactoryPort {
     private AgentToolGateway toolGateway;
 
     @Override
-    public BuiltAgent build(AgentAssemblySpec spec) {
-        return new HarnessBuiltAgent(spec.agentId(), buildNew(spec));
+    public BuiltAgent build(AgentAssemblySpec spec, ModelAccess modelAccess) {
+        return new HarnessBuiltAgent(spec.agentId(), buildNew(spec, modelAccess));
     }
 
-    private HarnessAgent buildNew(AgentAssemblySpec spec) {
+    private HarnessAgent buildNew(AgentAssemblySpec spec, ModelAccess modelAccess) {
         Toolkit toolkit = buildToolkit(spec);
 
         SandboxFilesystemSpec filesystem = new DockerFilesystemSpec()
@@ -67,7 +73,7 @@ public class AgentscopeHarnessAgentFactory implements AgentFactoryPort {
         HarnessAgent.Builder builder = HarnessAgent.builder()
                 .name(spec.name())
                 .description(spec.description())
-                .model(spec.model())
+                .model(resolveModel(spec.model(), modelAccess))
                 .maxIters(spec.maxIters())
                 .agentId(spec.agentId())
                 .toolkit(toolkit)
@@ -78,6 +84,24 @@ public class AgentscopeHarnessAgentFactory implements AgentFactoryPort {
             builder.sysPrompt(spec.systemPrompt());
         }
         return builder.build();
+    }
+
+    /**
+     * 按模型访问配置解析提供方模型：注入台账凭证 / API 端点（经
+     * {@link ModelCreationContext}），无凭证时退化到注册表默认解析。
+     */
+    private Model resolveModel(String modelName, ModelAccess access) {
+        if (StringUtils.isBlank(access.apiKey()) && StringUtils.isBlank(access.baseUrl())) {
+            return ModelRegistry.resolve(modelName);
+        }
+        ModelCreationContext.Builder context = ModelCreationContext.builder();
+        if (StringUtils.isNotBlank(access.apiKey())) {
+            context.apiKey(access.apiKey());
+        }
+        if (StringUtils.isNotBlank(access.baseUrl())) {
+            context.baseUrl(access.baseUrl());
+        }
+        return ModelRegistry.resolve(modelName, context.build());
     }
 
     /**

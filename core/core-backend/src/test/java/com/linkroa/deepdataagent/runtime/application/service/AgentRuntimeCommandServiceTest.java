@@ -10,12 +10,12 @@ import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignalType;
 import com.linkroa.deepdataagent.runtime.domain.event.EventBroadcaster;
 import com.linkroa.deepdataagent.runtime.domain.factory.AgentFactoryPort;
 import com.linkroa.deepdataagent.runtime.domain.factory.BuiltAgent;
-import com.linkroa.deepdataagent.runtime.domain.gateway.AgentToolGateway;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSessionContext;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.domain.model.ExecutionRound;
+import com.linkroa.deepdataagent.runtime.domain.model.ModelAccess;
 import com.linkroa.deepdataagent.runtime.domain.model.RunTrace;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.AgentSessionStatus;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.ChatEventType;
@@ -24,9 +24,9 @@ import com.linkroa.deepdataagent.runtime.domain.repository.AgentSessionRepositor
 import com.linkroa.deepdataagent.runtime.domain.repository.ChatEventRepository;
 import com.linkroa.deepdataagent.runtime.domain.repository.ExecutionRoundRepository;
 import com.linkroa.deepdataagent.runtime.domain.repository.RunTraceRepository;
-import com.linkroa.deepdataagent.runtime.infrastructure.config.AgentRuntimeProperties;
 import com.linkroa.deepdataagent.runtime.infrastructure.execution.InMemorySessionRegistry;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
+import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,7 +44,6 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -57,6 +56,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -81,7 +81,7 @@ class AgentRuntimeCommandServiceTest {
     @Mock private AgentRunExecutor agentRunExecutor;
     @Mock private EventBroadcaster eventBroadcaster;
     @Mock private TransactionTemplate transactionTemplate;
-    @Mock private AgentToolGateway toolGateway;
+    @Mock private RuntimeAgentAssemblyResolver runtimeAgentAssemblyResolver;
     @Mock private Executor virtualExecutor;
 
     /** 真实会话级聚合注册表：串行守卫 / 断连中断语义按真实实现执行（与主链路一致）。 */
@@ -90,13 +90,11 @@ class AgentRuntimeCommandServiceTest {
     /** 真实同步调度器：publishOn 后在调用线程同步执行 doOnNext（测试断言确定性强）。 */
     private final Scheduler virtualScheduler = Schedulers.immediate();
 
-    private AgentRuntimeProperties properties;
     private AgentRuntimeCommandService service;
     private ChatEventPayloadAssembler payloadAssembler;
 
     @BeforeEach
     void setUp() {
-        properties = new AgentRuntimeProperties();
         payloadAssembler = new ChatEventPayloadAssembler();
         ReflectionTestUtils.setField(payloadAssembler, "objectMapper", new ObjectMapper());
         assembleService();
@@ -115,9 +113,8 @@ class AgentRuntimeCommandServiceTest {
         ReflectionTestUtils.setField(svc, "agentFactory", agentFactory);
         ReflectionTestUtils.setField(svc, "agentRunExecutor", executor);
         ReflectionTestUtils.setField(svc, "eventBroadcaster", eventBroadcaster);
-        ReflectionTestUtils.setField(svc, "properties", properties);
         ReflectionTestUtils.setField(svc, "assembler", new AgentRuntimeAssemblerImpl());
-        ReflectionTestUtils.setField(svc, "toolGateway", toolGateway);
+        ReflectionTestUtils.setField(svc, "runtimeAgentAssemblyResolver", runtimeAgentAssemblyResolver);
         ReflectionTestUtils.setField(svc, "sessionRegistry", sessionRegistry);
         ReflectionTestUtils.setField(svc, "transactionTemplate", transactionTemplate);
         ReflectionTestUtils.setField(svc, "payloadAssembler", payloadAssembler);
@@ -150,9 +147,10 @@ class AgentRuntimeCommandServiceTest {
         when(runTraceRepository.save(any(RunTrace.class))).thenAnswer(inv -> inv.getArgument(0));
         when(chatEventRepository.save(any(ChatEvent.class))).thenAnswer(inv -> inv.getArgument(0));
         when(chatEventRepository.nextSequenceNum(anyString())).thenReturn(1L);
-        when(toolGateway.availableToolNames()).thenReturn(Set.of());
+        // 运行装配：实时从 agent 台账解析（无回退），执行路径必须返回有效规格 + 模型访问配置
+        when(runtimeAgentAssemblyResolver.assemble(any(AgentSession.class))).thenReturn(sampleAssembly());
         BuiltAgent agent = mock(BuiltAgent.class);
-        when(agentFactory.build(any(AgentAssemblySpec.class))).thenReturn(agent);
+        when(agentFactory.build(any(AgentAssemblySpec.class), any(ModelAccess.class))).thenReturn(agent);
         return agent;
     }
 
@@ -168,7 +166,7 @@ class AgentRuntimeCommandServiceTest {
 
     @Test
     void should_createSession_when_createSession_given_validCommand() {
-        // given
+        // given（校验链路默认无操作即通过：发布号合法 / Agent 与版本均存在）
         wireTransactionTemplate();
         when(sessionRepository.save(any(AgentSession.class))).thenAnswer(inv -> inv.getArgument(0));
         CreateSessionCommand command = new CreateSessionCommand("u-1", "agent-a", "1.0.0", "会话", "{}");
@@ -176,10 +174,50 @@ class AgentRuntimeCommandServiceTest {
         // when
         AgentSession session = service.createSession(command);
 
-        // then
+        // then（校验通过后落库，会话初始为 IDLE）
         assertEquals("u-1", session.userId());
         assertEquals(AgentSessionStatus.IDLE, session.status());
+        verify(runtimeAgentAssemblyResolver).assertResolvable("agent-a", "1.0.0");
         verify(sessionRepository).save(any(AgentSession.class));
+    }
+
+    @Test
+    void should_throwNotFound_when_createSession_given_invalidReleaseNumber() {
+        // given（发布号非十进制 → 404，会话不落库）
+        wireTransactionTemplate();
+        doThrow(new ResourceNotFoundException("发布号格式非法"))
+                .when(runtimeAgentAssemblyResolver).assertResolvable("agent-a", "v1");
+        CreateSessionCommand command = new CreateSessionCommand("u-1", "agent-a", "v1", "会话", "{}");
+
+        // when & then
+        assertThrows(ResourceNotFoundException.class, () -> service.createSession(command));
+        verify(sessionRepository, never()).save(any(AgentSession.class));
+    }
+
+    @Test
+    void should_throwNotFound_when_createSession_given_missingVersion() {
+        // given（版本不存在 → 404，无全局回退）
+        wireTransactionTemplate();
+        doThrow(new ResourceNotFoundException("Agent版本不存在"))
+                .when(runtimeAgentAssemblyResolver).assertResolvable("agent-a", "99");
+        CreateSessionCommand command = new CreateSessionCommand("u-1", "agent-a", "99", "会话", "{}");
+
+        // when & then
+        assertThrows(ResourceNotFoundException.class, () -> service.createSession(command));
+        verify(sessionRepository, never()).save(any(AgentSession.class));
+    }
+
+    @Test
+    void should_throwNotFound_when_createSession_given_missingAgentOrArchived() {
+        // given（Agent 不存在 / 已归档 → 404，拒绝创建新会话）
+        wireTransactionTemplate();
+        doThrow(new ResourceNotFoundException("Agent已归档，不可创建新会话"))
+                .when(runtimeAgentAssemblyResolver).assertResolvable("ghost", "1");
+        CreateSessionCommand command = new CreateSessionCommand("u-1", "ghost", "1", "会话", "{}");
+
+        // when & then
+        assertThrows(ResourceNotFoundException.class, () -> service.createSession(command));
+        verify(sessionRepository, never()).save(any(AgentSession.class));
     }
 
     @Test
@@ -387,8 +425,9 @@ class AgentRuntimeCommandServiceTest {
         when(runTraceRepository.save(any(RunTrace.class))).thenAnswer(inv -> inv.getArgument(0));
         when(chatEventRepository.save(any(ChatEvent.class))).thenAnswer(inv -> inv.getArgument(0));
         when(chatEventRepository.nextSequenceNum(anyString())).thenReturn(1L);
-        // agent 构建失败（事件流启动前，会话级未注册在跑句柄）：推导为 error 而非 interrupted
-        when(agentFactory.build(any(AgentAssemblySpec.class)))
+        // 运行装配成功，但工厂构建失败（事件流启动前，会话级未注册在跑句柄）：推导为 error 而非 interrupted
+        when(runtimeAgentAssemblyResolver.assemble(any(AgentSession.class))).thenReturn(sampleAssembly());
+        when(agentFactory.build(any(AgentAssemblySpec.class), any(ModelAccess.class)))
                 .thenThrow(new DeepDataAgentException("DEEP_AGENT_BUILD_FAILED"));
 
         // when
@@ -488,5 +527,14 @@ class AgentRuntimeCommandServiceTest {
 
     private AgentSession idleSession() {
         return AgentSession.create("u-1", "agent-a", "1.0.0", "{}", null);
+    }
+
+    /** 装配结果样本（构建路径输入：领域规格 + 模型访问配置）。 */
+    private RuntimeAgentAssemblyResolver.AssembledAssembly sampleAssembly() {
+        return new RuntimeAgentAssemblyResolver.AssembledAssembly(
+                new AgentAssemblySpec(
+                        "agent-a", "v1", "desc", "openai:gpt-4", "你是数据分析专家",
+                        List.of(), 10, AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L)),
+                ModelAccess.of("sk-cred", "https://api.example.com/v1"));
     }
 }

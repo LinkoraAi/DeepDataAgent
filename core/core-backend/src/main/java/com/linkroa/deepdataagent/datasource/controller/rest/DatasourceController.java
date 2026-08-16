@@ -17,6 +17,7 @@ import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceType;
 import com.linkroa.deepdataagent.datasource.domain.strategy.DatasourceConnectionStrategy;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import com.linkroa.deepdataagent.shared.result.ApiResponse;
+import com.linkroa.deepdataagent.shared.result.PaginatedResponse;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;

@@ -7,7 +7,7 @@ import com.linkroa.deepdataagent.runtime.controller.request.SendEventRequest;
 import com.linkroa.deepdataagent.runtime.controller.response.SendMessageResponse;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.infrastructure.config.AgentRuntimeProperties;
-import com.linkroa.deepdataagent.runtime.infrastructure.config.ApiVersioningConfig;
+import com.linkroa.deepdataagent.shared.constant.api.ApiVersionConstants;
 import com.linkroa.deepdataagent.runtime.infrastructure.sse.ChatEventCodec;
 import com.linkroa.deepdataagent.runtime.infrastructure.sse.SseEmitterRegistry;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
@@ -45,7 +45,7 @@ import java.util.UUID;
  * </ul>
  */
 @RestController
-@RequestMapping(path = "/agent/sessions/{sessionId}/events", version = ApiVersioningConfig.CURRENT_API_VERSION)
+@RequestMapping(path = "/agent/sessions/{sessionId}/events", version = ApiVersionConstants.CURRENT_API_VERSION)
 public class AgentChatEventController {
 
     private static final Logger log = LoggerFactory.getLogger(AgentChatEventController.class);

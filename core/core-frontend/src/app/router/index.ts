@@ -1,8 +1,10 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import AgentWorkspacePage from '@/modules/agent/pages/AgentWorkspacePage.vue';
+import AgentsPage from '@/modules/agent/pages/AgentsPage.vue';
+import ModelProfilesPage from '@/modules/agent/pages/ModelProfilesPage.vue';
+import SkillsPage from '@/modules/agent/pages/SkillsPage.vue';
 import DatasourceOverviewPage from '@/modules/datasource/pages/DatasourceOverviewPage.vue';
 import MemoryOverviewPage from '@/modules/memory/pages/MemoryOverviewPage.vue';
-import SkillsOverviewPage from '@/modules/skills/pages/SkillsOverviewPage.vue';
 
 const router = createRouter({
   history: createWebHistory(),
@@ -17,9 +19,23 @@ const router = createRouter({
       component: AgentWorkspacePage,
     },
     {
+      path: '/agent/management',
+      name: 'agent-management',
+      component: AgentsPage,
+    },
+    {
+      path: '/agent/model-profiles',
+      name: 'agent-model-profiles',
+      component: ModelProfilesPage,
+    },
+    {
+      path: '/agent/skills',
+      name: 'agent-skills',
+      component: SkillsPage,
+    },
+    {
       path: '/skills',
-      name: 'skills',
-      component: SkillsOverviewPage,
+      redirect: '/agent/skills',
     },
     {
       path: '/memory',

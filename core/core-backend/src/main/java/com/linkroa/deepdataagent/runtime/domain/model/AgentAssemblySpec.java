@@ -82,22 +82,7 @@ public record AgentAssemblySpec(
         if (toolNames == null) {
             throw new IllegalArgumentException("工具名集合不能为空");
         }
-    }
-
-    /**
-     * 装配规格工厂方法。
-     */
-    public static AgentAssemblySpec of(
-            String agentId,
-            String name,
-            String description,
-            String model,
-            String systemPrompt,
-            List<String> toolNames,
-            int maxIters,
-            Sandbox sandbox
-    ) {
-        List<String> tools = toolNames == null ? List.of() : List.copyOf(toolNames);
-        return new AgentAssemblySpec(agentId, name, description, model, systemPrompt, tools, maxIters, sandbox);
+        // 防御性拷贝：保证 record 不可变性（对外部可变列表隔离）
+        toolNames = List.copyOf(toolNames);
     }
 }

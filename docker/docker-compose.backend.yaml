@@ -27,6 +27,8 @@ services:
       # 仅保留运行态开关；连接地址与 OpenSandbox 参数已下沉至后端 application.yaml，
       # 如需覆盖可在启动前设置 SPRING_DATASOURCE_URL / REDIS_HOST / APP_OPENSANDBOX_* 等环境变量
       SPRING_PROFILES_ACTIVE: standalone
+      # 模型凭证加密密钥（yaml 层无默认值：缺省使用开发默认值，生产务必经宿主环境变量覆盖）
+      APP_MODEL_ENCRYPTION_KEY: ${APP_MODEL_ENCRYPTION_KEY:-deepdataagent-model-secret}
     extra_hosts:
       # Linux 下将 host.docker.internal 解析到宿主机网关；Docker Desktop 自带映射，冗余添加无副作用
       - "host.docker.internal:host-gateway"
