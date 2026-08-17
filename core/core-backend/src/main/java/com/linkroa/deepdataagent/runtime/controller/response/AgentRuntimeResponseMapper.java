@@ -1,7 +1,6 @@
 package com.linkroa.deepdataagent.runtime.controller.response;
 
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
-import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.domain.model.ExecutionRound;
 import com.linkroa.deepdataagent.runtime.domain.model.RunTrace;
 import org.mapstruct.Mapper;
@@ -17,8 +16,6 @@ public interface AgentRuntimeResponseMapper {
     SessionResponse toSessionResponse(AgentSession session);
 
     RoundResponse toRoundResponse(ExecutionRound round);
-
-    ChatEventResponse toChatEventResponse(ChatEvent event);
 
     RunTraceResponse toRunTraceResponse(RunTrace trace);
 }

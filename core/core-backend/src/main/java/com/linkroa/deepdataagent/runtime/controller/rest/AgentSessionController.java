@@ -1,6 +1,8 @@
 package com.linkroa.deepdataagent.runtime.controller.rest;
 
 import com.linkroa.deepdataagent.runtime.application.assembler.AgentRuntimeCommandAssembler;
+import com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler;
+import com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope;
 import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeCommandService;
 import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeQueryService;
 import com.linkroa.deepdataagent.runtime.controller.request.CreateSessionRequest;
@@ -12,7 +14,6 @@ import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
 import com.linkroa.deepdataagent.runtime.domain.model.ExecutionRound;
 import com.linkroa.deepdataagent.runtime.domain.model.RunTrace;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
-import com.linkroa.deepdataagent.runtime.controller.response.ChatEventResponse;
 import com.linkroa.deepdataagent.shared.constant.api.ApiVersionConstants;
 import com.linkroa.deepdataagent.shared.result.ApiResponse;
 import com.linkroa.deepdataagent.shared.result.PaginatedResponse;
@@ -45,6 +46,8 @@ public class AgentSessionController {
     private AgentRuntimeResponseMapper responseMapper;
     @Resource
     private AgentRuntimeCommandAssembler commandAssembler;
+    @Resource
+    private SseEventEnvelopeAssembler sseEventEnvelopeAssembler;
 
     /**
      * 创建会话。
@@ -106,11 +109,11 @@ public class AgentSessionController {
      * 单轮事件回放。
      */
     @GetMapping("/{sessionId}/rounds/{roundId}/events")
-    public ApiResponse<List<ChatEventResponse>> roundEvents(@PathVariable String sessionId,
-                                                            @PathVariable String roundId) {
+    public ApiResponse<List<SseEventEnvelope>> roundEvents(@PathVariable String sessionId,
+                                                           @PathVariable String roundId) {
         List<ChatEvent> events = queryService.roundEvents(roundId);
-        List<ChatEventResponse> responses = events.stream()
-                .map(responseMapper::toChatEventResponse)
+        List<SseEventEnvelope> responses = events.stream()
+                .map(sseEventEnvelopeAssembler::toEnvelope)
                 .toList();
         return ApiResponse.success(responses);
     }

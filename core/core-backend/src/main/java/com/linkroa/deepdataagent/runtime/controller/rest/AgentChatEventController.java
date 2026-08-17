@@ -1,6 +1,7 @@
 package com.linkroa.deepdataagent.runtime.controller.rest;
 
 import com.linkroa.deepdataagent.runtime.application.assembler.AgentRuntimeCommandAssembler;
+import com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler;
 import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeCommandService;
 import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeQueryService;
 import com.linkroa.deepdataagent.runtime.controller.request.SendEventRequest;
@@ -59,6 +60,8 @@ public class AgentChatEventController {
     @Resource
     private AgentRuntimeCommandAssembler commandAssembler;
     @Resource
+    private SseEventEnvelopeAssembler sseEventEnvelopeAssembler;
+    @Resource
     private SseEmitterRegistry emitterRegistry;
     @Resource
     private AgentRuntimeProperties properties;
@@ -99,7 +102,7 @@ public class AgentChatEventController {
             List<ChatEvent> history = queryService.replayEvents(
                     commandAssembler.toReplayQuery(sessionId, afterSequenceNum));
             for (ChatEvent event : history) {
-                emitter.send(ChatEventCodec.toSseEvent(event));
+                emitter.send(ChatEventCodec.toSseEvent(sseEventEnvelopeAssembler.toEnvelope(event)));
             }
         } catch (Exception ex) {
             emitter.completeWithError(ex);

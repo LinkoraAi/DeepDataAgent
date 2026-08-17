@@ -91,10 +91,10 @@ import {
   listRounds,
   listSessions,
   parseChatEvent,
-  parseContentBlocks,
   roundEvents,
   sendMessageStream,
   type ChatEventDto,
+  type ContentBlock,
 } from '../api/agent';
 import { listAgentVersions, listAgents, type AgentDto, type AgentVersionDto } from '../api/agents';
 
@@ -276,36 +276,36 @@ async function replayUserMessages(events: ChatEventDto[], fallbackInput: string)
   if (hasUserBubble || !fallbackInput) {
     return;
   }
-  const runStart = events.find((dto) => dto.eventType === 'run_start');
+  const runStart = events.find((dto) => dto.type === 'run_start');
   if (runStart) {
     pushMessage({ id: newId(), role: 'user', content: fallbackInput, thinking: '', toolTraces: [] });
   }
 }
 
-/** 应用单条聊天事件到 UI（new 事件模型：payload 为 content-blocks 结构，事件类型对齐后端 ChatEventType）。 */
+/** 应用单条聊天事件到 UI（统一 Message 信封：type 判别 + content 结构化数组）。 */
 async function applyEvent(dto: ChatEventDto): Promise<void> {
-  const payload = parsePayload(dto.payload);
-  switch (dto.eventType) {
+  const blocks = dto.content;
+  switch (dto.type) {
     case 'run_start':
-      // 应用层合成：含 round_id / run_id；会话置 RUNNING
+      // 应用层合成：会话置 RUNNING
       sessionStatus.value = 'RUNNING';
       scrollToBottom();
       break;
     case 'thinking':
-      appendBlockTexts(payload, 'thinking', (text) => {
+      appendBlockTexts(blocks, 'thinking', (text) => {
         lastAssistant().thinking += text;
       });
       scrollToBottom();
       break;
     case 'message':
-      appendBlockTexts(payload, 'text', (text) => {
+      appendBlockTexts(blocks, 'text', (text) => {
         lastAssistant().content += text;
       });
       scrollToBottom();
       break;
     case 'tool_call': {
       // tool_call 块：name + input 入参（SDK TOOL_CALL_* 聚合后一次性发出）
-      const block = firstBlock(payload, 'tool_call');
+      const block = firstBlock(blocks, 'tool_call');
       if (block?.name) {
         const args = block.input && Object.keys(block.input).length ? ` ${JSON.stringify(block.input)}` : '';
         lastAssistant().toolTraces.push(`调用「${block.name}」${args}`);
@@ -315,7 +315,7 @@ async function applyEvent(dto: ChatEventDto): Promise<void> {
     }
     case 'tool_call_output': {
       // tool_result 块：output（head+tail 截断）+ truncated 标记
-      const block = firstBlock(payload, 'tool_result');
+      const block = firstBlock(blocks, 'tool_result');
       const output = block?.output?.trim();
       if (output) {
         lastAssistant().toolTraces.push(`结果: ${truncate(output, 200)}${block?.truncated ? '…(已截断)' : ''}`);
@@ -325,7 +325,7 @@ async function applyEvent(dto: ChatEventDto): Promise<void> {
     }
     case 'run_error':
     case 'error':
-      lastAssistant().error = strField(payload, 'message') || 'Agent 执行失败';
+      lastAssistant().error = dataField(blocks, 'message') || 'Agent 执行失败';
       scrollToBottom();
       break;
     case 'run_end':
@@ -333,7 +333,7 @@ async function applyEvent(dto: ChatEventDto): Promise<void> {
       scrollToBottom();
       break;
     case 'session_status':
-      sessionStatus.value = strField(payload, 'status') || sessionStatus.value;
+      sessionStatus.value = dataField(blocks, 'session_status') || sessionStatus.value;
       scrollToBottom();
       break;
     case 'agent_progress':
@@ -346,39 +346,24 @@ async function applyEvent(dto: ChatEventDto): Promise<void> {
   }
 }
 
-/** 取 payload 中首个指定类型的 content-block。 */
-function firstBlock(
-  payload: Record<string, unknown>,
-  type: string,
-): ReturnType<typeof parseContentBlocks>[number] | undefined {
-  return parseContentBlocks(payload).find((block) => block.type === type);
+/** 取 content 中首个指定类型的 content-block。 */
+function firstBlock(blocks: ContentBlock[], type: string): ContentBlock | undefined {
+  return blocks.find((block) => block.type === type);
 }
 
-/** 将 payload 中指定类型的文本块增量追加到目标。 */
-function appendBlockTexts(
-  payload: Record<string, unknown>,
-  type: string,
-  append: (text: string) => void,
-): void {
-  for (const block of parseContentBlocks(payload)) {
+/** 将 content 中指定类型的文本块增量追加到目标。 */
+function appendBlockTexts(blocks: ContentBlock[], type: string, append: (text: string) => void): void {
+  for (const block of blocks) {
     if (block.type === type && block.text) {
       append(block.text);
     }
   }
 }
 
-function parsePayload(raw: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(raw);
-    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
-
-/** 以字符串安全读取 payload 字段（未知类型收敛）。 */
-function strField(payload: Record<string, unknown>, key: string): string {
-  const value = payload[key];
+/** 以字符串安全读取 data 块字段（未知类型收敛）。 */
+function dataField(blocks: ContentBlock[], key: string): string {
+  const block = blocks.find((item) => item.type === 'data');
+  const value = block?.data?.[key];
   return typeof value === 'string' ? value : '';
 }
 

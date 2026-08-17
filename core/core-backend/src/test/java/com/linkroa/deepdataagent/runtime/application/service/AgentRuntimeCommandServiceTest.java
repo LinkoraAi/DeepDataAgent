@@ -2,12 +2,14 @@ package com.linkroa.deepdataagent.runtime.application.service;
 
 import com.linkroa.deepdataagent.runtime.application.assembler.AgentRuntimeAssemblerImpl;
 import com.linkroa.deepdataagent.runtime.application.assembler.ChatEventPayloadAssembler;
+import com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler;
+import com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope;
+import com.linkroa.deepdataagent.runtime.application.port.EventBroadcaster;
 import com.linkroa.deepdataagent.runtime.application.command.CreateSessionCommand;
 import com.linkroa.deepdataagent.runtime.application.command.SendMessageCommand;
 import com.linkroa.deepdataagent.runtime.application.command.TerminateSessionCommand;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignalType;
-import com.linkroa.deepdataagent.runtime.domain.event.EventBroadcaster;
 import com.linkroa.deepdataagent.runtime.domain.factory.AgentFactoryPort;
 import com.linkroa.deepdataagent.runtime.domain.factory.BuiltAgent;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec;
@@ -92,11 +94,14 @@ class AgentRuntimeCommandServiceTest {
 
     private AgentRuntimeCommandService service;
     private ChatEventPayloadAssembler payloadAssembler;
+    private SseEventEnvelopeAssembler envelopeAssembler;
 
     @BeforeEach
     void setUp() {
         payloadAssembler = new ChatEventPayloadAssembler();
         ReflectionTestUtils.setField(payloadAssembler, "objectMapper", new ObjectMapper());
+        envelopeAssembler = new SseEventEnvelopeAssembler();
+        ReflectionTestUtils.setField(envelopeAssembler, "objectMapper", new ObjectMapper());
         assembleService();
     }
 
@@ -113,6 +118,7 @@ class AgentRuntimeCommandServiceTest {
         ReflectionTestUtils.setField(svc, "agentFactory", agentFactory);
         ReflectionTestUtils.setField(svc, "agentRunExecutor", executor);
         ReflectionTestUtils.setField(svc, "eventBroadcaster", eventBroadcaster);
+        ReflectionTestUtils.setField(svc, "sseEventEnvelopeAssembler", envelopeAssembler);
         ReflectionTestUtils.setField(svc, "assembler", new AgentRuntimeAssemblerImpl());
         ReflectionTestUtils.setField(svc, "runtimeAgentAssemblyResolver", runtimeAgentAssemblyResolver);
         ReflectionTestUtils.setField(svc, "sessionRegistry", sessionRegistry);
@@ -304,7 +310,7 @@ class AgentRuntimeCommandServiceTest {
         verify(sessionRepository).touchLastActive(session.sessionId());
         verify(runTraceRepository, times(2)).save(any(RunTrace.class));
         // run_start + text_delta + thinking_end + session_status 四次广播；SDK 终态只落库不广播
-        verify(eventBroadcaster, times(4)).broadcast(eq(session.sessionId()), any(ChatEvent.class));
+        verify(eventBroadcaster, times(4)).broadcast(eq(session.sessionId()), any(SseEventEnvelope.class));
         verify(agent).close();
     }
 

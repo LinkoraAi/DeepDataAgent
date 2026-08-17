@@ -3,11 +3,12 @@ package com.linkroa.deepdataagent.runtime.application.service;
 import com.linkroa.deepdataagent.runtime.application.assembler.AgentRuntimeAssembler;
 import com.linkroa.deepdataagent.runtime.application.assembler.ChatEventPayloadAssembler;
 import com.linkroa.deepdataagent.runtime.application.assembler.ChatEventPayloadAssembler.AssembledEvent;
+import com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler;
 import com.linkroa.deepdataagent.runtime.application.command.CreateSessionCommand;
 import com.linkroa.deepdataagent.runtime.application.command.SendMessageCommand;
 import com.linkroa.deepdataagent.runtime.application.command.TerminateSessionCommand;
+import com.linkroa.deepdataagent.runtime.application.port.EventBroadcaster;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
-import com.linkroa.deepdataagent.runtime.domain.event.EventBroadcaster;
 import com.linkroa.deepdataagent.runtime.domain.factory.AgentFactoryPort;
 import com.linkroa.deepdataagent.runtime.domain.factory.BuiltAgent;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentRunState;
@@ -85,6 +86,8 @@ public class AgentRuntimeCommandService {
     private AgentRunExecutor agentRunExecutor;
     @Resource
     private EventBroadcaster eventBroadcaster;
+    @Resource
+    private SseEventEnvelopeAssembler sseEventEnvelopeAssembler;
     @Resource
     private AgentRuntimeAssembler assembler;
     @Resource
@@ -527,13 +530,13 @@ public class AgentRuntimeCommandService {
         }
     }
 
-    /** 尝试 SSE 广播：失败记录 WARN（事件已落库，客户端重连可回放）。 */
+    /** 尝试 SSE 广播：先装配对外信封再广播，失败记录 WARN（事件已落库，客户端重连可回放）。 */
     private void broadcastQuietly(String sessionId, ChatEvent event) {
         if (event == null) {
             return;
         }
         try {
-            eventBroadcaster.broadcast(sessionId, event);
+            eventBroadcaster.broadcast(sessionId, sseEventEnvelopeAssembler.toEnvelope(event));
         } catch (RuntimeException ex) {
             log.warn("SSE 广播失败: sessionId={}, eventType={}", sessionId, event.eventType(), ex);
         }

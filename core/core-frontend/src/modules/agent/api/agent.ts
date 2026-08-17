@@ -1,22 +1,23 @@
 /**
  * Agent 运行时接口层（REST + SSE）。
- * <p>对齐后端 Managed Agents 风格契约：会话管理走统一 ApiResponse 包装，
- * 消息发送采用 {@code POST /sessions/{sessionId}/events}（Accept: text/event-stream）
- * 直连 SSE，事件字段与 {@code ChatEventResponse} 一致。</p>
+ * <p>会话管理走统一 ApiResponse 包装，消息发送采用 {@code POST /sessions/{sessionId}/events}
+ * （Accept: text/event-stream）直连 SSE，事件载荷为统一 {@code Message} 信封（SseEventEnvelope）。</p>
  */
 import { fetchJson, type PaginatedResponse } from '@/shared/api/http';
 
 // ==================== 类型定义 ====================
 
-/** 聊天事件 DTO（与后端 ChatEventResponse 对齐）。 */
+/** 聊天事件信封 DTO（与后端 SseEventEnvelope 对齐的 Message 信封结构）。 */
 export interface ChatEventDto {
-  eventId: string;
-  sessionId: string;
-  roundId: string | null;
-  eventType: string;
-  payload: string;
-  sequenceNum: number;
-  createdAt: string;
+  object: string;
+  id: string;
+  created_at: string;
+  role: string;
+  type: string;
+  content: ContentBlock[];
+  metadata: Record<string, unknown>;
+  status: string;
+  sequence_number: number;
 }
 
 /** 会话 DTO。 */
@@ -61,16 +62,17 @@ export interface SseEventLine {
   data: string;
 }
 
-/** content-blocks 块（对齐后端 AgentScopeEventAdapter：text/thinking/tool_call/tool_result/progress）。 */
+/** content-blocks 块（text/thinking/tool_call/tool_result/data，字段 snake_case 对齐后端）。 */
 export interface ContentBlock {
   type: string;
-  blockId?: string;
-  toolCallId?: string;
+  block_id?: string;
+  tool_call_id?: string;
   name?: string;
   text?: string;
   input?: Record<string, unknown>;
   output?: string;
   truncated?: boolean;
+  data?: Record<string, unknown>;
 }
 
 /** 聊天事件类型（与后端 ChatEventType 小写枚举名对齐）。 */
@@ -230,26 +232,7 @@ export function parseSseBlock(block: string): SseEventLine | null {
   return data ? { event, data } : null;
 }
 
-/** 解析 SSE data 为聊天事件 DTO。 */
+/** 解析 SSE data 为聊天事件信封 DTO。 */
 export function parseChatEvent(data: string): ChatEventDto {
   return JSON.parse(data) as ChatEventDto;
-}
-
-/**
- * 从事件 payload 中提取 content-blocks 数组。
- * <p>后端 content-blocks 结构：{@code {"content":[{"type":"text|thinking|tool_call|tool_result",...}],"is_last":bool}}。
- * 非 content-blocks 载荷（run_start / run_end / session_status 等扁平 JSON）返回空数组。</p>
- */
-export function parseContentBlocks(payload: Record<string, unknown>): ContentBlock[] {
-  const content = payload['content'];
-  if (!Array.isArray(content)) {
-    return [];
-  }
-  return content.filter((item): item is ContentBlock => {
-    if (typeof item !== 'object' || item === null) {
-      return false;
-    }
-    const block = item as Record<string, unknown>;
-    return typeof block['type'] === 'string';
-  });
 }

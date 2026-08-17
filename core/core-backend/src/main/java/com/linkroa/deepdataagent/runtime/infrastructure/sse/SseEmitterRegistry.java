@@ -1,8 +1,8 @@
 package com.linkroa.deepdataagent.runtime.infrastructure.sse;
 
-import com.linkroa.deepdataagent.runtime.domain.event.EventBroadcaster;
+import com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope;
+import com.linkroa.deepdataagent.runtime.application.port.EventBroadcaster;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSessionContext;
-import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.domain.repository.SessionRegistry;
 import com.linkroa.deepdataagent.runtime.infrastructure.config.AgentRuntimeProperties;
 import jakarta.annotation.PostConstruct;
@@ -98,14 +98,14 @@ public class SseEmitterRegistry implements EventBroadcaster {
      * 广播事件至会话的全部订阅者（序列化为 SSE name/data）。
      */
     @Override
-    public void broadcast(String sessionId, ChatEvent event) {
+    public void broadcast(String sessionId, SseEventEnvelope envelope) {
         Set<SseEmitter> emitters = sessionEmitters.get(sessionId);
         if (emitters == null || emitters.isEmpty()) {
             return;
         }
         for (SseEmitter emitter : emitters) {
             try {
-                emitter.send(ChatEventCodec.toSseEvent(event));
+                emitter.send(ChatEventCodec.toSseEvent(envelope));
             } catch (Exception ex) {
                 remove(sessionId, emitter);
                 emitter.completeWithError(ex);

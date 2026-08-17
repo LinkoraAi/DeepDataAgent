@@ -1,6 +1,6 @@
 package com.linkroa.deepdataagent.runtime.infrastructure.sse;
 
-import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
+import com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonGenerator;
@@ -15,10 +15,10 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
 /**
- * 领域 {@link ChatEvent} → SSE（name + data）编解码。
- * <p>SSE {@code event} 字段 = 域事件类型小写（run_start / thinking / ...），
- * {@code data} = 事件 JSON（含 event_id / session_id / round_id / sequence_num / payload /
- * created_at）。时间统一 Asia/Shanghai ISO-8601。</p>
+ * {@link SseEventEnvelope} → SSE（name + data）编解码。
+ * <p>SSE {@code event} 字段 = 信封 {@code type}（已小写），
+ * {@code data} = 信封 JSON（object / id / created_at / role / type / content / metadata / status /
+ * sequence_number）。时间统一 Asia/Shanghai ISO-8601。</p>
  */
 public final class ChatEventCodec {
 
@@ -44,17 +44,17 @@ public final class ChatEventCodec {
     /**
      * 转换为 SSE 事件构造器（event name + data）。
      */
-    public static SseEmitter.SseEventBuilder toSseEvent(ChatEvent event) {
+    public static SseEmitter.SseEventBuilder toSseEvent(SseEventEnvelope envelope) {
         return SseEmitter.event()
-                .name(event.eventType().name().toLowerCase(java.util.Locale.ROOT))
-                .data(toJson(event));
+                .name(envelope.type())
+                .data(toJson(envelope));
     }
 
-    public static String toJson(ChatEvent event) {
+    public static String toJson(SseEventEnvelope envelope) {
         try {
-            return OBJECT_MAPPER.writeValueAsString(event);
+            return OBJECT_MAPPER.writeValueAsString(envelope);
         } catch (JacksonException e) {
-            throw new IllegalStateException("ChatEvent SSE 序列化失败", e);
+            throw new IllegalStateException("SseEventEnvelope SSE 序列化失败", e);
         }
     }
 }
