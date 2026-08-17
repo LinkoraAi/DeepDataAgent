@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "b6bddec3294dbe1f137b72463e3a86dd4b89b534",
-  "generatedAt": "2026-08-16T20:08:14.452Z",
+  "gitCommitHash": "ec109f18b4cb6eb7d70c00b1866f4c5ed38a218a",
+  "generatedAt": "2026-08-17T13:35:55.605Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -113,7 +113,7 @@
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/application/assembler/AgentCommandAssembler.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/application/assembler/AgentCommandAssembler.java",
-      "contentHash": "7b3c41bc4860c874102635bd8972f67070c70bef39b5fa3814641109d46a5bd6",
+      "contentHash": "a2744246f6645cab55b1c07671d946ce47646780285584e00a9101ab8fdebc87",
       "functions": [
         {
           "name": "toCreateCommand",
@@ -122,7 +122,7 @@
           ],
           "returnType": "CreateAgentCommand",
           "exported": true,
-          "lineCount": 12
+          "lineCount": 11
         },
         {
           "name": "toPublishCommand",
@@ -132,7 +132,7 @@
           ],
           "returnType": "PublishAgentVersionCommand",
           "exported": true,
-          "lineCount": 13
+          "lineCount": 12
         }
       ],
       "classes": [
@@ -144,7 +144,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 30
+          "lineCount": 28
         }
       ],
       "imports": [
@@ -178,7 +178,7 @@
         "toPublishCommand",
         "AgentCommandAssembler"
       ],
-      "totalLines": 40,
+      "totalLines": 38,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/application/assembler/ModelProfileCommandAssembler.java": {
@@ -391,12 +391,12 @@
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/application/command/CreateAgentCommand.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/application/command/CreateAgentCommand.java",
-      "contentHash": "5ba5c1b0c4a9c0159c81a8dc6288add1cf5015c02509335c64e9f4204f842e0a",
+      "contentHash": "de39aded621a4739c5de8f42a430be34b6838e0dd39ff77525bdbeb3ba0f2798",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 25,
+      "totalLines": 23,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/application/command/CreateModelProfileCommand.java": {
@@ -441,12 +441,12 @@
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/application/command/PublishAgentVersionCommand.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/application/command/PublishAgentVersionCommand.java",
-      "contentHash": "7e30a7c6f958afd7db8886f17ad35cf65529a7873ac831f1f2b7d33b021a34b5",
+      "contentHash": "3744bab5c4c9ffa195ed5a4c82c99ad6e992ee7e1dccfaac805f79219988b64b",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 27,
+      "totalLines": 25,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/application/command/PublishSkillVersionCommand.java": {
@@ -568,7 +568,7 @@
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/application/service/AgentApplicationService.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/application/service/AgentApplicationService.java",
-      "contentHash": "b0d714745f489f69b2f7a69b5ad092f6d77c224d3f982523728c6e62f58c83c1",
+      "contentHash": "0b0670c9cbcb1d224bb23aa89dac030b5650055068332b338ac0b2eb184430ce",
       "functions": [
         {
           "name": "createAgent",
@@ -596,14 +596,13 @@
             "description",
             "system",
             "modelProfileId",
-            "inferenceParams",
             "skillIds",
             "knowledgeBaseIds",
             "dataSourceIds"
           ],
           "returnType": "AgentVersion",
           "exported": false,
-          "lineCount": 20
+          "lineCount": 19
         },
         {
           "name": "getAgent",
@@ -723,7 +722,7 @@
             "transactionTemplate"
           ],
           "exported": true,
-          "lineCount": 165
+          "lineCount": 164
         }
       ],
       "imports": [
@@ -855,7 +854,7 @@
         "listVersions",
         "AgentApplicationService"
       ],
-      "totalLines": 191,
+      "totalLines": 190,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/application/service/ModelProfileApplicationService.java": {
@@ -1536,7 +1535,7 @@
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/controller/request/AgentConfigRequest.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/controller/request/AgentConfigRequest.java",
-      "contentHash": "a83f58192d63b69041c32008c60045aaafe7a8b54ffc67de590f7b5f6e3103d2",
+      "contentHash": "461c480efcefed18449257ddac434eea86fac5cdcca44fe18ffb7ad536325608",
       "functions": [],
       "classes": [],
       "imports": [
@@ -1554,7 +1553,7 @@
         }
       ],
       "exports": [],
-      "totalLines": 38,
+      "totalLines": 35,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/controller/request/CreateModelProfileRequest.java": {
@@ -1737,7 +1736,7 @@
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/controller/response/AgentVersionResponse.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/controller/response/AgentVersionResponse.java",
-      "contentHash": "1289d5af6db3dcf022759d03ccbc99b537659ac151d5a9b9ddddb932651a5e48",
+      "contentHash": "9a0ed96978a7a74d8178579a841169aced0767f8a8e6302fb1e5f81afad0aebe",
       "functions": [],
       "classes": [],
       "imports": [
@@ -1749,7 +1748,7 @@
         }
       ],
       "exports": [],
-      "totalLines": 23,
+      "totalLines": 22,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/controller/response/ModelProfileResponse.java": {
@@ -2802,7 +2801,7 @@
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/domain/model/AgentVersion.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/domain/model/AgentVersion.java",
-      "contentHash": "e64e424e109103fa41908e009f8034efa4aa464470d190fb110295fd850bfd26",
+      "contentHash": "c129f6b42263dd08ace52c131dfc01a78a71dde257158250986ed076d065afd6",
       "functions": [],
       "classes": [],
       "imports": [
@@ -2850,7 +2849,7 @@
         }
       ],
       "exports": [],
-      "totalLines": 157,
+      "totalLines": 153,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/domain/model/ModelIndicator.java": {
@@ -3927,7 +3926,7 @@
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/infrastructure/persistence/entity/AgentVersionEntity.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/infrastructure/persistence/entity/AgentVersionEntity.java",
-      "contentHash": "cb383c6d28929f92249d61f7debbc0148b54d23e66086e77bec12d22cfb373f1",
+      "contentHash": "7c04bdffb816b01b2b6c5cc8ef97e9f7de951edffa493d445ee107a68d46d79a",
       "functions": [],
       "classes": [
         {
@@ -3941,13 +3940,12 @@
             "description",
             "system",
             "modelProfileId",
-            "inferenceParams",
             "skillIds",
             "knowledgeBaseIds",
             "dataSourceIds"
           ],
           "exported": true,
-          "lineCount": 32
+          "lineCount": 29
         }
       ],
       "imports": [
@@ -3991,7 +3989,7 @@
       "exports": [
         "AgentVersionEntity"
       ],
-      "totalLines": 44,
+      "totalLines": 41,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/agent/infrastructure/persistence/entity/ModelProfileEntity.java": {
@@ -13077,6 +13075,168 @@
       "totalLines": 181,
       "hasStructuralAnalysis": true
     },
+    "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/application/assembler/SseEventEnvelopeAssembler.java": {
+      "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/application/assembler/SseEventEnvelopeAssembler.java",
+      "contentHash": "0b04054605ff3f8383f213f79c8ba488b10fa6037e75b3697d573eb88af3dd8d",
+      "functions": [
+        {
+          "name": "toEnvelope",
+          "params": [
+            "event"
+          ],
+          "returnType": "SseEventEnvelope",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "toContent",
+          "params": [
+            "type",
+            "payload",
+            "metadata"
+          ],
+          "returnType": "List<Map<String, Object>>",
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "toDataBlock",
+          "params": [
+            "type",
+            "payload"
+          ],
+          "returnType": "Map<String, Object>",
+          "exported": false,
+          "lineCount": 12
+        },
+        {
+          "name": "roleOf",
+          "params": [
+            "type"
+          ],
+          "returnType": "String",
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "parsePayload",
+          "params": [
+            "raw"
+          ],
+          "returnType": "Map<String, Object>",
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "asBlockList",
+          "params": [
+            "blocks"
+          ],
+          "returnType": "List<Map<String, Object>>",
+          "exported": false,
+          "lineCount": 4
+        }
+      ],
+      "classes": [
+        {
+          "name": "SseEventEnvelopeAssembler",
+          "methods": [
+            "toEnvelope",
+            "toContent",
+            "toDataBlock",
+            "roleOf",
+            "parsePayload",
+            "asBlockList"
+          ],
+          "properties": [
+            "MAP_TYPE",
+            "objectMapper"
+          ],
+          "exported": true,
+          "lineCount": 78
+        }
+      ],
+      "imports": [
+        {
+          "source": "com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope",
+          "specifiers": [
+            "SseEventEnvelope"
+          ]
+        },
+        {
+          "source": "com.linkroa.deepdataagent.runtime.domain.model.ChatEvent",
+          "specifiers": [
+            "ChatEvent"
+          ]
+        },
+        {
+          "source": "com.linkroa.deepdataagent.runtime.domain.model.enums.ChatEventType",
+          "specifiers": [
+            "ChatEventType"
+          ]
+        },
+        {
+          "source": "jakarta.annotation.Resource",
+          "specifiers": [
+            "Resource"
+          ]
+        },
+        {
+          "source": "org.springframework.stereotype.Component",
+          "specifiers": [
+            "Component"
+          ]
+        },
+        {
+          "source": "tools.jackson.core.JacksonException",
+          "specifiers": [
+            "JacksonException"
+          ]
+        },
+        {
+          "source": "tools.jackson.core.type.TypeReference",
+          "specifiers": [
+            "TypeReference"
+          ]
+        },
+        {
+          "source": "tools.jackson.databind.ObjectMapper",
+          "specifiers": [
+            "ObjectMapper"
+          ]
+        },
+        {
+          "source": "java.util.LinkedHashMap",
+          "specifiers": [
+            "LinkedHashMap"
+          ]
+        },
+        {
+          "source": "java.util.List",
+          "specifiers": [
+            "List"
+          ]
+        },
+        {
+          "source": "java.util.Locale",
+          "specifiers": [
+            "Locale"
+          ]
+        },
+        {
+          "source": "java.util.Map",
+          "specifiers": [
+            "Map"
+          ]
+        }
+      ],
+      "exports": [
+        "toEnvelope",
+        "SseEventEnvelopeAssembler"
+      ],
+      "totalLines": 103,
+      "hasStructuralAnalysis": true
+    },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/application/command/CreateSessionCommand.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/application/command/CreateSessionCommand.java",
       "contentHash": "39ed7933af9a85a32344802107739551aaa8f7632494254ed505fbce8a037f71",
@@ -13126,6 +13286,65 @@
       ],
       "exports": [],
       "totalLines": 17,
+      "hasStructuralAnalysis": true
+    },
+    "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/application/contract/SseEventEnvelope.java": {
+      "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/application/contract/SseEventEnvelope.java",
+      "contentHash": "f908438dd4f8d6033265ca9a3a184834d1020b5a610bb7080ddabab2a4869c90",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "java.time.OffsetDateTime",
+          "specifiers": [
+            "OffsetDateTime"
+          ]
+        },
+        {
+          "source": "java.util.List",
+          "specifiers": [
+            "List"
+          ]
+        },
+        {
+          "source": "java.util.Map",
+          "specifiers": [
+            "Map"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 35,
+      "hasStructuralAnalysis": true
+    },
+    "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/application/port/EventBroadcaster.java": {
+      "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/application/port/EventBroadcaster.java",
+      "contentHash": "1a460dd833962917cf29793b621e07428d7c6c1f6e86714849b8265ec3f833a2",
+      "functions": [],
+      "classes": [
+        {
+          "name": "EventBroadcaster",
+          "methods": [
+            "broadcast",
+            "complete"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 17
+        }
+      ],
+      "imports": [
+        {
+          "source": "com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope",
+          "specifiers": [
+            "SseEventEnvelope"
+          ]
+        }
+      ],
+      "exports": [
+        "EventBroadcaster"
+      ],
+      "totalLines": 27,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/application/query/ListSessionsQuery.java": {
@@ -13229,7 +13448,7 @@
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/application/service/AgentRuntimeCommandService.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/application/service/AgentRuntimeCommandService.java",
-      "contentHash": "f3120e206a7065532c02a0ffdfc52ec3dcd2c8d1c168200cb30dafe31c86e426",
+      "contentHash": "b40ae366968984d7461147fcf825ae0fc2c5f2c66b7262fc767f13c79dc596f8",
       "functions": [
         {
           "name": "createSession",
@@ -13518,6 +13737,7 @@
             "agentFactory",
             "agentRunExecutor",
             "eventBroadcaster",
+            "sseEventEnvelopeAssembler",
             "assembler",
             "runtimeAgentAssemblyResolver",
             "sessionRegistry",
@@ -13528,7 +13748,7 @@
             "objectMapper"
           ],
           "exported": true,
-          "lineCount": 582
+          "lineCount": 584
         }
       ],
       "imports": [
@@ -13551,6 +13771,12 @@
           ]
         },
         {
+          "source": "com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler",
+          "specifiers": [
+            "SseEventEnvelopeAssembler"
+          ]
+        },
+        {
           "source": "com.linkroa.deepdataagent.runtime.application.command.CreateSessionCommand",
           "specifiers": [
             "CreateSessionCommand"
@@ -13569,15 +13795,15 @@
           ]
         },
         {
-          "source": "com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal",
+          "source": "com.linkroa.deepdataagent.runtime.application.port.EventBroadcaster",
           "specifiers": [
-            "AgentStreamSignal"
+            "EventBroadcaster"
           ]
         },
         {
-          "source": "com.linkroa.deepdataagent.runtime.domain.event.EventBroadcaster",
+          "source": "com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal",
           "specifiers": [
-            "EventBroadcaster"
+            "AgentStreamSignal"
           ]
         },
         {
@@ -13805,7 +14031,7 @@
         "sendMessageAsync",
         "AgentRuntimeCommandService"
       ],
-      "totalLines": 643,
+      "totalLines": 646,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/application/service/AgentRuntimeQueryService.java": {
@@ -14339,7 +14565,7 @@
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/controller/response/AgentRuntimeResponseMapper.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/controller/response/AgentRuntimeResponseMapper.java",
-      "contentHash": "d76f804ee9cb29c329a627b3ce87979400252e9acc345b826694dd95ec44eca8",
+      "contentHash": "e3ff606882aa5965a54dd33d58be16a8e41d0024fa6508a19fbcc2521cf2eb79",
       "functions": [],
       "classes": [
         {
@@ -14347,12 +14573,11 @@
           "methods": [
             "toSessionResponse",
             "toRoundResponse",
-            "toChatEventResponse",
             "toRunTraceResponse"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 11
+          "lineCount": 9
         }
       ],
       "imports": [
@@ -14360,12 +14585,6 @@
           "source": "com.linkroa.deepdataagent.runtime.domain.model.AgentSession",
           "specifiers": [
             "AgentSession"
-          ]
-        },
-        {
-          "source": "com.linkroa.deepdataagent.runtime.domain.model.ChatEvent",
-          "specifiers": [
-            "ChatEvent"
           ]
         },
         {
@@ -14396,7 +14615,7 @@
       "exports": [
         "AgentRuntimeResponseMapper"
       ],
-      "totalLines": 24,
+      "totalLines": 21,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/controller/response/AgentWorkspaceResponse.java": {
@@ -14414,23 +14633,6 @@
       ],
       "exports": [],
       "totalLines": 13,
-      "hasStructuralAnalysis": true
-    },
-    "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/controller/response/ChatEventResponse.java": {
-      "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/controller/response/ChatEventResponse.java",
-      "contentHash": "b946c144b65b0263bc56b5c9bcf18eb019d7d368699948706bf9599819c7bfa6",
-      "functions": [],
-      "classes": [],
-      "imports": [
-        {
-          "source": "java.time.OffsetDateTime",
-          "specifiers": [
-            "OffsetDateTime"
-          ]
-        }
-      ],
-      "exports": [],
-      "totalLines": 17,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/controller/response/RoundResponse.java": {
@@ -14502,7 +14704,7 @@
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/controller/rest/AgentChatEventController.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/controller/rest/AgentChatEventController.java",
-      "contentHash": "05dc1c1144ee73a041b7582d98697f4186d5fc7d493d83cea6b55b3106f41dd6",
+      "contentHash": "0659668778dbe16443f1422c2c5e67946c02cdd4e542196e1c7dfd9569c77d36",
       "functions": [
         {
           "name": "sendEvent",
@@ -14561,11 +14763,12 @@
             "commandService",
             "queryService",
             "commandAssembler",
+            "sseEventEnvelopeAssembler",
             "emitterRegistry",
             "properties"
           ],
           "exported": true,
-          "lineCount": 91
+          "lineCount": 93
         }
       ],
       "imports": [
@@ -14573,6 +14776,12 @@
           "source": "com.linkroa.deepdataagent.runtime.application.assembler.AgentRuntimeCommandAssembler",
           "specifiers": [
             "AgentRuntimeCommandAssembler"
+          ]
+        },
+        {
+          "source": "com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler",
+          "specifiers": [
+            "SseEventEnvelopeAssembler"
           ]
         },
         {
@@ -14761,12 +14970,12 @@
         "stream",
         "AgentChatEventController"
       ],
-      "totalLines": 137,
+      "totalLines": 140,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/controller/rest/AgentSessionController.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/controller/rest/AgentSessionController.java",
-      "contentHash": "53a1920eb1380d12ce38678ab941fb8bfc37e0820c66ab30f41476d7b1b6e6fd",
+      "contentHash": "2a18264e98c388703db74cc88655a3da6bf8cc3dfed8455dc83d411ceb177a30",
       "functions": [
         {
           "name": "createSession",
@@ -14821,7 +15030,7 @@
             "sessionId",
             "roundId"
           ],
-          "returnType": "ApiResponse<List<ChatEventResponse>>",
+          "returnType": "ApiResponse<List<SseEventEnvelope>>",
           "exported": true,
           "lineCount": 9
         },
@@ -14852,10 +15061,11 @@
             "commandService",
             "queryService",
             "responseMapper",
-            "commandAssembler"
+            "commandAssembler",
+            "sseEventEnvelopeAssembler"
           ],
           "exported": true,
-          "lineCount": 95
+          "lineCount": 97
         }
       ],
       "imports": [
@@ -14863,6 +15073,18 @@
           "source": "com.linkroa.deepdataagent.runtime.application.assembler.AgentRuntimeCommandAssembler",
           "specifiers": [
             "AgentRuntimeCommandAssembler"
+          ]
+        },
+        {
+          "source": "com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler",
+          "specifiers": [
+            "SseEventEnvelopeAssembler"
+          ]
+        },
+        {
+          "source": "com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope",
+          "specifiers": [
+            "SseEventEnvelope"
           ]
         },
         {
@@ -14929,12 +15151,6 @@
           "source": "com.linkroa.deepdataagent.runtime.domain.model.ChatEvent",
           "specifiers": [
             "ChatEvent"
-          ]
-        },
-        {
-          "source": "com.linkroa.deepdataagent.runtime.controller.response.ChatEventResponse",
-          "specifiers": [
-            "ChatEventResponse"
           ]
         },
         {
@@ -15032,7 +15248,7 @@
         "trace",
         "AgentSessionController"
       ],
-      "totalLines": 130,
+      "totalLines": 133,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/controller/rest/AgentWorkspaceController.java": {
@@ -15135,36 +15351,6 @@
       "imports": [],
       "exports": [],
       "totalLines": 41,
-      "hasStructuralAnalysis": true
-    },
-    "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/domain/event/EventBroadcaster.java": {
-      "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/domain/event/EventBroadcaster.java",
-      "contentHash": "81dc6e554f2b94aa30be73804a2515dfa2af9729e4a7fae0184ef3a3e3e259c3",
-      "functions": [],
-      "classes": [
-        {
-          "name": "EventBroadcaster",
-          "methods": [
-            "broadcast",
-            "complete"
-          ],
-          "properties": [],
-          "exported": true,
-          "lineCount": 17
-        }
-      ],
-      "imports": [
-        {
-          "source": "com.linkroa.deepdataagent.runtime.domain.model.ChatEvent",
-          "specifiers": [
-            "ChatEvent"
-          ]
-        }
-      ],
-      "exports": [
-        "EventBroadcaster"
-      ],
-      "totalLines": 27,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/domain/factory/AgentFactoryPort.java": {
@@ -18714,7 +18900,7 @@
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/infrastructure/sse/ChatEventCodec.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/infrastructure/sse/ChatEventCodec.java",
-      "contentHash": "16157b240eee0552b3da7a774dbf293926bd20ae507c332ec21d9004fa2b8623",
+      "contentHash": "ab4448aab9871c8bbf16efedc09d53d20c62fcf8167aa02d55cf8d855db36ef4",
       "functions": [
         {
           "name": "ChatEventCodec",
@@ -18732,7 +18918,7 @@
         {
           "name": "toSseEvent",
           "params": [
-            "event"
+            "envelope"
           ],
           "returnType": "SseEmitter.SseEventBuilder",
           "exported": true,
@@ -18741,7 +18927,7 @@
         {
           "name": "toJson",
           "params": [
-            "event"
+            "envelope"
           ],
           "returnType": "String",
           "exported": true,
@@ -18767,9 +18953,9 @@
       ],
       "imports": [
         {
-          "source": "com.linkroa.deepdataagent.runtime.domain.model.ChatEvent",
+          "source": "com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope",
           "specifiers": [
-            "ChatEvent"
+            "SseEventEnvelope"
           ]
         },
         {
@@ -18849,7 +19035,7 @@
     },
     "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/infrastructure/sse/SseEmitterRegistry.java": {
       "filePath": "core/core-backend/src/main/java/com/linkroa/deepdataagent/runtime/infrastructure/sse/SseEmitterRegistry.java",
-      "contentHash": "e76ae21912952d4465ade93b99de1f626fa7d7fa4db8f809b25f26efb9c317d9",
+      "contentHash": "cd716d351550f62eafd9b316f80835ddac35932862fec47a13fca2777d0e82e9",
       "functions": [
         {
           "name": "startHeartbeat",
@@ -18886,7 +19072,7 @@
           "name": "broadcast",
           "params": [
             "sessionId",
-            "event"
+            "envelope"
           ],
           "returnType": "void",
           "exported": true,
@@ -18947,7 +19133,13 @@
       ],
       "imports": [
         {
-          "source": "com.linkroa.deepdataagent.runtime.domain.event.EventBroadcaster",
+          "source": "com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope",
+          "specifiers": [
+            "SseEventEnvelope"
+          ]
+        },
+        {
+          "source": "com.linkroa.deepdataagent.runtime.application.port.EventBroadcaster",
           "specifiers": [
             "EventBroadcaster"
           ]
@@ -18956,12 +19148,6 @@
           "source": "com.linkroa.deepdataagent.runtime.domain.model.AgentSessionContext",
           "specifiers": [
             "AgentSessionContext"
-          ]
-        },
-        {
-          "source": "com.linkroa.deepdataagent.runtime.domain.model.ChatEvent",
-          "specifiers": [
-            "ChatEvent"
           ]
         },
         {
@@ -20240,24 +20426,24 @@
     },
     "core/core-backend/src/main/resources/db/migration/V2__add_agent_catalog_tables.sql": {
       "filePath": "core/core-backend/src/main/resources/db/migration/V2__add_agent_catalog_tables.sql",
-      "contentHash": "6ac169b393353cf93502e999050ea44b61175b8e6a3847d757aa8c2353b30578",
+      "contentHash": "77ea0736bd424def9ef57bb9169903d81cfaa63bc320a49eb9754247b3e8a174",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 183,
+      "totalLines": 181,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/test/java/com/linkroa/deepdataagent/agent/application/assembler/AgentCommandAssemblerTest.java": {
       "filePath": "core/core-backend/src/test/java/com/linkroa/deepdataagent/agent/application/assembler/AgentCommandAssemblerTest.java",
-      "contentHash": "c905a16c19576127ee069cd3ccae54c2a1e42656d6e95066dc13b1fc98d21887",
+      "contentHash": "01ff665163944752f57772d733bf4b101745cc594dddf54007cfd3afb87e1ab0",
       "functions": [
         {
           "name": "should_mapAllFields_when_toCreateCommand_given_fullConfigRequest",
           "params": [],
           "returnType": "void",
           "exported": false,
-          "lineCount": 20
+          "lineCount": 19
         },
         {
           "name": "should_mapAgentIdAndPassThroughNulls_when_toPublishCommand_given_partialRequest",
@@ -20278,7 +20464,7 @@
             "assembler"
           ],
           "exported": false,
-          "lineCount": 43
+          "lineCount": 42
         }
       ],
       "imports": [
@@ -20320,7 +20506,7 @@
         }
       ],
       "exports": [],
-      "totalLines": 56,
+      "totalLines": 55,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/test/java/com/linkroa/deepdataagent/agent/application/assembler/ModelProfileCommandAssemblerTest.java": {
@@ -20662,7 +20848,7 @@
     },
     "core/core-backend/src/test/java/com/linkroa/deepdataagent/agent/application/service/AgentApplicationServiceTest.java": {
       "filePath": "core/core-backend/src/test/java/com/linkroa/deepdataagent/agent/application/service/AgentApplicationServiceTest.java",
-      "contentHash": "c6889210aa2cd3dc3060a8e954462eb1ca52eca9f0abfbf8c8c3a9aab01893b0",
+      "contentHash": "cdcc147ee1a3a23c911e42026adb7a2afd98ff4776f7efc6661ab16390a5bd0b",
       "functions": [
         {
           "name": "setUp",
@@ -22048,14 +22234,14 @@
     },
     "core/core-backend/src/test/java/com/linkroa/deepdataagent/agent/domain/model/AgentVersionTest.java": {
       "filePath": "core/core-backend/src/test/java/com/linkroa/deepdataagent/agent/domain/model/AgentVersionTest.java",
-      "contentHash": "e0bf18b729fe4fbc94215dfcd9cd6f5bf5d438554e1b377225a551dc2f301bd1",
+      "contentHash": "ae2e06a389dade0a6d1450d742c12e2b01856a9cb915efd85f9c21352c3d7735",
       "functions": [
         {
           "name": "should_createVersion_when_create_given_validFields",
           "params": [],
           "returnType": "void",
           "exported": false,
-          "lineCount": 13
+          "lineCount": 12
         },
         {
           "name": "should_throwException_when_create_given_zeroVersionNumber",
@@ -22106,7 +22292,7 @@
           ],
           "properties": [],
           "exported": false,
-          "lineCount": 71
+          "lineCount": 70
         }
       ],
       "imports": [
@@ -22136,7 +22322,7 @@
         }
       ],
       "exports": [],
-      "totalLines": 79,
+      "totalLines": 78,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/test/java/com/linkroa/deepdataagent/agent/domain/model/ModelProfileTest.java": {
@@ -22460,7 +22646,7 @@
     },
     "core/core-backend/src/test/java/com/linkroa/deepdataagent/agent/infrastructure/assembly/DefaultAgentVersionAssemblyPortTest.java": {
       "filePath": "core/core-backend/src/test/java/com/linkroa/deepdataagent/agent/infrastructure/assembly/DefaultAgentVersionAssemblyPortTest.java",
-      "contentHash": "6db17a3905fce7a8bbf58fedac9c9f7d21cd809dbdae45d1b555c96c0cb43e96",
+      "contentHash": "1bd79036e8a8ed09ed3037e1b0fff8430692664784f5eebe7a5d9e0d57039d5e",
       "functions": [
         {
           "name": "setUp",
@@ -30829,6 +31015,142 @@
       "totalLines": 95,
       "hasStructuralAnalysis": true
     },
+    "core/core-backend/src/test/java/com/linkroa/deepdataagent/runtime/application/assembler/SseEventEnvelopeAssemblerTest.java": {
+      "filePath": "core/core-backend/src/test/java/com/linkroa/deepdataagent/runtime/application/assembler/SseEventEnvelopeAssemblerTest.java",
+      "contentHash": "e7c71d7348b5b58f1a608412541c6f3f971d2c8bb7821637ba55c10956c15732",
+      "functions": [
+        {
+          "name": "setUp",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "should_buildMessageEnvelope_when_toEnvelope_given_textBlockEvent",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 23
+        },
+        {
+          "name": "should_deriveToolRole_when_toEnvelope_given_toolCallEvent",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "should_wrapFlatPayloadAsDataBlock_when_toEnvelope_given_runStartEvent",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "should_normalizeSessionStatus_when_toEnvelope_given_sessionStatusEvent",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 16
+        },
+        {
+          "name": "should_useEmptyDataBlock_when_toEnvelope_given_malformedPayload",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "dataOf",
+          "params": [
+            "envelope",
+            "index"
+          ],
+          "returnType": "Map<String, Object>",
+          "exported": false,
+          "lineCount": 4
+        }
+      ],
+      "classes": [
+        {
+          "name": "SseEventEnvelopeAssemblerTest",
+          "methods": [
+            "setUp",
+            "should_buildMessageEnvelope_when_toEnvelope_given_textBlockEvent",
+            "should_deriveToolRole_when_toEnvelope_given_toolCallEvent",
+            "should_wrapFlatPayloadAsDataBlock_when_toEnvelope_given_runStartEvent",
+            "should_normalizeSessionStatus_when_toEnvelope_given_sessionStatusEvent",
+            "should_useEmptyDataBlock_when_toEnvelope_given_malformedPayload",
+            "dataOf"
+          ],
+          "properties": [
+            "assembler"
+          ],
+          "exported": false,
+          "lineCount": 99
+        }
+      ],
+      "imports": [
+        {
+          "source": "com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope",
+          "specifiers": [
+            "SseEventEnvelope"
+          ]
+        },
+        {
+          "source": "com.linkroa.deepdataagent.runtime.domain.model.ChatEvent",
+          "specifiers": [
+            "ChatEvent"
+          ]
+        },
+        {
+          "source": "com.linkroa.deepdataagent.runtime.domain.model.enums.ChatEventType",
+          "specifiers": [
+            "ChatEventType"
+          ]
+        },
+        {
+          "source": "org.junit.jupiter.api.BeforeEach",
+          "specifiers": [
+            "BeforeEach"
+          ]
+        },
+        {
+          "source": "org.junit.jupiter.api.Test",
+          "specifiers": [
+            "Test"
+          ]
+        },
+        {
+          "source": "org.springframework.test.util.ReflectionTestUtils",
+          "specifiers": [
+            "ReflectionTestUtils"
+          ]
+        },
+        {
+          "source": "tools.jackson.databind.ObjectMapper",
+          "specifiers": [
+            "ObjectMapper"
+          ]
+        },
+        {
+          "source": "java.util.Map",
+          "specifiers": [
+            "Map"
+          ]
+        },
+        {
+          "source": "org.junit.jupiter.api.Assertions.assertEquals",
+          "specifiers": [
+            "assertEquals"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 117,
+      "hasStructuralAnalysis": true
+    },
     "core/core-backend/src/test/java/com/linkroa/deepdataagent/runtime/application/command/RuntimeCommandTest.java": {
       "filePath": "core/core-backend/src/test/java/com/linkroa/deepdataagent/runtime/application/command/RuntimeCommandTest.java",
       "contentHash": "7d35e58a240431843a851842483a87eaf9900c269ed5361e8046d91701117730",
@@ -31075,14 +31397,14 @@
     },
     "core/core-backend/src/test/java/com/linkroa/deepdataagent/runtime/application/service/AgentRuntimeCommandServiceTest.java": {
       "filePath": "core/core-backend/src/test/java/com/linkroa/deepdataagent/runtime/application/service/AgentRuntimeCommandServiceTest.java",
-      "contentHash": "154d285da879deb67a3bcc28a93e1c56e33cfc45cf377f8196e01fb29ce028df",
+      "contentHash": "30904c54878915d944ecde7908b5ca2885648438d42f329d5f77d0c8786d0040",
       "functions": [
         {
           "name": "setUp",
           "params": [],
           "returnType": "void",
           "exported": false,
-          "lineCount": 6
+          "lineCount": 8
         },
         {
           "name": "assembleService",
@@ -31098,7 +31420,7 @@
           ],
           "returnType": "AgentRuntimeCommandService",
           "exported": false,
-          "lineCount": 19
+          "lineCount": 20
         },
         {
           "name": "wireTransactionTemplate",
@@ -31307,10 +31629,11 @@
             "sessionRegistry",
             "virtualScheduler",
             "service",
-            "payloadAssembler"
+            "payloadAssembler",
+            "envelopeAssembler"
           ],
           "exported": false,
-          "lineCount": 468
+          "lineCount": 472
         }
       ],
       "imports": [
@@ -31324,6 +31647,24 @@
           "source": "com.linkroa.deepdataagent.runtime.application.assembler.ChatEventPayloadAssembler",
           "specifiers": [
             "ChatEventPayloadAssembler"
+          ]
+        },
+        {
+          "source": "com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler",
+          "specifiers": [
+            "SseEventEnvelopeAssembler"
+          ]
+        },
+        {
+          "source": "com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope",
+          "specifiers": [
+            "SseEventEnvelope"
+          ]
+        },
+        {
+          "source": "com.linkroa.deepdataagent.runtime.application.port.EventBroadcaster",
+          "specifiers": [
+            "EventBroadcaster"
           ]
         },
         {
@@ -31354,12 +31695,6 @@
           "source": "com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignalType",
           "specifiers": [
             "AgentStreamSignalType"
-          ]
-        },
-        {
-          "source": "com.linkroa.deepdataagent.runtime.domain.event.EventBroadcaster",
-          "specifiers": [
-            "EventBroadcaster"
           ]
         },
         {
@@ -31682,7 +32017,7 @@
         }
       ],
       "exports": [],
-      "totalLines": 540,
+      "totalLines": 546,
       "hasStructuralAnalysis": true
     },
     "core/core-backend/src/test/java/com/linkroa/deepdataagent/runtime/application/service/AgentRuntimeQueryServiceTest.java": {
@@ -34925,6 +35260,83 @@
       "totalLines": 95,
       "hasStructuralAnalysis": true
     },
+    "core/core-backend/src/test/java/com/linkroa/deepdataagent/runtime/infrastructure/sse/ChatEventCodecTest.java": {
+      "filePath": "core/core-backend/src/test/java/com/linkroa/deepdataagent/runtime/infrastructure/sse/ChatEventCodecTest.java",
+      "contentHash": "2aad993ee22415c33667083e53e3a0c9ae4d405a8df20f31cf1839ff2051f869",
+      "functions": [
+        {
+          "name": "should_serializeSnakeCase_when_toJson_given_envelope",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 23
+        }
+      ],
+      "classes": [
+        {
+          "name": "ChatEventCodecTest",
+          "methods": [
+            "should_serializeSnakeCase_when_toJson_given_envelope"
+          ],
+          "properties": [],
+          "exported": false,
+          "lineCount": 26
+        }
+      ],
+      "imports": [
+        {
+          "source": "com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope",
+          "specifiers": [
+            "SseEventEnvelope"
+          ]
+        },
+        {
+          "source": "org.junit.jupiter.api.Test",
+          "specifiers": [
+            "Test"
+          ]
+        },
+        {
+          "source": "java.time.OffsetDateTime",
+          "specifiers": [
+            "OffsetDateTime"
+          ]
+        },
+        {
+          "source": "java.time.ZoneId",
+          "specifiers": [
+            "ZoneId"
+          ]
+        },
+        {
+          "source": "java.util.List",
+          "specifiers": [
+            "List"
+          ]
+        },
+        {
+          "source": "java.util.Map",
+          "specifiers": [
+            "Map"
+          ]
+        },
+        {
+          "source": "org.junit.jupiter.api.Assertions.assertFalse",
+          "specifiers": [
+            "assertFalse"
+          ]
+        },
+        {
+          "source": "org.junit.jupiter.api.Assertions.assertTrue",
+          "specifiers": [
+            "assertTrue"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 42,
+      "hasStructuralAnalysis": true
+    },
     "core/core-backend/src/test/java/com/linkroa/deepdataagent/runtime/infrastructure/util/PayloadSanitizerTest.java": {
       "filePath": "core/core-backend/src/test/java/com/linkroa/deepdataagent/runtime/infrastructure/util/PayloadSanitizerTest.java",
       "contentHash": "b6692c3abfabce527708b9626cbbec0012ef53f3b1735d592eb06ea64a3006cb",
@@ -35391,7 +35803,7 @@
     },
     "core/core-frontend/src/modules/agent/api/agent.ts": {
       "filePath": "core/core-frontend/src/modules/agent/api/agent.ts",
-      "contentHash": "71b0b825a6a517a497c996c3905b6ee9458a41c8c3e567bb840bf87072494c13",
+      "contentHash": "09f0af63dc7b8ae924e579a0b058aab754f07d1204fa2db6ea051b94d8422e73",
       "functions": [
         {
           "name": "createSession",
@@ -35489,15 +35901,6 @@
           "returnType": "ChatEventDto",
           "exported": true,
           "lineCount": 3
-        },
-        {
-          "name": "parseContentBlocks",
-          "params": [
-            "payload"
-          ],
-          "returnType": "ContentBlock[]",
-          "exported": true,
-          "lineCount": 13
         }
       ],
       "classes": [],
@@ -35523,15 +35926,14 @@
         "sendMessageStream",
         "openEventStream",
         "parseSseBlock",
-        "parseChatEvent",
-        "parseContentBlocks"
+        "parseChatEvent"
       ],
-      "totalLines": 255,
+      "totalLines": 238,
       "hasStructuralAnalysis": true
     },
     "core/core-frontend/src/modules/agent/api/agents.ts": {
       "filePath": "core/core-frontend/src/modules/agent/api/agents.ts",
-      "contentHash": "ca0e3d7dc3fd70620fbffc3418a8487470bb449047cc3d0e7aead120d337e7c4",
+      "contentHash": "aeb0b400f00bbfecdd1be44fb388f12770bc77ba6e51dfee46a08d2c9434d5eb",
       "functions": [
         {
           "name": "createAgent",
@@ -35617,7 +36019,7 @@
         "archiveAgent",
         "deleteAgent"
       ],
-      "totalLines": 112,
+      "totalLines": 110,
       "hasStructuralAnalysis": true
     },
     "core/core-frontend/src/modules/agent/api/model-profiles.ts": {
@@ -35799,22 +36201,22 @@
     },
     "core/core-frontend/src/modules/agent/pages/AgentWorkspacePage.vue": {
       "filePath": "core/core-frontend/src/modules/agent/pages/AgentWorkspacePage.vue",
-      "contentHash": "b02eeb8ed5d43cdc811ea09eaceb67f8cbf9229b8921f901a578fbd2537349f9",
+      "contentHash": "29a350f39f41c4d0f477ebaabb670814d69e6cd88dfe8819650b8097458a4a48",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 609,
+      "totalLines": 594,
       "hasStructuralAnalysis": false
     },
     "core/core-frontend/src/modules/agent/pages/AgentsPage.vue": {
       "filePath": "core/core-frontend/src/modules/agent/pages/AgentsPage.vue",
-      "contentHash": "d4264cbc4bc608bc2ed959bd8900a71ce2703641d920c0a6c76c960e1efedd14",
+      "contentHash": "49bd88e04c702d4907a4f4a40006ec7cc611b0ac1db92791f3883da4139a4274",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 292,
+      "totalLines": 287,
       "hasStructuralAnalysis": false
     },
     "core/core-frontend/src/modules/agent/pages/ModelProfilesPage.vue": {
