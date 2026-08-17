@@ -20,7 +20,6 @@ import java.util.List;
  * @param description       版本描述
  * @param system            系统提示词（运行装配来源）
  * @param modelProfileId   引用模型配置 profile_id
- * @param inferenceParams   推理参数（JSONB）
  * @param skillIds          挂载的技能（[{skillId, version}]，版本锁定，仅存引用）
  * @param knowledgeBaseIds  预留知识库引用
  * @param dataSourceIds     数据源引用（关联 datasource 域 connection_id）
@@ -38,7 +37,6 @@ public record AgentVersion(
         String description,
         String system,
         String modelProfileId,
-        String inferenceParams,
         String skillIds,
         String knowledgeBaseIds,
         String dataSourceIds,
@@ -91,7 +89,6 @@ public record AgentVersion(
             String description,
             String system,
             String modelProfileId,
-            String inferenceParams,
             String skillIds,
             String knowledgeBaseIds,
             String dataSourceIds
@@ -99,7 +96,7 @@ public record AgentVersion(
         return new AgentVersion(
                 null, versionId, agentId, versionNumber, name, description,
                 system != null ? system : "", modelProfileId,
-                inferenceParams, skillIds, knowledgeBaseIds, dataSourceIds,
+                skillIds, knowledgeBaseIds, dataSourceIds,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 null, null
@@ -118,7 +115,6 @@ public record AgentVersion(
             String description,
             String system,
             String modelProfileId,
-            String inferenceParams,
             String skillIds,
             String knowledgeBaseIds,
             String dataSourceIds,
@@ -129,7 +125,7 @@ public record AgentVersion(
     ) {
         return new AgentVersion(
                 id, versionId, agentId, versionNumber, name, description,
-                system, modelProfileId, inferenceParams, skillIds,
+                system, modelProfileId, skillIds,
                 knowledgeBaseIds, dataSourceIds, createdAt, updatedAt, createdBy, updatedBy
         );
     }

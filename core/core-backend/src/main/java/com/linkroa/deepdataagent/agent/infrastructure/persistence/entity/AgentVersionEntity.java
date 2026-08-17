@@ -29,9 +29,6 @@ public class AgentVersionEntity extends BaseEntity {
     private String system;
     /** 模型配置引用 */
     private String modelProfileId;
-    /** 推理参数（JSONB） */
-    @TableField(typeHandler = PostgresJsonbTypeHandler.class)
-    private String inferenceParams;
     /** 挂载技能（JSONB） */
     @TableField(typeHandler = PostgresJsonbTypeHandler.class)
     private String skillIds;

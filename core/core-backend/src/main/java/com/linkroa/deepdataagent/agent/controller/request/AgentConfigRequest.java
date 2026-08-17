@@ -23,9 +23,6 @@ public record AgentConfigRequest(
         @NotBlank(message = "模型配置引用不能为空")
         String modelProfileId,
 
-        /** 推理参数（JSONB 字符串） */
-        String inferenceParams,
-
         /** 挂载技能 JSON（[{skillId, version}]） */
         String skillIds,
 

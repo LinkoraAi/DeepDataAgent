@@ -17,7 +17,6 @@ public class AgentCommandAssembler {
                 request.description(),
                 request.system(),
                 request.modelProfileId(),
-                request.inferenceParams(),
                 request.skillIds(),
                 request.knowledgeBaseIds(),
                 request.dataSourceIds()
@@ -31,7 +30,6 @@ public class AgentCommandAssembler {
                 request.description(),
                 request.system(),
                 request.modelProfileId(),
-                request.inferenceParams(),
                 request.skillIds(),
                 request.knowledgeBaseIds(),
                 request.dataSourceIds()

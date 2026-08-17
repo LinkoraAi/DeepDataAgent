@@ -20,7 +20,7 @@ class AgentCommandAssemblerTest {
         // given
         AgentConfigRequest request = new AgentConfigRequest(
                 "客户台账", "台账 Agent", "你是台账助手", "mp-1",
-                "{\"temperature\":0.3}", "[{\"skillId\":\"s1\",\"version\":1}]", "[]", "[\"ds-1\"]");
+                "[{\"skillId\":\"s1\",\"version\":1}]", "[]", "[\"ds-1\"]");
 
         // when
         CreateAgentCommand command = assembler.toCreateCommand(request);
@@ -30,7 +30,6 @@ class AgentCommandAssemblerTest {
         assertEquals("台账 Agent", command.description());
         assertEquals("你是台账助手", command.system());
         assertEquals("mp-1", command.modelProfileId());
-        assertEquals("{\"temperature\":0.3}", command.inferenceParams());
         assertEquals("[{\"skillId\":\"s1\",\"version\":1}]", command.skillIds());
         assertEquals("[]", command.knowledgeBaseIds());
         assertEquals("[\"ds-1\"]", command.dataSourceIds());
@@ -40,7 +39,7 @@ class AgentCommandAssemblerTest {
     void should_mapAgentIdAndPassThroughNulls_when_toPublishCommand_given_partialRequest() {
         // given
         AgentConfigRequest request = new AgentConfigRequest(
-                "客户台账 v2", null, null, "mp-2", null, null, null, null);
+                "客户台账 v2", null, null, "mp-2", null, null, null);
 
         // when
         PublishAgentVersionCommand command = assembler.toPublishCommand("agent-a", request);

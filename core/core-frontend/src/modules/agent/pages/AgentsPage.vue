@@ -76,9 +76,6 @@
         <t-form-item label="系统提示词" name="system">
           <t-textarea v-model="form.system" :autosize="{ minRows: 3, maxRows: 8 }" placeholder="运行装配 source（可选）" />
         </t-form-item>
-        <t-form-item label="推理参数" name="inferenceParams">
-          <t-input v-model="form.inferenceParams" placeholder='JSONB 字符串，如 {"temperature": 0.7}（可选）' />
-        </t-form-item>
         <t-form-item label="挂载技能" name="skillIds">
           <t-input v-model="form.skillIds" placeholder='技能引用 JSON，如 [{"skillId":"s-1","version":1}]（可选）' />
         </t-form-item>
@@ -151,7 +148,7 @@ const versionsVisible = ref(false);
 const versions = ref<AgentVersionDto[]>([]);
 const versionsAgentName = ref('');
 
-const form = reactive<AgentConfigPayload>({ name: '', modelProfileId: '', description: '', system: '', inferenceParams: '', skillIds: '' });
+const form = reactive<AgentConfigPayload>({ name: '', modelProfileId: '', description: '', system: '', skillIds: '' });
 
 const formRules: Record<string, FormRule[]> = {
   name: [{ required: true, message: '名称不能为空' }],
@@ -197,7 +194,6 @@ function resetForm(): void {
   form.modelProfileId = '';
   form.description = '';
   form.system = '';
-  form.inferenceParams = '';
   form.skillIds = '';
 }
 
@@ -228,7 +224,6 @@ async function handleSubmit(): Promise<void> {
       modelProfileId: form.modelProfileId,
       description: form.description?.trim() || null,
       system: form.system?.trim() || undefined,
-      inferenceParams: form.inferenceParams?.trim() || null,
       skillIds: form.skillIds?.trim() || null,
     };
     if (formMode.value === 'create') {

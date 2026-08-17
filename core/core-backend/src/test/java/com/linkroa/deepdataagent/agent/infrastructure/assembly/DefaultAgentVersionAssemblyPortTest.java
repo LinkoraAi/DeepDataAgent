@@ -201,7 +201,7 @@ class DefaultAgentVersionAssemblyPortTest {
     private AgentVersion version(int versionNumber, String name, String system, String profileId) {
         return AgentVersion.restore(
                 1L, "v-id-" + versionNumber, "agent-a", versionNumber, name, null,
-                system != null ? system : "", profileId, null, null, null, null,
+                system != null ? system : "", profileId, null, null, null,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
     }

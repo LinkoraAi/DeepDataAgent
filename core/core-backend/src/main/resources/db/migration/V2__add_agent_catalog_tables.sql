@@ -55,7 +55,6 @@ CREATE TABLE agent_version (
     description         VARCHAR(500),
     system              TEXT         NOT NULL DEFAULT '',
     model_profile_id    VARCHAR(64)  NOT NULL,
-    inference_params    JSONB,
     skill_ids           JSONB,
     knowledge_base_ids  JSONB,
     data_source_ids     JSONB,
@@ -78,7 +77,6 @@ COMMENT ON COLUMN agent_version.name                     IS '版本名称';
 COMMENT ON COLUMN agent_version.description              IS '版本描述';
 COMMENT ON COLUMN agent_version.system                   IS '系统提示词';
 COMMENT ON COLUMN agent_version.model_profile_id         IS '模型配置引用（profile改动对后续轮次生效）';
-COMMENT ON COLUMN agent_version.inference_params         IS '推理参数(JSONB)';
 COMMENT ON COLUMN agent_version.skill_ids                IS '挂载技能列表(JSONB:[{"skillId","version"}])';
 COMMENT ON COLUMN agent_version.knowledge_base_ids       IS '知识库引用列表(JSONB，预留)';
 COMMENT ON COLUMN agent_version.data_source_ids          IS '数据源引用列表(JSONB，关联datasource域)';

@@ -25,7 +25,6 @@ export interface AgentVersionDto {
   description: string | null;
   system: string;
   modelProfileId: string;
-  inferenceParams: string | null;
   skillIds: string | null;
   knowledgeBaseIds: string | null;
   dataSourceIds: string | null;
@@ -45,7 +44,6 @@ export interface AgentConfigPayload {
   description?: string | null;
   system?: string;
   modelProfileId: string;
-  inferenceParams?: string | null;
   skillIds?: string | null;
   knowledgeBaseIds?: string | null;
   dataSourceIds?: string | null;

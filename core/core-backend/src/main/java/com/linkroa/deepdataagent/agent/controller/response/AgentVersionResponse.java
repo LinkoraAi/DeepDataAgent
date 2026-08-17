@@ -13,7 +13,6 @@ public record AgentVersionResponse(
         String description,
         String system,
         String modelProfileId,
-        String inferenceParams,
         String skillIds,
         String knowledgeBaseIds,
         String dataSourceIds,

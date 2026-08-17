@@ -7,7 +7,6 @@ package com.linkroa.deepdataagent.agent.application.command;
  * @param description        Agent 描述
  * @param system             系统提示词
  * @param modelProfileId     模型配置引用
- * @param inferenceParams    推理参数（JSONB 字符串）
  * @param skillIds           挂载技能 JSON（[{skillId, version}]）
  * @param knowledgeBaseIds   预留知识库引用 JSON
  * @param dataSourceIds      数据源引用 JSON
@@ -17,7 +16,6 @@ public record CreateAgentCommand(
         String description,
         String system,
         String modelProfileId,
-        String inferenceParams,
         String skillIds,
         String knowledgeBaseIds,
         String dataSourceIds

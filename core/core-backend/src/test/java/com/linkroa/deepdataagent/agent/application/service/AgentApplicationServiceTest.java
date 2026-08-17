@@ -98,7 +98,7 @@ class AgentApplicationServiceTest {
     }
 
     private CreateAgentCommand buildCreateCommand(String name) {
-        return new CreateAgentCommand(name, null, "你是助手", "profile-1", null, null, null, null);
+        return new CreateAgentCommand(name, null, "你是助手", "profile-1", null, null, null);
     }
 
     @Test
@@ -165,7 +165,7 @@ class AgentApplicationServiceTest {
         when(agentDefinitionRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v3", null, "新版系统提示", "profile-1", null, null, null, null);
+                "agent-1", "v3", null, "新版系统提示", "profile-1", null, null, null);
 
         // when
         AgentVersion published = service.publishVersion(command);
@@ -184,7 +184,7 @@ class AgentApplicationServiceTest {
         when(agentDefinitionRepository.findByAgentIdForUpdate("agent-1")).thenReturn(Optional.of(archived));
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v2", null, "system", "profile-1", null, null, null, null);
+                "agent-1", "v2", null, "system", "profile-1", null, null, null);
 
         // when / then
         assertThrows(ResourceConflictException.class, () -> service.publishVersion(command));
@@ -198,7 +198,7 @@ class AgentApplicationServiceTest {
         when(agentDefinitionRepository.findByAgentIdForUpdate("agent-1")).thenReturn(Optional.empty());
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v2", null, "system", "profile-1", null, null, null, null);
+                "agent-1", "v2", null, "system", "profile-1", null, null, null);
 
         // when / then
         assertThrows(ResourceNotFoundException.class, () -> service.publishVersion(command));
@@ -263,7 +263,7 @@ class AgentApplicationServiceTest {
         when(agentDefinitionRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v", null, "system", "profile-1", null, null, null, null);
+                "agent-1", "v", null, "system", "profile-1", null, null, null);
 
         // when
         AgentVersion first = service.publishVersion(command);

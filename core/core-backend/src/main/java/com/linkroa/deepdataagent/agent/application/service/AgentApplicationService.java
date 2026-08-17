@@ -55,7 +55,7 @@ public class AgentApplicationService {
         return transactionTemplate.execute(status -> {
             AgentDefinition definition = agentDefinitionRepository.save(AgentDefinition.create(agentId, command.name(), command.description()));
             AgentVersion v1 = publishVersionInTransaction(definition, command.name(), command.description(), command.system(),
-                    profile.profileId(), command.inferenceParams(), command.skillIds(),
+                    profile.profileId(), command.skillIds(),
                     command.knowledgeBaseIds(), command.dataSourceIds());
             return agentDefinitionRepository.update(withLatestVersion(definition, v1.versionNumber()));
         });
@@ -75,7 +75,7 @@ public class AgentApplicationService {
             // 归档后拒绝发布新版本
             AgentValidator.validatePublishable(definition);
             AgentVersion version = publishVersionInTransaction(definition, command.name(), command.description(),
-                    command.system(), profile.profileId(), command.inferenceParams(), command.skillIds(),
+                    command.system(), profile.profileId(), command.skillIds(),
                     command.knowledgeBaseIds(), command.dataSourceIds());
             agentDefinitionRepository.update(withLatestVersion(definition, version.versionNumber()));
             return version;
@@ -86,7 +86,7 @@ public class AgentApplicationService {
      * 事务内发布一个版本快照（共用行锁，保证 MAX+1 计算串行且 latest_version 与版本号一致）
      */
     private AgentVersion publishVersionInTransaction(AgentDefinition definition, String name, String description,
-                                                     String system, String modelProfileId, String inferenceParams,
+                                                     String system, String modelProfileId,
                                                      String skillIds, String knowledgeBaseIds, String dataSourceIds) {
         int maxVersion = agentVersionRepository.findMaxVersionNumber(definition.agentId());
         int nextVersion = versionDomainService.nextVersionNumber(maxVersion);
@@ -98,7 +98,6 @@ public class AgentApplicationService {
                 description,
                 system,
                 modelProfileId,
-                inferenceParams,
                 skillIds,
                 knowledgeBaseIds,
                 dataSourceIds

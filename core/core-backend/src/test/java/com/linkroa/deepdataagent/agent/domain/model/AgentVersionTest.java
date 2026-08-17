@@ -13,8 +13,7 @@ class AgentVersionTest {
         // given // when
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", "初始版本", "你是销售助手",
-                "profile-1", "{\"temperature\":0.7}", "[{\"skillId\":\"s1\",\"version\":1}]",
-                null, null);
+                "profile-1", "[{\"skillId\":\"s1\",\"version\":1}]", null, null);
 
         // then
         assertEquals(1, version.versionNumber());
@@ -27,7 +26,7 @@ class AgentVersionTest {
         // given // when // then
         assertThrows(IllegalArgumentException.class,
                 () -> AgentVersion.create("v-1", "agent-1", 0, "v0", null,
-                        "system", "profile-1", null, null, null, null));
+                        "system", "profile-1", null, null, null));
     }
 
     @Test
@@ -35,14 +34,14 @@ class AgentVersionTest {
         // given // when // then
         assertThrows(IllegalArgumentException.class,
                 () -> AgentVersion.create("v-1", "agent-1", 1, "v1", null,
-                        "system", "", null, null, null, null));
+                        "system", "", null, null, null));
     }
 
     @Test
     void should_defaultSystemToEmpty_when_create_given_nullSystem() {
         // given // when
         AgentVersion version = AgentVersion.create(
-                "v-1", "agent-1", 1, "v1", null, null, "profile-1", null, null, null, null);
+                "v-1", "agent-1", 1, "v1", null, null, "profile-1", null, null, null);
 
         // then
         assertEquals("", version.system());
@@ -52,7 +51,7 @@ class AgentVersionTest {
     void should_returnEmptySkills_when_parseSkillRefs_given_blankSkillIds() {
         // given
         AgentVersion version = AgentVersion.create(
-                "v-1", "agent-1", 1, "v1", null, "system", "profile-1", null, null, null, null);
+                "v-1", "agent-1", 1, "v1", null, "system", "profile-1", null, null, null);
 
         // when
         var refs = version.parseSkillRefs();
@@ -65,7 +64,7 @@ class AgentVersionTest {
     void should_returnSkillRefs_when_parseSkillRefs_given_jsonSkillIds() {
         // given
         AgentVersion version = AgentVersion.create(
-                "v-1", "agent-1", 1, "v1", null, "system", "profile-1", null,
+                "v-1", "agent-1", 1, "v1", null, "system", "profile-1",
                 "[{\"skillId\":\"s1\",\"version\":1},{\"skillId\":\"s2\",\"version\":3}]", null, null);
 
         // when
