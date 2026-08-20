@@ -1,21 +1,16 @@
 package com.linkroa.deepdataagent.runtime.infrastructure.sse;
 
-import com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope;
-import com.linkroa.deepdataagent.runtime.application.port.EventBroadcaster;
-import com.linkroa.deepdataagent.runtime.domain.model.AgentSessionContext;
-import com.linkroa.deepdataagent.runtime.domain.repository.SessionRegistry;
+import com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler;
 import com.linkroa.deepdataagent.runtime.infrastructure.config.AgentRuntimeProperties;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import jakarta.annotation.Resource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.Duration;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -23,29 +18,29 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 会话级 SSE 订阅注册表（{@link EventBroadcaster} 进程内实现）。
- * <p>在「注册 / 广播 / 完成」基础上增加：</p>
+ * 会话级 SSE 连接注册表（{@link SseConnectionHandle} 的会话级工厂 / 容器 + 全局心跳）。
+ * <p>连接生命周期随会话绑定到 {@code AgentSessionContext.connection()}；本类只负责：</p>
  * <ul>
- *   <li><b>心跳保活</b>：周期发送 comment 注释行 + {@code extendTimeout}，
- *       避免空闲长连接被容器超时回收（配合前端重连语义）；</li>
- *   <li><b>断连回调</b>：订阅者全部消失（会话最后一个 emitter 清理）时经
- *       {@link SessionRegistry} 定位会话级聚合并触发
- *       {@link AgentSessionContext#interruptActiveRun()}，中断在跑执行解决「断连不中断」缺陷。</li>
+ *   <li>按会话获取 / 原子重建 {@link SseConnectionHandle}（句柄关闭后自动新建）；</li>
+ *   <li>创建受超时 / 断连保护的 {@link SseEmitter} 并挂入句柄连接组；</li>
+ *   <li>全局心跳保活：周期对全部存活句柄发送注释行、探测并回收死连接。</li>
  * </ul>
+ * <p>不再承担「广播 / 完成」职责（领域广播已改经句柄 {@code push(ChatEvent)}，
+ * 关闭全部订阅者由句柄 {@code close()} 承载并由 {@code bindConnection} 触发），
+ * 也不再跨层反调领域聚合（断连由连接层 {@code onDisconnect} 回调收口）。</p>
  */
+@Slf4j
 @Component
-public class SseEmitterRegistry implements EventBroadcaster {
-
-    private static final Logger log = LoggerFactory.getLogger(SseEmitterRegistry.class);
+public class SseEmitterRegistry {
 
     /** 心跳周期下限（防止 sse-timeout 配置过小时周期被推导为 0） */
     private static final Duration HEARTBEAT_MIN_INTERVAL = Duration.ofSeconds(10);
 
-    private final Map<String, Set<SseEmitter>> sessionEmitters = new ConcurrentHashMap<>();
-    @Resource
-    private SessionRegistry sessionRegistry;
+    private final Map<String, SseConnectionHandle> handles = new ConcurrentHashMap<>();
     @Resource
     private AgentRuntimeProperties properties;
+    @Resource
+    private SseEventEnvelopeAssembler envelopeAssembler;
     private final AtomicBoolean started = new AtomicBoolean(false);
     private ScheduledExecutorService heartbeatExecutor;
 
@@ -81,13 +76,29 @@ public class SseEmitterRegistry implements EventBroadcaster {
     }
 
     /**
-     * 注册会话订阅者，返回受超时 / 断连保护的 emitter。
+     * 获取或原子创建会话连接句柄；既有句柄已关闭时原子重建。
+     *
+     * @param sessionId 会话 ID
+     * @return 该会话当前活跃的连接句柄（同一会话同时复用一个句柄，共享连接组）
      */
-    public SseEmitter register(String sessionId, Duration timeout) {
+    public SseConnectionHandle getOrCreate(String sessionId) {
+        return handles.compute(sessionId, (k, existing) ->
+                existing == null || existing.isClosed()
+                        ? new SseConnectionHandle(envelopeAssembler)
+                        : existing);
+    }
+
+    /**
+     * 注册一个订阅者（创建受超时 / 断连保护的 emitter 并挂入句柄连接组）。
+     *
+     * @param handle  会话连接句柄
+     * @param timeout SSE 空闲超时
+     * @return 已完成回调接线的 emitter
+     */
+    public SseEmitter register(SseConnectionHandle handle, Duration timeout) {
         SseEmitter emitter = new SseEmitter(timeout.toMillis());
-        Set<SseEmitter> emitters = sessionEmitters.computeIfAbsent(sessionId, k -> ConcurrentHashMap.newKeySet());
-        emitters.add(emitter);
-        Runnable cleanup = () -> remove(sessionId, emitter);
+        handle.addConnection(emitter);
+        Runnable cleanup = () -> handle.removeConnection(emitter);
         emitter.onCompletion(cleanup);
         emitter.onTimeout(cleanup);
         emitter.onError(e -> cleanup.run());
@@ -95,68 +106,27 @@ public class SseEmitterRegistry implements EventBroadcaster {
     }
 
     /**
-     * 广播事件至会话的全部订阅者（序列化为 SSE name/data）。
+     * 移除会话连接句柄（会话级清理，非必要场景可由外部显式调用）。
+     *
+     * @param sessionId 会话 ID
      */
-    @Override
-    public void broadcast(String sessionId, SseEventEnvelope envelope) {
-        Set<SseEmitter> emitters = sessionEmitters.get(sessionId);
-        if (emitters == null || emitters.isEmpty()) {
-            return;
-        }
-        for (SseEmitter emitter : emitters) {
-            try {
-                emitter.send(ChatEventCodec.toSseEvent(envelope));
-            } catch (Exception ex) {
-                remove(sessionId, emitter);
-                emitter.completeWithError(ex);
-            }
-        }
+    public void remove(String sessionId) {
+        handles.remove(sessionId);
     }
 
     /**
-     * 完成会话的全部订阅者（会话终止 / 执行结束清理）。
-     */
-    @Override
-    public void complete(String sessionId) {
-        Set<SseEmitter> emitters = sessionEmitters.remove(sessionId);
-        if (emitters == null) {
-            return;
-        }
-        emitters.forEach(SseEmitter::complete);
-    }
-
-    /**
-     * 心跳：对全部存活 emitter 发送注释行保活并探测死连接，失败则清理。
-     * <p>Spring WebMvc 7 不再支持 extendTimeout（超时在初始化时固定），
+     * 心跳：逐句柄发送注释保活、探测死连接并回收，顺带清理已关闭的句柄。
+     * <p>Spring WebMvc 7 不再支持 {@code extendTimeout}（超时在初始化时固定），
      * 因此连接级超时由 {@link AgentRuntimeProperties#getSseTimeout()} 控制，
      * 此处仅负责客户端侧保活与死连接即时回收。</p>
      */
     private void heartbeat() {
-        for (Map.Entry<String, Set<SseEmitter>> entry : sessionEmitters.entrySet()) {
-            String sessionId = entry.getKey();
-            for (SseEmitter emitter : entry.getValue()) {
-                try {
-                    emitter.send(SseEmitter.event().comment("ping"));
-                } catch (Exception ex) {
-                    remove(sessionId, emitter);
-                }
+        handles.values().removeIf(handle -> {
+            if (handle.isClosed()) {
+                return true;
             }
-        }
-    }
-
-    /**
-     * 移除订阅者；若为会话最后一个订阅者，触发在跑执行中断。
-     */
-    private void remove(String sessionId, SseEmitter emitter) {
-        Set<SseEmitter> emitters = sessionEmitters.get(sessionId);
-        if (emitters == null) {
-            return;
-        }
-        emitters.remove(emitter);
-        if (emitters.isEmpty()) {
-            sessionEmitters.remove(sessionId, emitters);
-            // 订阅者全部消失：经会话级聚合幂等中断在跑 agent，避免僵尸执行继续消耗资源
-            sessionRegistry.get(sessionId).ifPresent(AgentSessionContext::interruptActiveRun);
-        }
+            handle.heartbeat();
+            return false;
+        });
     }
 }

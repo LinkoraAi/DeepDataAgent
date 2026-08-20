@@ -29,7 +29,7 @@ public record AgentConfigRequest(
         /** 预留知识库引用 JSON */
         String knowledgeBaseIds,
 
-        /** 数据源引用 JSON */
+        /** 数据源引用 JSON（[数据源 id 数字数组]） */
         String dataSourceIds
 ) {
 }

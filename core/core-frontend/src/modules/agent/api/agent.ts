@@ -200,14 +200,12 @@ export async function sendMessageStream(
   }
 }
 
-/** 打开实时订阅流（回放 after_sequence_num 之后事件 + 实时订阅）。 */
+/** 打开实时订阅流（连接建立后服务端下发 : connected 并回放断点之后事件 + 实时订阅，断线自动重连）。 */
 export function openEventStream(
   sessionId: string,
-  afterSequenceNum = 0,
   onError?: (error: string) => void,
 ): EventSource {
-  const query = new URLSearchParams({ after_sequence_num: String(afterSequenceNum) });
-  const source = new EventSource(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/events/stream?${query}`);
+  const source = new EventSource(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/events/stream`);
   source.onerror = () => onError?.('事件订阅连接中断，正在重试…');
   return source;
 }

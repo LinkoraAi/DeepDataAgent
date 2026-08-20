@@ -5,12 +5,16 @@ import com.linkroa.deepdataagent.agent.application.command.PublishAgentVersionCo
 import com.linkroa.deepdataagent.agent.domain.model.AgentDefinition;
 import com.linkroa.deepdataagent.agent.domain.model.AgentVersion;
 import com.linkroa.deepdataagent.agent.domain.model.ModelProfile;
+import com.linkroa.deepdataagent.agent.domain.model.SkillResource;
 import com.linkroa.deepdataagent.agent.domain.model.enums.ApiFormat;
 import com.linkroa.deepdataagent.agent.domain.model.enums.ModelProfileStatus;
 import com.linkroa.deepdataagent.agent.domain.model.enums.ModelType;
+import com.linkroa.deepdataagent.agent.domain.model.enums.SkillStorageType;
+import com.linkroa.deepdataagent.agent.domain.model.enums.SkillType;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentDefinitionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentVersionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.ModelProfileRepository;
+import com.linkroa.deepdataagent.agent.domain.repository.SkillRepository;
 import com.linkroa.deepdataagent.agent.domain.service.AgentVersionDomainService;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
@@ -31,6 +35,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
@@ -48,6 +53,7 @@ class AgentApplicationServiceTest {
     @Mock private AgentDefinitionRepository agentDefinitionRepository;
     @Mock private AgentVersionRepository agentVersionRepository;
     @Mock private ModelProfileRepository modelProfileRepository;
+    @Mock private SkillRepository skillRepository;
     @Mock private TransactionTemplate transactionTemplate;
 
     private AgentApplicationService service;
@@ -59,6 +65,7 @@ class AgentApplicationServiceTest {
         ReflectionTestUtils.setField(service, "agentDefinitionRepository", agentDefinitionRepository);
         ReflectionTestUtils.setField(service, "agentVersionRepository", agentVersionRepository);
         ReflectionTestUtils.setField(service, "modelProfileRepository", modelProfileRepository);
+        ReflectionTestUtils.setField(service, "skillRepository", skillRepository);
         ReflectionTestUtils.setField(service, "versionDomainService", versionDomainService);
         ReflectionTestUtils.setField(service, "transactionTemplate", transactionTemplate);
         lenient().doAnswer(invocation -> {
@@ -174,6 +181,46 @@ class AgentApplicationServiceTest {
         assertEquals(3, published.versionNumber());
         assertEquals("新版系统提示", published.system());
         verify(agentDefinitionRepository).update(any());
+    }
+
+    @Test
+    void should_rejectPublish_when_publishVersion_given_missingSkillMount() {
+        // given（模型存在，但挂载的技能版本不存在）
+        when(modelProfileRepository.findByProfileId("profile-1")).thenReturn(Optional.of(buildEnabledProfile("profile-1")));
+        when(skillRepository.findBySkillIdAndVersion("skill-1", 2)).thenReturn(Optional.empty());
+
+        PublishAgentVersionCommand command = new PublishAgentVersionCommand(
+                "agent-1", "v2", null, "system", "profile-1",
+                "[{\"skillId\":\"skill-1\",\"version\":2}]", null, null);
+
+        // when / then（挂载不存在的技能版本 → 校验错误，不产生数据变更）
+        assertThrows(ResourceNotFoundException.class, () -> service.publishVersion(command));
+        verify(agentVersionRepository, never()).save(any());
+    }
+
+    @Test
+    void should_publish_when_publishVersion_given_existingSkillMount() {
+        // given（挂载的技能版本存在）
+        AgentDefinition definition = buildDefinition("agent-1", "销售助手", 1, false);
+        when(modelProfileRepository.findByProfileId("profile-1")).thenReturn(Optional.of(buildEnabledProfile("profile-1")));
+        when(skillRepository.findBySkillIdAndVersion("skill-1", 2))
+                .thenReturn(Optional.of(SkillResource.create("skill-1", 2, "代码评审", "评审代码",
+                        SkillType.CUSTOM, SkillStorageType.LOCAL_FILE, "s1-v2.zip", "0".repeat(64), 32L)));
+        when(agentDefinitionRepository.findByAgentIdForUpdate("agent-1")).thenReturn(Optional.of(definition));
+        when(agentVersionRepository.findMaxVersionNumber("agent-1")).thenReturn(1);
+        when(agentVersionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(agentDefinitionRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        PublishAgentVersionCommand command = new PublishAgentVersionCommand(
+                "agent-1", "v2", null, "system", "profile-1",
+                "[{\"skillId\":\"skill-1\",\"version\":2}]", null, null);
+
+        // when
+        AgentVersion published = service.publishVersion(command);
+
+        // then
+        assertEquals(2, published.versionNumber());
+        assertTrue(published.skillIds().contains("skill-1"));
     }
 
     @Test

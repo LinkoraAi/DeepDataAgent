@@ -16,10 +16,10 @@ import java.util.concurrent.atomic.AtomicReference;
  *   <li><b>工具入参聚合</b>：跨 TOOL_CALL_START/DELTA/END 聚合 arguments JSON（span 脱敏入口）；</li>
  *   <li><b>工具结果 head+tail 截断</b>：保留 head 16KB 实时窗口 + tail 16KB 环形缓冲，
  *       中间 delta 直接丢弃，避免超大工具输出拖慢轮次；</li>
- *   <li><b>终态提示</b>：EXCEED_MAX_ITERS 标记与 stop_reason 推导、防重复终态化的 finalized 原子位。</li>
+ *   <li><b>迭代上限标记</b>：EXCEED_MAX_ITERS 标记（仅作 stop_reason 派生输入，不产出终态）。</li>
  * </ul>
- * <p>流事件经 Reactor 串行处理保证聚合字段单线程安全；跨线程可见位（finalized / stopReason /
- * exceedMaxIters）使用 {@link AtomicReference}/{@link volatile} 承载以兼容中断路径并发读。</p>
+ * <p>流事件经 Reactor 串行处理保证聚合字段单线程安全；跨线程可见位（exceedMaxIters）
+ * 使用 {@link AtomicReference} 承载以兼容中断路径并发读。</p>
  */
 public final class AgentRunState {
 
@@ -40,9 +40,7 @@ public final class AgentRunState {
     private final Map<String, OffsetDateTime> toolSpanStarts = new HashMap<>();
     /** 模型调用开始时间（llm.call span 起点，单模型并发场景取最近一次） */
     private OffsetDateTime modelSpanStart;
-    /** 防重复终态化（AGENT_END 提前终态与 onComplete 兜底之间的唯一出口守卫） */
-    private final java.util.concurrent.atomic.AtomicBoolean finalized = new java.util.concurrent.atomic.AtomicBoolean(false);
-    /** 流内终态提示：是否已见 EXCEED_MAX_ITERS */
+    /** 流内是否已见 EXCEED_MAX_ITERS（stop_reason 派生输入） */
     private final java.util.concurrent.atomic.AtomicBoolean exceedMaxIters = new java.util.concurrent.atomic.AtomicBoolean(false);
     /** 工具结果 head 缓冲（保留前 16KB） */
     private final StringBuilder toolResultHead = new StringBuilder();
@@ -248,10 +246,10 @@ public final class AgentRunState {
         }
     }
 
-    // ==================== 终态提示 ====================
+    // ==================== 迭代上限标记 ====================
 
     /**
-     * 标记已见 EXCEED_MAX_ITERS（stop_reason 推导）。
+     * 标记已见 EXCEED_MAX_ITERS（stop_reason 派生输入）。
      */
     public void markExceedMaxIters() {
         exceedMaxIters.set(true);
@@ -259,30 +257,11 @@ public final class AgentRunState {
 
     /**
      * 是否已见 EXCEED_MAX_ITERS。
+     *
+     * @return true=已触发迭代上限
      */
     public boolean exceededMaxIters() {
         return exceedMaxIters.get();
-    }
-
-    /**
-     * 轮次最终 stop_reason（stop / max_iterations）。
-     */
-    public String stopReason() {
-        return exceedMaxIters.get() ? "max_iterations" : "stop";
-    }
-
-    /**
-     * 尝试标记本轮已终态化；仅首个调用方返回 {@code true}（终态唯一出口守卫）。
-     */
-    public boolean tryFinalized() {
-        return finalized.compareAndSet(false, true);
-    }
-
-    /**
-     * 是否已终态化。
-     */
-    public boolean isFinalized() {
-        return finalized.get();
     }
 
     private static OffsetDateTime now() {

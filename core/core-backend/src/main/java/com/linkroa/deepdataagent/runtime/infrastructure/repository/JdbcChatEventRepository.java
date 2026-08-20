@@ -12,7 +12,7 @@ import java.util.List;
 
 /**
  * 聊天事件仓储实现（MyBatis-Plus）。
- * <p>序列号基于会话内最大序列号分配；调用方须在单飞所限定的短事务内完成
+ * <p>序列号基于会话内最大序列号分配；调用方须在同一会话同时只有一个执行所限定的短事务内完成
  * {@code nextSequenceNum + save}，保证会话内严格递增。</p>
  */
 @Repository

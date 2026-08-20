@@ -9,7 +9,7 @@ package com.linkroa.deepdataagent.agent.application.command;
  * @param modelProfileId     模型配置引用
  * @param skillIds           挂载技能 JSON（[{skillId, version}]）
  * @param knowledgeBaseIds   预留知识库引用 JSON
- * @param dataSourceIds      数据源引用 JSON
+ * @param dataSourceIds      数据源引用 JSON（[数据源 id 数字数组]）
  */
 public record CreateAgentCommand(
         String name,

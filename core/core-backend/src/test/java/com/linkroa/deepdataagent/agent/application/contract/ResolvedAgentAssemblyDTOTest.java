@@ -30,6 +30,8 @@ class ResolvedAgentAssemblyDTOTest {
         assertEquals(10, dto.maxIters());
         assertEquals("sk-plain", dto.credential());
         assertEquals("https://api.example.com/v1", dto.apiEndpointUrl());
+        assertTrue(dto.skills().isEmpty());
+        assertTrue(dto.dataSourceIds().isEmpty());
     }
 
     @Test
@@ -40,7 +42,7 @@ class ResolvedAgentAssemblyDTOTest {
         // when & then
         ResolvedAgentAssemblyDTO dto = new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", system, "openai:gpt-4", 10, null,
-                "https://api.example.com/v1");
+                "https://api.example.com/v1", null, null);
         assertEquals(MAX_SYSTEM_LENGTH, dto.system().length());
     }
 
@@ -49,7 +51,7 @@ class ResolvedAgentAssemblyDTOTest {
         // given & when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO(" ", 1, "v1", "system", "openai:gpt-4",
-                        10, null, "https://api.example.com/v1"));
+                        10, null, "https://api.example.com/v1", null, null));
     }
 
     @Test
@@ -57,7 +59,7 @@ class ResolvedAgentAssemblyDTOTest {
         // given & when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO("agent-a", 0, "v1", "system", "openai:gpt-4",
-                        10, null, "https://api.example.com/v1"));
+                        10, null, "https://api.example.com/v1", null, null));
     }
 
     @Test
@@ -65,7 +67,7 @@ class ResolvedAgentAssemblyDTOTest {
         // given & when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO("agent-a", 1, "", "system", "openai:gpt-4",
-                        10, null, "https://api.example.com/v1"));
+                        10, null, "https://api.example.com/v1", null, null));
     }
 
     @Test
@@ -73,7 +75,7 @@ class ResolvedAgentAssemblyDTOTest {
         // given & when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO("agent-a", 1, "v1", "system", "",
-                        10, null, "https://api.example.com/v1"));
+                        10, null, "https://api.example.com/v1", null, null));
     }
 
     @Test
@@ -81,7 +83,7 @@ class ResolvedAgentAssemblyDTOTest {
         // given & when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO("agent-a", 1, "v1", "system", "openai:gpt-4",
-                        0, null, "https://api.example.com/v1"));
+                        0, null, "https://api.example.com/v1", null, null));
     }
 
     @Test
@@ -92,14 +94,14 @@ class ResolvedAgentAssemblyDTOTest {
         // when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO("agent-a", 1, "v1", system, "openai:gpt-4",
-                        10, null, "https://api.example.com/v1"));
+                        10, null, "https://api.example.com/v1", null, null));
     }
 
     private ResolvedAgentAssemblyDTO sample() {
         return new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "你是数据分析专家",
                 "openai:gpt-4", 10, "sk-plain",
-                "https://api.example.com/v1");
+                "https://api.example.com/v1", null, null);
     }
 
     @Test

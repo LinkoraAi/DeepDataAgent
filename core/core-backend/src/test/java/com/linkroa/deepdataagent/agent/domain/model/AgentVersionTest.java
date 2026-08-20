@@ -75,4 +75,33 @@ class AgentVersionTest {
         assertEquals("s1", refs.get(0).skillId());
         assertEquals(3, refs.get(1).version());
     }
+
+    @Test
+    void should_returnEmptyDatasourceIds_when_parseDatasourceIds_given_blankDataSourceIds() {
+        // given
+        AgentVersion version = AgentVersion.create(
+                "v-1", "agent-1", 1, "v1", null, "system", "profile-1", null, null, null);
+
+        // when
+        var ids = version.parseDatasourceIds();
+
+        // then
+        assertTrue(ids.isEmpty());
+    }
+
+    @Test
+    void should_returnDatasourceIds_when_parseDatasourceIds_given_jsonDataSourceIds() {
+        // given
+        AgentVersion version = AgentVersion.create(
+                "v-1", "agent-1", 1, "v1", null, "system", "profile-1",
+                "[{\"skillId\":\"s1\",\"version\":1}]", null, "[1,2]");
+
+        // when
+        var ids = version.parseDatasourceIds();
+
+        // then
+        assertEquals(2, ids.size());
+        assertEquals(1L, ids.get(0));
+        assertEquals(2L, ids.get(1));
+    }
 }

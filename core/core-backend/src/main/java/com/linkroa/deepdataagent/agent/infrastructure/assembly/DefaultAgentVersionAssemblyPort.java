@@ -1,6 +1,7 @@
 package com.linkroa.deepdataagent.agent.infrastructure.assembly;
 
 import com.linkroa.deepdataagent.agent.application.contract.ResolvedAgentAssemblyDTO;
+import com.linkroa.deepdataagent.agent.application.contract.ResolvedSkillDTO;
 import com.linkroa.deepdataagent.agent.application.port.AgentVersionAssemblyPort;
 import com.linkroa.deepdataagent.agent.domain.model.AgentDefinition;
 import com.linkroa.deepdataagent.agent.domain.model.AgentVersion;
@@ -9,11 +10,18 @@ import com.linkroa.deepdataagent.agent.domain.model.ModelProfile;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentDefinitionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentVersionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.ModelProfileRepository;
+import com.linkroa.deepdataagent.agent.domain.repository.SkillContentStore;
+import com.linkroa.deepdataagent.agent.domain.repository.SkillRepository;
 import com.linkroa.deepdataagent.agent.infrastructure.util.ModelCredentialEncryptionUtil;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import jakarta.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Agent「版本 + 模型」解析端口实现（发布号十进制解析 + 存在性/归档校验 + 凭证解密）。
@@ -23,12 +31,18 @@ import org.springframework.stereotype.Service;
 @Service
 public class DefaultAgentVersionAssemblyPort implements AgentVersionAssemblyPort {
 
+    private static final Logger log = LoggerFactory.getLogger(DefaultAgentVersionAssemblyPort.class);
+
     @Resource
     private AgentDefinitionRepository agentDefinitionRepository;
     @Resource
     private AgentVersionRepository agentVersionRepository;
     @Resource
     private ModelProfileRepository modelProfileRepository;
+    @Resource
+    private SkillRepository skillRepository;
+    @Resource
+    private SkillContentStore skillContentStore;
     @Resource
     private ModelCredentialEncryptionUtil credentialEncryptionUtil;
 
@@ -47,13 +61,62 @@ public class DefaultAgentVersionAssemblyPort implements AgentVersionAssemblyPort
                 ModelIndicator.of(validated.profile().apiFormat(), validated.profile().modelName()).resolved(),
                 validated.profile().toolCallRounds(),
                 credential,
-                validated.profile().apiEndpointUrl()
+                validated.profile().apiEndpointUrl(),
+                validated.versionRow().parseDatasourceIds(),
+                resolveSkills(validated.versionRow())
         );
+    }
+
+    /**
+     * 解析挂载技能为「技能包原始字节」装配契约：版本锁定引用 → {@code SkillResource} →
+     * 读 {@code SkillContentStore} 原始 ZIP 字节。某技能缺失/损坏时跳过并告警（不阻断装配）。
+     */
+    private List<ResolvedSkillDTO> resolveSkills(AgentVersion versionRow) {
+        List<ResolvedSkillDTO> skills = new ArrayList<>();
+        for (AgentVersion.SkillRef ref : versionRow.parseSkillRefs()) {
+            if (StringUtils.isBlank(ref.skillId()) || ref.version() == null) {
+                log.warn("技能挂载引用非法，跳过物化: {}", ref);
+                continue;
+            }
+            try {
+                var resource = skillRepository.findBySkillIdAndVersion(ref.skillId(), ref.version());
+                if (resource.isEmpty()) {
+                    log.warn("技能引用不存在，跳过物化: skillId={} version={}", ref.skillId(), ref.version());
+                    continue;
+                }
+                var skillResource = resource.get();
+                byte[] content = skillContentStore.get(skillResource.storageKey());
+                skills.add(new ResolvedSkillDTO(
+                        ref.skillId(),
+                        ref.version(),
+                        skillResource.name(),
+                        skillResource.description(),
+                        skillResource.storageKey(),
+                        content
+                ));
+            } catch (RuntimeException e) {
+                log.warn("技能缺失或损坏，跳过物化: skillId={} version={}", ref.skillId(), ref.version(), e);
+            }
+        }
+        return skills;
     }
 
     @Override
     public void assertResolvable(String agentId, String versionNumber) {
         validateResolvable(agentId, versionNumber);
+    }
+
+    @Override
+    public String latestVersionNumber(String agentId) {
+        AgentDefinition definition = agentDefinitionRepository.findByAgentId(agentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Agent不存在"));
+        if (definition.archived()) {
+            throw new ResourceNotFoundException("Agent已归档，不可创建新会话");
+        }
+        if (definition.latestVersion() < 1) {
+            throw new ResourceNotFoundException("Agent尚未发布版本");
+        }
+        return String.valueOf(definition.latestVersion());
     }
 
     /**

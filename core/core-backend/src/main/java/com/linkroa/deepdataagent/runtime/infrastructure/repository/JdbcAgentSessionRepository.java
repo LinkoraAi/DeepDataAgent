@@ -15,7 +15,7 @@ import java.util.Optional;
 /**
  * Agent 会话仓储实现（MyBatis-Plus）。
  * <p>基础字段（created_at/updated_at/created_by/updated_by/is_deleted）由
- * {@code MybatisPlusMetaObjectHandler} 自动填充；单飞由 {@code tryMarkRunning} 原子 CAS 保证。</p>
+ * {@code MybatisPlusMetaObjectHandler} 自动填充；同一会话同时只有一个执行的互斥由 {@code tryMarkRunning} 原子 CAS 保证。</p>
  */
 @Repository
 public class JdbcAgentSessionRepository implements AgentSessionRepository {
@@ -69,6 +69,11 @@ public class JdbcAgentSessionRepository implements AgentSessionRepository {
     @Override
     public void updateStatus(String sessionId, AgentSessionStatus status) {
         mapper.updateStatus(sessionId, status.name());
+    }
+
+    @Override
+    public void updateMeta(String sessionId, String title, String metadata) {
+        mapper.updateMeta(sessionId, title, metadata);
     }
 
     @Override

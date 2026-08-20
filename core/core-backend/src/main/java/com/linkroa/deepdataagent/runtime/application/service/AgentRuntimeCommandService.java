@@ -3,23 +3,24 @@ package com.linkroa.deepdataagent.runtime.application.service;
 import com.linkroa.deepdataagent.runtime.application.assembler.AgentRuntimeAssembler;
 import com.linkroa.deepdataagent.runtime.application.assembler.ChatEventPayloadAssembler;
 import com.linkroa.deepdataagent.runtime.application.assembler.ChatEventPayloadAssembler.AssembledEvent;
-import com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler;
 import com.linkroa.deepdataagent.runtime.application.command.CreateSessionCommand;
 import com.linkroa.deepdataagent.runtime.application.command.SendMessageCommand;
 import com.linkroa.deepdataagent.runtime.application.command.TerminateSessionCommand;
-import com.linkroa.deepdataagent.runtime.application.port.EventBroadcaster;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
 import com.linkroa.deepdataagent.runtime.domain.factory.AgentFactoryPort;
 import com.linkroa.deepdataagent.runtime.domain.factory.BuiltAgent;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentRunState;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSessionContext;
+import com.linkroa.deepdataagent.runtime.domain.model.AgentSessionExecution;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.domain.model.ExecutionRound;
+import com.linkroa.deepdataagent.runtime.domain.model.NoOpConnectionHandle;
 import com.linkroa.deepdataagent.runtime.domain.model.RunTrace;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.AgentSessionStatus;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.ChatEventType;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.RoundStatus;
+import com.linkroa.deepdataagent.runtime.domain.model.enums.SessionState;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.SpanKind;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.SpanStatus;
 import com.linkroa.deepdataagent.runtime.domain.repository.AgentSessionRepository;
@@ -57,8 +58,32 @@ import java.util.concurrent.Executor;
  *       payload 装配 / 落库 / SSE 广播 / span 追踪，并判定 AGENT_END 提前终态；</li>
  *   <li><b>终态事务</b>：round 终态 + 终态事件落库 + 会话回 IDLE + 根 span 结束，仅广播一发 session_status。</li>
  * </ol>
- * <p>全部阻塞型执行经虚拟线程调度器托管，web 请求线程永不阻塞（解 Tomcat 占用）；
+ * <p>阻塞型执行经虚拟线程执行器（阻塞等待）与 boundedElastic 阻塞调度器（落库/广播编排）
+ * 托管，二者默认均运行于虚拟线程，web 请求线程永不阻塞（解 Tomcat 占用）；
  * 只读查询用例见 {@link AgentRuntimeQueryService}（读写职责拆分）。</p>
+ *
+ * <p><b>运行时主链路</b>（虚拟线程阻塞模型，完整编排见 {@code executeRound} / {@code runEventStream}）：</p>
+ * <pre>{@code
+ *  请求线程 → sendMessageAsync(快速校验 session) → virtualExecutor.execute(...)   // 立即返回，不解 Tomcat
+ *  虚拟线程 → executeRound:
+ *     启动事务: CAS(IDLE→RUNNING) + 建 execution_round/根 span + sessionContext.beginRound
+ *     sessionContext.transitionState(RUNNING) → 广播 run_start
+ *     execution.submit → runAgent: build → activate(agent::interrupt) → runEventStream
+ *        streamEvents → publishOn(blockingScheduler) → doOnNext(handleSignal) 逐信号落库 + connection().push
+ *        completion.get() 阻塞等待（虚拟线程让出载体线程）
+ *        onComplete/onError → 终态唯一出口（finalizeRoundAndComplete / finalizeFailedRound）
+ *     终态事务: round 终态 + 会话回 IDLE + 广播 session_status(IDLE, stop_reason)
+ * }</pre>
+ *
+ * <p><b>中断 / 断连 / 终止链路</b>（见 {@code terminateSession} / {@link AgentSessionContext#cancel()}）：</p>
+ * <pre>{@code
+ *  客户端/断连 → terminateSession / onDisconnect
+ *     requireSession + [事务] updateStatus(TERMINATED)
+ *     sessionRegistry.get → AgentSessionContext.cancel()
+ *        execution.cancel() → 触发 interrupt 句柄(agent::interrupt) → SDK 流自然收流(onStreamComplete)
+ *        tryTransitionState(INTERRUPTED)（仅 RUNNING 态合法）
+ *     bindConnection(NoOpConnectionHandle) → 释放全部 SSE emitter
+ * }</pre>
  */
 @Service
 public class AgentRuntimeCommandService {
@@ -68,6 +93,8 @@ public class AgentRuntimeCommandService {
     private static final String DEEP_AGENT_SESSION_NOT_FOUND = "DEEP_AGENT_SESSION_NOT_FOUND";
     private static final String DEEP_AGENT_SESSION_BUSY = "DEEP_AGENT_SESSION_BUSY";
     private static final String DEEP_AGENT_RUN_ERROR = "DEEP_AGENT_RUN_ERROR";
+    private static final String STOP_REASON_STOP = "stop";
+    private static final String STOP_REASON_MAX_ITERATIONS = "max_iterations";
     private static final String STOP_REASON_ERROR = "error";
     private static final String STOP_REASON_INTERRUPTED = "interrupted";
     private static final String ROOT_SPAN_NAME = "agent.run";
@@ -85,10 +112,6 @@ public class AgentRuntimeCommandService {
     @Resource
     private AgentRunExecutor agentRunExecutor;
     @Resource
-    private EventBroadcaster eventBroadcaster;
-    @Resource
-    private SseEventEnvelopeAssembler sseEventEnvelopeAssembler;
-    @Resource
     private AgentRuntimeAssembler assembler;
     @Resource
     private RuntimeAgentAssemblyResolver runtimeAgentAssemblyResolver;
@@ -100,8 +123,8 @@ public class AgentRuntimeCommandService {
     private ChatEventPayloadAssembler payloadAssembler;
     @Resource(name = "agentVirtualExecutor")
     private Executor virtualExecutor;
-    @Resource(name = "agentVirtualScheduler")
-    private Scheduler virtualScheduler;
+    @Resource(name = "agentBlockingScheduler")
+    private Scheduler blockingScheduler;
     @Resource
     private ObjectMapper objectMapper;
 
@@ -120,28 +143,37 @@ public class AgentRuntimeCommandService {
 
     /**
      * 终止会话：状态置 TERMINATED（不可复活），中断在跑执行，释放 SSE 订阅。
+     * <pre>{@code
+     *  terminateSession
+     *    ├─ requireSession（不存在 → 404）
+     *    ├─ [事务] updateStatus(TERMINATED)          // 不可复活
+     *    ├─ AgentSessionContext.cancel()             // 幂等中断在跑执行
+     *    │     ├─ execution.cancel() → agent.interrupt() → SDK 流 onStreamComplete → 中断终态
+     *    │     └─ tryTransitionState(INTERRUPTED)
+     *    └─ bindConnection(NoOpConnectionHandle)     // 释放全部 SSE emitter（旧句柄 close）
+     * }</pre>
      */
     public void terminateSession(TerminateSessionCommand command) {
-        AgentSession session = requireSession(command.sessionId());
+        requireSession(command.sessionId());
         transactionTemplate.executeWithoutResult(status ->
                 sessionRepository.updateStatus(command.sessionId(), AgentSessionStatus.TERMINATED));
-        // 断连/终止语义：幂等中断在跑 agent（当前轮次将经终态路径收尾并恢复状态守卫感知）
-        sessionRegistry.get(command.sessionId()).ifPresent(AgentSessionContext::interruptActiveRun);
-        eventBroadcaster.complete(command.sessionId());
+        // 断连/终止语义：幂等取消在跑执行并标记中断（当前轮次经中断终态路径收尾）
+        sessionRegistry.get(command.sessionId()).ifPresent(AgentSessionContext::cancel);
+        // 关闭全部订阅者：解绑连接触发旧句柄 close 完成全部 emitter 关闭（替代 eventBroadcaster.complete）
+        sessionRegistry.get(command.sessionId()).ifPresent(ctx -> ctx.bindConnection(NoOpConnectionHandle.INSTANCE));
+    }
+
+    /**
+     * 更新会话元数据（对齐 Managed Agents 更新会话，仅改 title/metadata）。
+     */
+    public AgentSession updateSession(String sessionId, String title, String metadataJson) {
+        requireSession(sessionId);
+        transactionTemplate.executeWithoutResult(status ->
+                sessionRepository.updateMeta(sessionId, title, metadataJson));
+        return requireSession(sessionId);
     }
 
     // ==================== 消息发送（事务 + 事件流编排） ====================
-
-    /**
-     * 同步发送消息并消费整轮 SSE 事件流（阻塞至轮次终态）。
-     * <p>内部供测试与同步调用方使用；HTTP 入口（SSE 直连 / 202）一律走
-     * {@link #sendMessageAsync}，由虚拟线程执行器托管。</p>
-     *
-     * @return 本轮 round_id / run_id / stop_reason
-     */
-    public SendMessageResult sendMessage(SendMessageCommand command) {
-        return executeRound(command);
-    }
 
     /**
      * 异步发送消息（虚拟线程托管）：先同步校验会话存在（快速失败），
@@ -178,8 +210,17 @@ public class AgentRuntimeCommandService {
 
     /**
      * 执行单轮（启动事务 + 事件流 + 终态事务编排）。
+     * <pre>{@code
+     *  executeRound
+     *    ├─ requireSession（不存在/已终止 → 快速失败）
+     *    ├─ [启动事务] CAS(IDLE→RUNNING) + round/根 span + beginRound(DB max 抬升序号)
+     *    ├─ transitionState(RUNNING)（内存状态机，与 DB RUNNING 双轨）
+     *    ├─ persistAndBroadcast(run_start)
+     *    └─ execution.submit(runAgent)   // 进程内单执行串行守卫
+     *          └─ 事件流阶段（见 runEventStream）+ 终态唯一出口（见 finalizeRoundAndComplete / finalizeFailedRound）
+     * }</pre>
      */
-    private SendMessageResult executeRound(SendMessageCommand command) {
+    private void executeRound(SendMessageCommand command) {
         AgentSession session = requireSession(command.sessionId());
         if (session.status() == AgentSessionStatus.TERMINATED) {
             throw new DeepDataAgentException(DEEP_AGENT_SESSION_NOT_FOUND + ": 会话已终止");
@@ -210,52 +251,69 @@ public class AgentRuntimeCommandService {
         String sessionId = context.session().sessionId();
         String roundId = context.round().roundId();
 
+        // 内存状态机：IDLE → RUNNING
+        context.sessionContext().transitionState(SessionState.RUNNING);
+
         // run_start（应用层合成，含 round_id / run_id）
-        persistAndBroadcast(sessionId, roundId,
+        persistAndBroadcast(context, roundId,
                 new AssembledEvent(ChatEventType.RUN_START,
                         jsonOf(Map.of("round_id", roundId, "run_id", round.runId()))),
                 context.nextSequence());
         log.info("轮次开始: sessionId={}, roundId={}, runId={}, roundNumber={}",
                 sessionId, roundId, round.runId(), round.roundNumber());
-        BuiltAgent agent = null;
-        boolean registered = false;
+
+        // ===== 执行层：execution.submit 收敛 agent 完整生命周期（串行守卫 + 阻塞等待 + 释放）=====
         try {
-            // 实时装配：领域规格（无全局回退）+ 模型访问配置（凭证/API 端点仅注入工厂装配）
-            RuntimeAgentAssemblyResolver.AssembledAssembly assembly = runtimeAgentAssemblyResolver.assemble(session);
-            agent = agentFactory.build(assembly.spec(), assembly.modelAccess());
-            // 在跑执行注册（会话级聚合内的 CAS 串行守卫 + 断连中断入口）
-            registered = context.sessionContext().registerActiveRun(roundId, agent);
-            if (!registered) {
-                // 本应被启动事务的 CAS 独占抢占拦截；进程内守卫再失败说明会话有陈旧在跑句柄，
-                // 快速失败而非不带守卫裸跑（避免失去断连中断入口 / 误中断他轮句柄）
-                log.error("在跑执行注册被拒（会话已有进程内在跑句柄）: sessionId={}, roundId={}", sessionId, roundId);
-                return finalizeAsFailure(context,
-                        new DeepDataAgentException(DEEP_AGENT_RUN_ERROR + ": 会话已有在跑执行，拒绝并发轮次"), true);
-            }
-            // ===== 事件流阶段：应用层订阅 Flux，doOnNext 内编排持久化 / 广播 / span / 终态 =====
-            return runEventStream(context, agent, command.message());
+            context.sessionContext().execution().submit(execCtx -> runAgent(context, session, command.message(), execCtx));
+        } catch (IllegalStateException ex) {
+            // 进程内串行守卫拒绝（本应被启动事务 CAS 拦截，此处仅双保险兜底）
+            log.error("在跑执行注册被拒（会话已有进程内在跑句柄）: sessionId={}, roundId={}", sessionId, roundId);
+            finalizeAsFailure(context,
+                    new DeepDataAgentException(DEEP_AGENT_RUN_ERROR + ": 会话已有在跑执行，拒绝并发轮次"), true);
+        }
+    }
+
+    /**
+     * 在 execution 提交的任务内执行 agent：装配 → 注册中断句柄 → 订阅事件流并阻塞 → 释放。
+     * <pre>{@code
+     *  runAgent（execution.submit 提交，独占执行槽位）
+     *    ├─ build(agent)                        // 装配失败 → finalizeAsFailure(error)
+     *    ├─ execCtx.activate(agent::interrupt)  // 注册中断句柄（cancel 先到时立即触发）
+     *    ├─ runEventStream(...)                 // 订阅事件流 + completion.get() 阻塞
+     *    ├─ catch: Interrupted → 恢复中断标记；Execution/Runtime → finalizeAsFailure
+     *    └─ finally: agent.close()              // 无论成败均释放 SDK 句柄
+     * }</pre>
+     *
+     * @param context   本轮执行现场快照
+     * @param session   会话镜像（实时装配用）
+     * @param userInput 用户消息
+     * @param execCtx   执行控制句柄（completion 与中断注册）
+     */
+    private void runAgent(ExecutionContext context, AgentSession session, String userInput,
+                          AgentSessionExecution.ExecutionContext execCtx) {
+        BuiltAgent agent = null;
+        boolean built = false;
+        try {
+            agent = agentFactory.build(runtimeAgentAssemblyResolver.assemble(session));
+            built = true;
+            execCtx.activate(agent::interrupt);
+            runEventStream(context, agent, userInput, execCtx.completion());
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            log.warn("轮次等待终态被中断: sessionId={}, roundId={}", sessionId, roundId);
-            return new SendMessageResult(roundId, round.runId(), STOP_REASON_INTERRUPTED);
+            log.warn("轮次等待终态被中断: sessionId={}, roundId={}", session.sessionId(), context.round().roundId());
         } catch (ExecutionException ex) {
-            // 事件流回调终态化时抛出的异常（如 DB 故障）：未经守护的失败路径兜底终态化
-            log.error("Agent 事件流终态异常: sessionId={}, roundId={}", sessionId, roundId, ex.getCause());
-            return finalizeAsFailure(context, ex.getCause(), false);
+            log.error("Agent 事件流终态异常: sessionId={}, roundId={}", session.sessionId(), context.round().roundId(), ex.getCause());
+            finalizeAsFailure(context, ex.getCause(), false);
         } catch (RuntimeException ex) {
-            // agent 构建 / 注册阶段异常（尚未进入事件流）：直接终态化为 error
-            log.error("Agent 执行异常: sessionId={}, roundId={}", sessionId, roundId, ex);
-            return finalizeAsFailure(context, ex, !registered);
+            log.error("Agent 执行异常: sessionId={}, roundId={}", session.sessionId(), context.round().roundId(), ex);
+            finalizeAsFailure(context, ex, !built);
         } finally {
             if (agent != null) {
                 try {
                     agent.close();
                 } catch (RuntimeException ex) {
-                    log.warn("Agent 释放异常: sessionId={}, roundId={}", sessionId, roundId, ex);
+                    log.warn("Agent 释放异常: sessionId={}, roundId={}", session.sessionId(), context.round().roundId(), ex);
                 }
-            }
-            if (registered) {
-                context.sessionContext().clearActiveRun();
             }
         }
     }
@@ -263,19 +321,31 @@ public class AgentRuntimeCommandService {
     /**
      * 事件流阶段（应用层编排）：订阅冷流并在 doOnNext 内逐信号持久化 / 广播 / span / 终态判定，
      * 经 {@code completion().get()} 在虚拟线程阻塞等待终态。
+     * <pre>{@code
+     *  runEventStream（运行于虚拟线程）
+     *    streamEvents(冷流) ─ publishOn(blockingScheduler) ─▶ doOnNext(handleSignal)
+     *        ├─ 逐信号：seq 分配 / payload 装配 / 落库 / connection().push(SSE) / span 追踪
+     *        └─ AGENT_END → finalizeRoundAndComplete（提前终态，complete completion）
+     *    subscribe(onNext, onError=onStreamError, onComplete=onStreamComplete)
+     *    completion.get()  // 阻塞等待终态；虚拟线程阻塞时让出载体线程（M:N）
+     * }</pre>
+     *
+     * @param context    本轮执行现场快照
+     * @param agent      已装配 agent 句柄
+     * @param userInput  用户消息
+     * @param completion 执行完成信号（由 execution 槽位提供，终态路径 complete）
      */
-    private SendMessageResult runEventStream(ExecutionContext context, BuiltAgent agent, String userInput)
+    private void runEventStream(ExecutionContext context, BuiltAgent agent, String userInput,
+                                CompletableFuture<Void> completion)
             throws InterruptedException, ExecutionException {
-        CompletableFuture<SendMessageResult> completion = new CompletableFuture<>();
         agentRunExecutor.streamEvents(agent, userInput, context.session().sessionId(), context.session().userId())
-                .publishOn(virtualScheduler)
+                .publishOn(blockingScheduler)
                 .doOnNext(signal -> handleSignal(signal, context, completion))
                 .subscribe(
-                        ignored -> {
-                        },
+                        ignored -> {},
                         error -> onStreamError(context, error, completion),
                         () -> onStreamComplete(context, completion));
-        return completion.get();
+        completion.get();
     }
 
     /**
@@ -283,7 +353,7 @@ public class AgentRuntimeCommandService {
      * AGENT_END 触发终态提前（EXCEED_MAX_ITERS 后 defer 到 onComplete）。
      */
     private void handleSignal(AgentStreamSignal signal, ExecutionContext context,
-                              CompletableFuture<SendMessageResult> completion) {
+                              CompletableFuture<Void> completion) {
         AgentRunState runState = context.runState();
         String sessionId = context.session().sessionId();
         String roundId = context.round().roundId();
@@ -292,7 +362,7 @@ public class AgentRuntimeCommandService {
         switch (signal.type()) {
             case TEXT_DELTA -> {
                 runState.appendOutput(signal.text());
-                persistAndBroadcast(sessionId, roundId,
+                persistAndBroadcast(context, roundId,
                         payloadAssembler.textDelta(signal.blockId(), signal.text()),
                         context.nextSequence());
             }
@@ -311,7 +381,7 @@ public class AgentRuntimeCommandService {
             }
             case TOOL_CALL_START -> {
                 runState.startToolCall(signal.toolCallId(), signal.toolName());
-                persistAndBroadcast(sessionId, roundId,
+                persistAndBroadcast(context, roundId,
                         payloadAssembler.toolCallStart(signal.toolCallId(), signal.toolName()),
                         context.nextSequence());
             }
@@ -319,7 +389,7 @@ public class AgentRuntimeCommandService {
             case TOOL_CALL_END -> {
                 // takeToolArgs 一次性完成「取出聚合入参 + 留存原始快照供 tool.call span」
                 String argsJson = runState.takeToolArgs(signal.toolCallId());
-                persistAndBroadcast(sessionId, roundId,
+                persistAndBroadcast(context, roundId,
                         payloadAssembler.toolCallEnd(signal.toolCallId(), signal.toolName(), argsJson),
                         context.nextSequence());
             }
@@ -327,7 +397,7 @@ public class AgentRuntimeCommandService {
                 // head 实时窗口：head 未满则实时发布，head 已满后返回空串丢弃（不落库不发布）
                 String head = runState.appendToolResult(signal.text());
                 if (!head.isEmpty()) {
-                    persistAndBroadcast(sessionId, roundId,
+                    persistAndBroadcast(context, roundId,
                             payloadAssembler.toolResultDelta(signal.toolCallId(), signal.toolName(), head),
                             context.nextSequence());
                 }
@@ -335,7 +405,7 @@ public class AgentRuntimeCommandService {
             case TOOL_RESULT_END -> {
                 // head+tail 截断补发（含省略标记 + 截断通知），随后完成 tool.call span
                 String tail = runState.endToolResult();
-                persistAndBroadcast(sessionId, roundId,
+                persistAndBroadcast(context, roundId,
                         payloadAssembler.toolResultEnd(signal.toolCallId(), signal.toolName(),
                                 tail != null ? tail : "", runState.toolResultTruncated()),
                         context.nextSequence());
@@ -358,119 +428,111 @@ public class AgentRuntimeCommandService {
                     finalizeRoundAndComplete(context, completion);
                 }
             }
-            case THINKING_DELTA -> persistAndBroadcast(sessionId, roundId,
+            case THINKING_DELTA -> persistAndBroadcast(context, roundId,
                     payloadAssembler.thinkingDelta(signal.blockId(), signal.text()),
                     context.nextSequence());
-            case THINKING_END -> persistAndBroadcast(sessionId, roundId,
+            case THINKING_END -> persistAndBroadcast(context, roundId,
                     payloadAssembler.thinkingEnd(signal.blockId()), context.nextSequence());
-            case TEXT_END -> persistAndBroadcast(sessionId, roundId,
+            case TEXT_END -> persistAndBroadcast(context, roundId,
                     payloadAssembler.textEnd(signal.blockId()), context.nextSequence());
             // START 无业务语义，忽略
+            default -> throw new IllegalArgumentException("Unexpected value: " + signal.type());
         }
     }
 
     /**
      * 流正常结束（onComplete）：EXCEED_MAX_ITERS 的 defer 终态、AGENT_END 缺失兜底、
-     * 断连中断后 SDK 正常收流（注册表已移除 → interrupted）。
+     * 以及断连 / 终止中断后 SDK 正常收流的收尾入口。
      */
-    private void onStreamComplete(ExecutionContext context, CompletableFuture<SendMessageResult> completion) {
-        AgentRunState runState = context.runState();
-        ExecutionRound round = context.round();
+    private void onStreamComplete(ExecutionContext context, CompletableFuture<Void> completion) {
         String sessionId = context.session().sessionId();
-        String roundId = round.roundId();
-        if (runState.isFinalized()) {
-            // 已由 AGENT_END 提前终态化：仅补发结果
-            log.info("事件流收流完成（AGENT_END 已提前终态）: sessionId={}, roundId={}, stopReason={}",
-                    sessionId, roundId, runState.stopReason());
-            completion.complete(new SendMessageResult(roundId, round.runId(), runState.stopReason()));
-            return;
-        }
-        if (!context.sessionContext().activeRun().isPresent()) {
-            // 断连 / 终止后 SDK 正常收流：走中断终态（不发布 idle 的 stop）
+        String roundId = context.round().roundId();
+        if (context.sessionContext().state() == SessionState.INTERRUPTED) {
+            // 断连 / 终止已显式标记中断：走中断终态（不发布 idle 的 stop）
             log.warn("断连/终止后 SDK 正常收流，执行置中断: sessionId={}, roundId={}", sessionId, roundId);
-            completion.complete(finalizeFailedRound(context, true, "执行被中断"));
+            finalizeFailedRound(context, true, "执行被中断");
+            completion.complete(null);
             return;
         }
-        log.info("事件流正常收流完成: sessionId={}, roundId={}, stopReason={}",
-                sessionId, roundId, runState.stopReason());
+        log.info("事件流正常收流完成: sessionId={}, roundId={}", sessionId, roundId);
         finalizeRoundAndComplete(context, completion);
     }
 
     /**
-     * 流异常结束（onError）：按「注册表是否已移除」区分中断与执行错误后统一走失败终态。
+     * 流异常结束（onError）：依显式中断状态区分中断与执行错误后统一走失败终态。
      */
     private void onStreamError(ExecutionContext context, Throwable error,
-                               CompletableFuture<SendMessageResult> completion) {
-        AgentRunState runState = context.runState();
-        ExecutionRound round = context.round();
+                               CompletableFuture<Void> completion) {
         String sessionId = context.session().sessionId();
-        String roundId = round.roundId();
-        if (runState.isFinalized()) {
-            // 终态已生效后的杂散异常（如终态化事务失败后 doOnNext 传播）：终态不再重复，
-            // 但必须记录异常详情供排查（此前该路径会静默吞掉终态落库失败）
-            log.error("事件流终态后异常（终态已生效，仅记录不重复终态化）: sessionId={}, roundId={}",
-                    sessionId, roundId, error);
-            completion.complete(new SendMessageResult(roundId, round.runId(), runState.stopReason()));
-            return;
-        }
-        log.error("Agent 事件流异常: sessionId={}, roundId={}", sessionId, roundId, error);
-        boolean interrupted = !context.sessionContext().activeRun().isPresent();
-        completion.complete(finalizeFailedRound(context, interrupted,
-                blankToDefault(error.getMessage(), interrupted ? "执行被中断" : "agent 执行失败")));
+        String roundId = context.round().roundId();
+        boolean interrupted = context.sessionContext().state() == SessionState.INTERRUPTED;
+        log.error("Agent 事件流异常: sessionId={}, roundId={}, interrupted={}",
+                sessionId, roundId, interrupted, error);
+        finalizeFailedRound(context, interrupted,
+                blankToDefault(error.getMessage(), interrupted ? "执行被中断" : "agent 执行失败"));
+        completion.complete(null);
     }
 
     /**
      * 正常终态唯一入口（AGENT_END 提前 / onComplete 兜底共用）：
-     * {@link AgentRunState#tryFinalized()} 原子守卫保证只终态化一次。
+     * {@code RUNNING → DONE} 状态机 CAS 原子守卫保证只终态化一次，{@code stop_reason}
+     * 由 {@code exceedMaxIters} 派生（stop / max_iterations）。
      */
-    private void finalizeRoundAndComplete(ExecutionContext context, CompletableFuture<SendMessageResult> completion) {
-        AgentRunState runState = context.runState();
-        ExecutionRound round = context.round();
-        String stopReason = runState.stopReason(); // stop / max_iterations
-        if (runState.tryFinalized()) {
-            finalizeRound(context, RoundStatus.COMPLETED, runState.output(), stopReason,
+    private void finalizeRoundAndComplete(ExecutionContext context, CompletableFuture<Void> completion) {
+        AgentSessionContext sessionContext = context.sessionContext();
+        if (sessionContext.tryTransitionState(SessionState.DONE)) {
+            AgentRunState runState = context.runState();
+            String stopReason = runState.exceededMaxIters() ? STOP_REASON_MAX_ITERATIONS : STOP_REASON_STOP;
+            finalizeRound(context, SessionState.DONE.toRoundStatus(), runState.output(), stopReason,
                     List.of(new AssembledEvent(ChatEventType.RUN_END,
                             jsonOf(Map.of("stop_reason", stopReason)))));
+            sessionContext.transitionState(SessionState.IDLE);
         }
-        completion.complete(new SendMessageResult(round.roundId(), round.runId(), stopReason));
+        completion.complete(null);
     }
 
     /**
      * 兜底失败终态（agent 构建 / 注册 / 终态化回调抛出的异常路径）。
-     * <p>中断只可能发生在事件流启动<b>之后</b>（断连 / 终止移除在跑句柄）；事件流启动前
-     * 的失败（构建 / 注册）一律推导为执行错误，避免把系统故障误报为中断。</p>
+     * <p>事件流启动前的失败（构建 / 注册）一律推导为执行错误；事件流启动后的失败
+     * 依显式中断状态推导，避免把系统故障误报为中断。</p>
      *
-     * @param setupFailure 是否发生在事件流启动前（构建 / 注册失败 → error；已进入事件流 → 依在跑句柄推导）
+     * @param setupFailure 是否发生在事件流启动前（构建 / 注册失败 → error；已进入事件流 → 依中断状态推导）
      */
-    private SendMessageResult finalizeAsFailure(ExecutionContext context, Throwable ex, boolean setupFailure) {
-        AgentRunState runState = context.runState();
-        ExecutionRound round = context.round();
-        if (runState.isFinalized()) {
-            // 终于态已尝试（如终态化事务内部失败）：不再重复终态化，避免重复事件
-            return new SendMessageResult(round.roundId(), round.runId(), STOP_REASON_ERROR);
-        }
-        boolean interrupted = !setupFailure && !context.sessionContext().activeRun().isPresent();
-        return finalizeFailedRound(context, interrupted,
+    private void finalizeAsFailure(ExecutionContext context, Throwable ex, boolean setupFailure) {
+        boolean interrupted = !setupFailure
+                && context.sessionContext().state() == SessionState.INTERRUPTED;
+        finalizeFailedRound(context, interrupted,
                 blankToDefault(ex.getMessage(), interrupted ? "执行被中断" : "agent 执行失败"));
     }
 
     /**
      * 失败终态统一出口（onComplete 断连 / onError / 构建注册失败共用）：
      * round 置 FAILED + 双事件（RUN_ERROR / ERROR）经终态唯一出口落库 + 会话回 IDLE。
+     * <p>中断路径（{@code interrupted=true}）状态已由取消路径置为 {@code INTERRUPTED}；
+     * 错误路径经 {@code RUNNING → ERROR} 状态机 CAS 单赢家守卫。</p>
      *
      * @param interrupted 是否因中断退出（stop_reason=interrupted）而非执行错误（error）
-     * @return 本轮发送结果（含推导出的 stop_reason）
      */
-    private SendMessageResult finalizeFailedRound(ExecutionContext context, boolean interrupted, String message) {
+    private void finalizeFailedRound(ExecutionContext context, boolean interrupted, String message) {
+        AgentSessionContext sessionContext = context.sessionContext();
+        SessionState terminal = interrupted ? SessionState.INTERRUPTED : SessionState.ERROR;
+        if (interrupted) {
+            // 中断路径：状态已由 cancel 置为 INTERRUPTED；非此状态即已被其他路径终态化
+            if (sessionContext.state() != SessionState.INTERRUPTED) {
+                return;
+            }
+        } else if (!sessionContext.tryTransitionState(SessionState.ERROR)) {
+            // 错误路径：RUNNING → ERROR 单赢家守卫，失败即已有终态
+            return;
+        }
         String stopReason = interrupted ? STOP_REASON_INTERRUPTED : STOP_REASON_ERROR;
         String sanitized = PayloadSanitizer.sanitize(blankToDefault(message, "agent 执行失败"));
-        finalizeRound(context, RoundStatus.FAILED, "", stopReason,
+        finalizeRound(context, terminal.toRoundStatus(), "", stopReason,
                 List.of(new AssembledEvent(ChatEventType.RUN_ERROR,
                                 jsonOf(Map.of("stop_reason", stopReason, "message", sanitized))),
                         new AssembledEvent(ChatEventType.ERROR,
                                 jsonOf(Map.of("code", DEEP_AGENT_RUN_ERROR, "message", sanitized)))));
-        ExecutionRound round = context.round();
-        return new SendMessageResult(round.roundId(), round.runId(), stopReason);
+        sessionContext.transitionState(SessionState.IDLE);
     }
 
     /**
@@ -480,7 +542,6 @@ public class AgentRuntimeCommandService {
     private void finalizeRound(ExecutionContext context, RoundStatus finalStatus,
                                String finalOutput, String stopReason,
                                List<AssembledEvent> terminalEvents) {
-        AgentRunState runState = context.runState();
         ExecutionRound round = context.round();
         String sessionId = round.sessionId();
         String roundId = round.roundId();
@@ -503,7 +564,7 @@ public class AgentRuntimeCommandService {
                     sessionId);
             return;
         }
-        persistAndBroadcast(sessionId, roundId,
+        persistAndBroadcast(context, roundId,
                 new AssembledEvent(ChatEventType.SESSION_STATUS,
                         jsonOf(Map.of("status", AgentSessionStatus.IDLE.name(), "stop_reason", stopReason))),
                 context.nextSequence());
@@ -516,8 +577,9 @@ public class AgentRuntimeCommandService {
      * {@link AgentSessionContext#nextSequence()} 会话级计数器分配（DB 唯一索引兜底），
      * 落库失败记录 ERROR 但不中断事件流；广播失败记录 WARN（事件已落库可回放兜底）。
      */
-    private void persistAndBroadcast(String sessionId, String roundId, AssembledEvent assembled, long sequenceNum) {
-        broadcastQuietly(sessionId, saveQuietly(sessionId, roundId, assembled.type(), assembled.payloadJson(), sequenceNum));
+    private void persistAndBroadcast(ExecutionContext context, String roundId, AssembledEvent assembled, long sequenceNum) {
+        String sessionId = context.session().sessionId();
+        pushQuietly(context.sessionContext(), saveQuietly(sessionId, roundId, assembled.type(), assembled.payloadJson(), sequenceNum));
     }
 
     /** 尝试落库：失败记录 ERROR 并返回 null（不中断调用方，由断线重连回放兜底）。 */
@@ -530,15 +592,15 @@ public class AgentRuntimeCommandService {
         }
     }
 
-    /** 尝试 SSE 广播：先装配对外信封再广播，失败记录 WARN（事件已落库，客户端重连可回放）。 */
-    private void broadcastQuietly(String sessionId, ChatEvent event) {
+    /** 尝试向连接层推送：领域事件经连接句柄广播，协议转换在基础设施；失败记录 WARN（事件已落库可回放）。 */
+    private void pushQuietly(AgentSessionContext sessionContext, ChatEvent event) {
         if (event == null) {
             return;
         }
         try {
-            eventBroadcaster.broadcast(sessionId, sseEventEnvelopeAssembler.toEnvelope(event));
+            sessionContext.connection().push(event);
         } catch (RuntimeException ex) {
-            log.warn("SSE 广播失败: sessionId={}, eventType={}", sessionId, event.eventType(), ex);
+            log.warn("SSE 广播失败: sessionId={}, eventType={}", event.sessionId(), event.eventType(), ex);
         }
     }
 
@@ -566,14 +628,6 @@ public class AgentRuntimeCommandService {
     private AgentSession requireSession(String sessionId) {
         return sessionRepository.findBySessionId(sessionId)
                 .orElseThrow(() -> new DeepDataAgentException(DEEP_AGENT_SESSION_NOT_FOUND + ": 会话不存在"));
-    }
-
-    /**
-     * 按 ID 校验轮次存在，不存在时抛业务异常（轮次相关用例的统一前置校验）。
-     */
-    private void requireRound(String roundId) {
-        roundRepository.findByRoundId(roundId)
-                .orElseThrow(() -> new DeepDataAgentException("DEEP_AGENT_ROUND_NOT_FOUND: 轮次不存在"));
     }
 
     /**
@@ -609,16 +663,6 @@ public class AgentRuntimeCommandService {
     /** 当前时间（全链路统一 Asia/Shanghai 时区）。 */
     private static OffsetDateTime now() {
         return OffsetDateTime.now(ZoneId.of("Asia/Shanghai"));
-    }
-
-    /**
-     * 消息发送结果。
-     *
-     * @param roundId    本轮轮次 ID
-     * @param runId      本轮 run ID（OpenAPI 层语义）
-     * @param stopReason 停止原因（stop / max_iterations / error / interrupted）
-     */
-    public record SendMessageResult(String roundId, String runId, String stopReason) {
     }
 
     /**

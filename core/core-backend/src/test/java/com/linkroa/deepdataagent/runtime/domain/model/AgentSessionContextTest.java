@@ -1,6 +1,6 @@
 package com.linkroa.deepdataagent.runtime.domain.model;
 
-import com.linkroa.deepdataagent.runtime.domain.factory.BuiltAgent;
+import com.linkroa.deepdataagent.runtime.domain.model.enums.SessionState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -8,15 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /**
  * {@link AgentSessionContext} 会话级聚合（逻辑线程组）单测：
- * 跨轮序列号单调递增、在跑执行串行守卫与断连中断幂等、每轮状态替换。
+ * 身份层、事件序号层、状态层状态机、连接层绑定与执行层取消收口。
  */
 class AgentSessionContextTest {
 
@@ -27,6 +27,8 @@ class AgentSessionContextTest {
         context = new AgentSessionContext(AgentSession.create("u-1", "agent-a", "1.0.0", "{}", null));
     }
 
+    // ==================== 身份层 ====================
+
     @Test
     void should_keepSessionAndId_when_sessionId_given_createdContext() {
         // when & then（身份层：镜像与聚合键）
@@ -34,8 +36,10 @@ class AgentSessionContextTest {
         assertEquals(context.session().sessionId(), context.sessionId());
     }
 
+    // ==================== 事件序号层 ====================
+
     @Test
-    void should_incrementSequenceFromDbMax_when_nextSequence_given_dbdMaxBaseline() {
+    void should_incrementSequenceFromDbMax_when_nextSequence_given_dbMaxBaseline() {
         // given（首轮以 DB 最大序号为基准）
         context.beginRound(5);
 
@@ -49,7 +53,7 @@ class AgentSessionContextTest {
     }
 
     @Test
-    void should_keepMonotonicAcrossRounds_when_nextSequence_given_dbdMaxLowerThanCounter() {
+    void should_keepMonotonicAcrossRounds_when_nextSequence_given_dbMaxLowerThanCounter() {
         // given（首轮已分配到 9，事件落库滞后于内存分配）
         context.beginRound(5);
         for (int i = 0; i < 4; i++) {
@@ -79,93 +83,95 @@ class AgentSessionContextTest {
         assertEquals("", second.output());
     }
 
+    // ==================== 状态层 ====================
+
     @Test
-    void should_registerActiveRun_when_registerActiveRun_given_noActiveRun() {
-        // given（无在跑执行）
+    void should_transitionToRunning_when_transitionState_given_idle() {
+        // when
+        context.transitionState(SessionState.RUNNING);
+
+        // then
+        assertEquals(SessionState.RUNNING, context.state());
+    }
+
+    @Test
+    void should_throwOnIllegalTransition_when_transitionState_given_idleToDone() {
+        // when & then（非法迁移抛异常）
+        assertThrows(IllegalStateException.class, () -> context.transitionState(SessionState.DONE));
+    }
+
+    @Test
+    void should_fallBackToIdle_when_transitionState_given_terminal() {
+        // given（进入瞬态终态）
+        context.transitionState(SessionState.RUNNING);
+        context.transitionState(SessionState.DONE);
+
+        // when（一轮结束回落 IDLE）
+        context.transitionState(SessionState.IDLE);
+
+        // then
+        assertEquals(SessionState.IDLE, context.state());
+    }
+
+    @Test
+    void should_returnFalse_when_tryTransitionState_given_illegalTransition() {
+        // when & then（tryTransition 对非法迁移返回 false 而非抛异常）
+        assertFalse(context.tryTransitionState(SessionState.DONE));
+        assertEquals(SessionState.IDLE, context.state());
+    }
+
+    @Test
+    void should_markInterrupted_when_cancel_given_running() {
+        // given
+        context.transitionState(SessionState.RUNNING);
+
+        // when（断连 / 终止收口：执行取消 + 显式中断标记）
+        context.cancel();
+
+        // then
+        assertEquals(SessionState.INTERRUPTED, context.state());
+    }
+
+    // ==================== 连接层 ====================
+
+    @Test
+    void should_defaultNoOpConnection_when_connection_given_newContext() {
+        // when & then（默认 NoOp 句柄，无连接不产生副作用）
+        assertEquals(NoOpConnectionHandle.INSTANCE, context.connection());
+        assertFalse(context.connection().isActive());
+    }
+
+    @Test
+    void should_bindConnection_when_bindConnection_given_handle() {
+        // given
+        ConnectionHandle handle = mock(ConnectionHandle.class);
 
         // when
-        boolean registered = context.registerActiveRun("r-1", mock(BuiltAgent.class));
+        context.bindConnection(handle);
 
-        // then（执行层：首次注册成功且可查询）
-        assertTrue(registered);
-        assertTrue(context.activeRun().isPresent());
-        assertEquals("r-1", context.activeRun().orElseThrow().roundId());
+        // then
+        assertEquals(handle, context.connection());
     }
 
     @Test
-    void should_rejectSecondRun_when_registerActiveRun_given_activeRunExists() {
-        // given（首轮已注册在跑）
-        context.registerActiveRun("r-1", mock(BuiltAgent.class));
-
-        // when
-        boolean second = context.registerActiveRun("r-2", mock(BuiltAgent.class));
-
-        // then（进程内串行守卫：同会话仅一个在跑执行，与 DB 单飞 CAS 互为双保险）
-        assertFalse(second);
-        assertEquals("r-1", context.activeRun().orElseThrow().roundId());
-    }
-
-    @Test
-    void should_removeWithoutInterrupt_when_clearActiveRun_given_registeredRun() {
+    void should_closeOldConnection_when_bindConnection_given_newHandle() {
         // given
-        BuiltAgent agent = mock(BuiltAgent.class);
-        context.registerActiveRun("r-1", agent);
+        ConnectionHandle old = mock(ConnectionHandle.class);
+        context.bindConnection(old);
+        ConnectionHandle next = mock(ConnectionHandle.class);
 
-        // when
-        context.clearActiveRun();
+        // when（原子替换时释放旧句柄，默认 NoOp 句柄不释放）
+        context.bindConnection(next);
 
-        // then（正常完成：仅清除注册，不触发 agent 中断）
-        assertFalse(context.activeRun().isPresent());
-        verify(agent, never()).interrupt();
+        // then
+        assertEquals(next, context.connection());
+        verify(old).close();
+        verify(next, never()).close();
     }
 
     @Test
-    void should_interruptAgent_when_interruptActiveRun_given_registeredRun() {
-        // given
-        BuiltAgent agent = mock(BuiltAgent.class);
-        context.registerActiveRun("r-1", agent);
-
-        // when
-        context.interruptActiveRun();
-
-        // then（断连/终止：清除注册并幂等中断 agent）
-        assertFalse(context.activeRun().isPresent());
-        verify(agent).interrupt();
-    }
-
-    @Test
-    void should_tolerateMissingRun_when_interruptActiveRun_given_noActiveRun() {
-        // given（空闲会话无在跑执行）
-
-        // when & then（幂等：无在跑执行时空操作不抛异常）
-        context.interruptActiveRun();
-        assertFalse(context.activeRun().isPresent());
-    }
-
-    @Test
-    void should_swallowInterruptException_when_interruptActiveRun_given_throwingAgent() {
-        // given
-        BuiltAgent agent = mock(BuiltAgent.class);
-        doThrow(new RuntimeException("interrupt 失败")).when(agent).interrupt();
-        context.registerActiveRun("r-1", agent);
-
-        // when & then（底层异常被隔离，注册状态已清理）
-        context.interruptActiveRun();
-        assertFalse(context.activeRun().isPresent());
-    }
-
-    @Test
-    void should_clearActiveRunAfterInterrupt_when_interruptActiveRun_given_twice() {
-        // given
-        BuiltAgent agent = mock(BuiltAgent.class);
-        context.registerActiveRun("r-1", agent);
-
-        // when（重复中断：第二次为空操作）
-        context.interruptActiveRun();
-        context.interruptActiveRun();
-
-        // then（中断幂等：agent 仅触发一次）
-        verify(agent).interrupt();
-        assertFalse(context.activeRun().isPresent());
+    void should_rejectNull_when_bindConnection_given_nullHandle() {
+        // when & then
+        assertThrows(IllegalArgumentException.class, () -> context.bindConnection(null));
     }
 }

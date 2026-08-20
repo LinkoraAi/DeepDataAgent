@@ -5,12 +5,14 @@ import com.linkroa.deepdataagent.agent.application.command.PublishAgentVersionCo
 import com.linkroa.deepdataagent.agent.application.query.ListAgentQuery;
 import com.linkroa.deepdataagent.agent.application.validation.AgentValidator;
 import com.linkroa.deepdataagent.agent.application.validation.ModelProfileValidator;
+import com.linkroa.deepdataagent.agent.application.validation.SkillMountValidator;
 import com.linkroa.deepdataagent.agent.domain.model.AgentDefinition;
 import com.linkroa.deepdataagent.agent.domain.model.AgentVersion;
 import com.linkroa.deepdataagent.agent.domain.model.ModelProfile;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentDefinitionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentVersionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.ModelProfileRepository;
+import com.linkroa.deepdataagent.agent.domain.repository.SkillRepository;
 import com.linkroa.deepdataagent.agent.domain.service.AgentVersionDomainService;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
@@ -34,6 +36,8 @@ public class AgentApplicationService {
     @Resource
     private ModelProfileRepository modelProfileRepository;
     @Resource
+    private SkillRepository skillRepository;
+    @Resource
     private AgentVersionDomainService versionDomainService;
     @Resource
     private TransactionTemplate transactionTemplate;
@@ -50,6 +54,8 @@ public class AgentApplicationService {
                 });
         // 引用的模型配置须存在且为 ENABLED
         ModelProfile profile = resolveReferableProfile(command.modelProfileId());
+        // 挂载的技能引用（skillId + version）须存在
+        SkillMountValidator.validateReferable(command.skillIds(), skillRepository);
 
         String agentId = UUID.randomUUID().toString();
         return transactionTemplate.execute(status -> {
@@ -68,6 +74,8 @@ public class AgentApplicationService {
     public AgentVersion publishVersion(PublishAgentVersionCommand command) {
         // 引用的模型配置须存在且为 ENABLED
         ModelProfile profile = resolveReferableProfile(command.modelProfileId());
+        // 挂载的技能引用（skillId + version）须存在
+        SkillMountValidator.validateReferable(command.skillIds(), skillRepository);
 
         return transactionTemplate.execute(status -> {
             AgentDefinition definition = agentDefinitionRepository.findByAgentIdForUpdate(command.agentId())

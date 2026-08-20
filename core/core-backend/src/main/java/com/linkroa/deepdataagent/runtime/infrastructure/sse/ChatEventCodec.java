@@ -42,11 +42,15 @@ public final class ChatEventCodec {
     }
 
     /**
-     * 转换为 SSE 事件构造器（event name + data）。
+     * 转换为 SSE 事件构造器（event name + id + data）。
+     * <p>对齐 Managed Agents：{@code event} 恒为 {@code message}（具体事件类型由
+     * {@code data.type} 区分）；{@code id} 取 {@code data.sequence_number} 作为断点游标，
+     * 供 SSE 客户端断线重连时经 {@code Last-Event-ID} 请求头回传续推。</p>
      */
     public static SseEmitter.SseEventBuilder toSseEvent(SseEventEnvelope envelope) {
         return SseEmitter.event()
-                .name(envelope.type())
+                .name("message")
+                .id(String.valueOf(envelope.sequence_number()))
                 .data(toJson(envelope));
     }
 

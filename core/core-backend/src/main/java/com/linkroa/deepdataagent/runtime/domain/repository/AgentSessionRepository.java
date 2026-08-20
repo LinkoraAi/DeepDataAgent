@@ -37,7 +37,7 @@ public interface AgentSessionRepository {
     long countByUserId(String userId);
 
     /**
-     * 单飞原子 CAS：仅当会话处于 IDLE 时置为 RUNNING（TERMINATED 不可复活）。
+     * 抢占执行权的原子 CAS：仅当会话处于 IDLE 时置为 RUNNING（保证同一会话同时只有一个执行；TERMINATED 不可复活）。
      *
      * @param sessionId 会话 ID
      * @return true 表示 CAS 成功（本次可执行），false 表示会话正忙或已终止
@@ -56,6 +56,15 @@ public interface AgentSessionRepository {
      * 更新会话状态（终止等）。
      */
     void updateStatus(String sessionId, AgentSessionStatus status);
+
+    /**
+     * 更新会话标题与元数据（对齐 Managed Agents 更新会话，仅改 title/metadata）。
+     *
+     * @param sessionId 会话 ID
+     * @param title     会话标题（可空）
+     * @param metadata  扩展元数据（JSON 文本）
+     */
+    void updateMeta(String sessionId, String title, String metadata);
 
     /**
      * 查询当前 RUNNING 的会话（启动恢复用）。

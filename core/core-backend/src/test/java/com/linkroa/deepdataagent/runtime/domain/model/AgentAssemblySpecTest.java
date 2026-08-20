@@ -2,11 +2,10 @@ package com.linkroa.deepdataagent.runtime.domain.model;
 
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link AgentAssemblySpec}（含 {@link AgentAssemblySpec.Sandbox}）不变量单测。
@@ -20,44 +19,16 @@ class AgentAssemblySpecTest {
 
         // when
         AgentAssemblySpec spec = new AgentAssemblySpec(
-                "agent-a", "数据分析Agent", "描述", "dashscope:qwen-plus", "你是助手",
-                List.of("query_datasource", "execute_sql"), 20, sandbox);
+                "agent-a", "数据分析Agent", "dashscope:qwen-plus", "你是助手",
+                20, sandbox, "sk-cred", "https://api.example.com/v1", null, null);
 
         // then
         assertEquals("agent-a", spec.agentId());
         assertEquals("dashscope:qwen-plus", spec.model());
         assertEquals(20, spec.maxIters());
         assertEquals("ubuntu:22.04", spec.sandbox().image());
-        assertEquals(2, spec.toolNames().size());
-    }
-
-    @Test
-    void should_throw_when_construct_given_nullToolNames() {
-        // given（工具名集合缺失，规格构造拒绝，不做静默降级）
-        AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("ubuntu:22.04", null, null);
-
-        // when & then
-        assertThrows(IllegalArgumentException.class,
-                () -> new AgentAssemblySpec(
-                        "agent-a", "数据分析Agent", "描述", "dashscope:qwen-plus", "你是助手",
-                        null, 20, sandbox));
-    }
-
-    @Test
-    void should_copyTools_when_construct_given_mutableToolNames() {
-        // given
-        List<String> mutable = new java.util.ArrayList<>(List.of("tool-a"));
-        AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("ubuntu:22.04", null, null);
-
-        // when
-        AgentAssemblySpec spec = new AgentAssemblySpec(
-                "agent-a", "数据分析Agent", "描述", "dashscope:qwen-plus", "你是助手",
-                mutable, 20, sandbox);
-        mutable.add("tool-b");
-
-        // then
-        assertEquals(List.of("tool-a"), spec.toolNames());
-        assertNotSame(mutable, spec.toolNames());
+        assertEquals("sk-cred", spec.credential());
+        assertEquals("https://api.example.com/v1", spec.apiEndpointUrl());
     }
 
     @Test
@@ -67,8 +38,8 @@ class AgentAssemblySpecTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> new AgentAssemblySpec("", "数据分析Agent", "描述", "dashscope:qwen-plus",
-                        "你是助手", List.of(), 20, sandbox));
+                () -> new AgentAssemblySpec("", "数据分析Agent", "dashscope:qwen-plus",
+                        "你是助手", 20, sandbox, null, null, null, null));
     }
 
     @Test
@@ -78,8 +49,8 @@ class AgentAssemblySpecTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> new AgentAssemblySpec("agent-a", " ", "描述", "dashscope:qwen-plus",
-                        "你是助手", List.of(), 20, sandbox));
+                () -> new AgentAssemblySpec("agent-a", " ", "dashscope:qwen-plus",
+                        "你是助手", 20, sandbox, null, null, null, null));
     }
 
     @Test
@@ -89,8 +60,8 @@ class AgentAssemblySpecTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> new AgentAssemblySpec("agent-a", "n".repeat(129), "描述", "dashscope:qwen-plus",
-                        "你是助手", List.of(), 20, sandbox));
+                () -> new AgentAssemblySpec("agent-a", "n".repeat(129), "dashscope:qwen-plus",
+                        "你是助手", 20, sandbox, null, null, null, null));
     }
 
     @Test
@@ -100,8 +71,8 @@ class AgentAssemblySpecTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> new AgentAssemblySpec("agent-a", "数据分析Agent", "描述", " ",
-                        "你是助手", List.of(), 20, sandbox));
+                () -> new AgentAssemblySpec("agent-a", "数据分析Agent", " ",
+                        "你是助手", 20, sandbox, null, null, null, null));
     }
 
     @Test
@@ -111,8 +82,8 @@ class AgentAssemblySpecTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> new AgentAssemblySpec("agent-a", "数据分析Agent", "描述", "dashscope:qwen-plus",
-                        "你是助手", List.of(), 0, sandbox));
+                () -> new AgentAssemblySpec("agent-a", "数据分析Agent", "dashscope:qwen-plus",
+                        "你是助手", 0, sandbox, null, null, null, null));
     }
 
     @Test
@@ -134,5 +105,21 @@ class AgentAssemblySpecTest {
         // when & then
         assertThrows(IllegalArgumentException.class,
                 () -> AgentAssemblySpec.Sandbox.of(" ", 8L, 2L));
+    }
+
+    @Test
+    void should_maskCredential_when_toString_given_plainCredential() {
+        // given（明文凭证不得随 toString 泄露）
+        AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("ubuntu:22.04", null, null);
+        AgentAssemblySpec spec = new AgentAssemblySpec(
+                "agent-a", "数据分析Agent", "dashscope:qwen-plus", "你是助手",
+                20, sandbox, "sk-plain-secret", "https://api.example.com/v1", null, null);
+
+        // when
+        String text = spec.toString();
+
+        // then
+        assertFalse(text.contains("sk-plain-secret"));
+        assertTrue(text.contains("sk-p****"));
     }
 }

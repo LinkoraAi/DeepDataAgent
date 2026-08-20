@@ -4,11 +4,16 @@ import com.linkroa.deepdataagent.agent.application.contract.ResolvedAgentAssembl
 import com.linkroa.deepdataagent.agent.domain.model.AgentDefinition;
 import com.linkroa.deepdataagent.agent.domain.model.AgentVersion;
 import com.linkroa.deepdataagent.agent.domain.model.ModelProfile;
+import com.linkroa.deepdataagent.agent.domain.model.SkillResource;
 import com.linkroa.deepdataagent.agent.domain.model.enums.ApiFormat;
 import com.linkroa.deepdataagent.agent.domain.model.enums.ModelType;
+import com.linkroa.deepdataagent.agent.domain.model.enums.SkillStorageType;
+import com.linkroa.deepdataagent.agent.domain.model.enums.SkillType;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentDefinitionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentVersionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.ModelProfileRepository;
+import com.linkroa.deepdataagent.agent.domain.repository.SkillContentStore;
+import com.linkroa.deepdataagent.agent.domain.repository.SkillRepository;
 import com.linkroa.deepdataagent.agent.infrastructure.util.ModelCredentialEncryptionUtil;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,6 +23,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.Optional;
@@ -40,6 +46,8 @@ class DefaultAgentVersionAssemblyPortTest {
     @Mock private AgentDefinitionRepository agentDefinitionRepository;
     @Mock private AgentVersionRepository agentVersionRepository;
     @Mock private ModelProfileRepository modelProfileRepository;
+    @Mock private SkillRepository skillRepository;
+    @Mock private SkillContentStore skillContentStore;
     @Mock private ModelCredentialEncryptionUtil credentialEncryptionUtil;
 
     private DefaultAgentVersionAssemblyPort port;
@@ -50,6 +58,8 @@ class DefaultAgentVersionAssemblyPortTest {
         ReflectionTestUtils.setField(port, "agentDefinitionRepository", agentDefinitionRepository);
         ReflectionTestUtils.setField(port, "agentVersionRepository", agentVersionRepository);
         ReflectionTestUtils.setField(port, "modelProfileRepository", modelProfileRepository);
+        ReflectionTestUtils.setField(port, "skillRepository", skillRepository);
+        ReflectionTestUtils.setField(port, "skillContentStore", skillContentStore);
         ReflectionTestUtils.setField(port, "credentialEncryptionUtil", credentialEncryptionUtil);
     }
 
@@ -75,6 +85,38 @@ class DefaultAgentVersionAssemblyPortTest {
         assertEquals(10, resolved.maxIters());
         assertEquals("sk-plain", resolved.credential());
         assertEquals("https://api.example.com/v1", resolved.apiEndpointUrl());
+        assertEquals(0, resolved.skills().size());
+        assertEquals(0, resolved.dataSourceIds().size());
+    }
+
+    @Test
+    void should_resolveSkills_when_resolve_given_versionWithMountedSkills() {
+        // given（版本挂载技能引用，解析为技能包原始字节出版）
+        stubDefinition(false);
+        AgentVersion versionRow = AgentVersion.restore(
+                1L, "v-id-1", "agent-a", 1, "v1", null, "",
+                "p-1", "[{\"skillId\":\"s-1\",\"version\":3}]", null, null,
+                OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
+                OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
+        when(agentVersionRepository.findByAgentIdAndVersionNumber("agent-a", 1))
+                .thenReturn(Optional.of(versionRow));
+        when(modelProfileRepository.findByProfileId("p-1"))
+                .thenReturn(Optional.of(profile(ApiFormat.OPENAI, "gpt-4", "enc-cred")));
+        when(credentialEncryptionUtil.decrypt("enc-cred")).thenReturn("sk-plain");
+        SkillResource resource = SkillResource.create("s-1", 3, "code-reviewer", "代码评审",
+                SkillType.CUSTOM, SkillStorageType.LOCAL_FILE, "s1-v3.zip",
+                "0".repeat(64), 32L);
+        when(skillRepository.findBySkillIdAndVersion("s-1", 3)).thenReturn(Optional.of(resource));
+        when(skillContentStore.get("s1-v3.zip")).thenReturn("zip-bytes".getBytes(StandardCharsets.UTF_8));
+
+        // when
+        ResolvedAgentAssemblyDTO resolved = port.resolve("agent-a", "1");
+
+        // then
+        assertEquals(1, resolved.skills().size());
+        assertEquals("s-1", resolved.skills().get(0).skillId());
+        assertEquals(3, resolved.skills().get(0).versionNumber());
+        assertEquals("code-reviewer", resolved.skills().get(0).name());
     }
 
     @Test

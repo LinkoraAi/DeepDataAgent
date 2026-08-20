@@ -1,22 +1,18 @@
 package com.linkroa.deepdataagent.runtime.controller.rest;
 
 import com.linkroa.deepdataagent.runtime.application.assembler.AgentRuntimeCommandAssembler;
-import com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler;
-import com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope;
 import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeCommandService;
 import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeQueryService;
+import com.linkroa.deepdataagent.runtime.application.service.RuntimeAgentAssemblyResolver;
 import com.linkroa.deepdataagent.runtime.controller.request.CreateSessionRequest;
+import com.linkroa.deepdataagent.runtime.controller.request.UpdateSessionRequest;
 import com.linkroa.deepdataagent.runtime.controller.response.AgentRuntimeResponseMapper;
-import com.linkroa.deepdataagent.runtime.controller.response.RoundResponse;
-import com.linkroa.deepdataagent.runtime.controller.response.RunTraceResponse;
+import com.linkroa.deepdataagent.runtime.controller.response.SessionDeletedResponse;
+import com.linkroa.deepdataagent.runtime.controller.response.SessionListResponse;
 import com.linkroa.deepdataagent.runtime.controller.response.SessionResponse;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
-import com.linkroa.deepdataagent.runtime.domain.model.ExecutionRound;
-import com.linkroa.deepdataagent.runtime.domain.model.RunTrace;
-import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.shared.constant.api.ApiVersionConstants;
 import com.linkroa.deepdataagent.shared.result.ApiResponse;
-import com.linkroa.deepdataagent.shared.result.PaginatedResponse;
 import jakarta.annotation.Resource;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -27,16 +23,21 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 
 /**
- * Agent 会话管理 REST 控制器（统一前缀 {@code /api/v1/agent/sessions}，v1 版本）。
- * <p>会话生命周期（创建 / 查询 / 分页 / 终止）+ 轮次与事件回放 + 链路追踪查询。</p>
+ * Agent 会话管理 REST 控制器（前缀 {@code /api/v1/agent/sessions}，对齐 Managed Agents Session 接口）。
+ * <p>会话身份字段 userId 对外隐藏、内部以默认身份保留；{@code agent_id / statuses[]} 过滤与
+ * cursor 分页游标物化留待后续，当前列表采用 limit/page 近似对齐。</p>
  */
 @RestController
 @RequestMapping(path = "/agent/sessions", version = ApiVersionConstants.CURRENT_API_VERSION)
 public class AgentSessionController {
+
+    /** 对外隐藏的真实业务身份占位（后续接入 workspace 鉴权后替换）。 */
+    private static final String DEFAULT_USER_ID = "demo-user";
 
     @Resource
     private AgentRuntimeCommandService commandService;
@@ -47,87 +48,101 @@ public class AgentSessionController {
     @Resource
     private AgentRuntimeCommandAssembler commandAssembler;
     @Resource
-    private SseEventEnvelopeAssembler sseEventEnvelopeAssembler;
+    private RuntimeAgentAssemblyResolver runtimeAgentAssemblyResolver;
+    @Resource
+    private ObjectMapper objectMapper;
 
     /**
-     * 创建会话。
+     * 创建会话（对齐 {@code POST /sessions}）：绑定 agent 最新版本快照与运行环境。
      */
     @PostMapping
     public ApiResponse<SessionResponse> createSession(@Valid @RequestBody CreateSessionRequest request) {
-        AgentSession session = commandService.createSession(commandAssembler.toCreateCommand(request));
+        // 对齐 Managed Agents：创建仅传 agent，服务端锁定其最新发布号
+        String agentVersion = runtimeAgentAssemblyResolver.latestVersionNumber(request.agent());
+        AgentSession session = commandService.createSession(
+                commandAssembler.toCreateCommand(DEFAULT_USER_ID, request, agentVersion, toJson(request.metadata())));
         return ApiResponse.success(responseMapper.toSessionResponse(session));
     }
 
     /**
-     * 分页查询会话列表。
-     */
-    @GetMapping
-    public ApiResponse<PaginatedResponse<SessionResponse>> listSessions(
-            @RequestParam String userId,
-            @RequestParam(required = false) Integer page,
-            @RequestParam(required = false) Integer size
-    ) {
-        AgentRuntimeQueryService.PaginatedResult<AgentSession> result =
-                queryService.listSessions(commandAssembler.toListQuery(userId, page, size));
-        List<SessionResponse> responses = result.data().stream()
-                .map(responseMapper::toSessionResponse)
-                .toList();
-        return ApiResponse.success(new PaginatedResponse<>(responses, result.total(), result.page(), result.size()));
-    }
-
-    /**
-     * 会话详情。
+     * 会话详情（对齐 {@code GET /sessions/{session_id}}）。
      */
     @GetMapping("/{sessionId}")
     public ApiResponse<SessionResponse> getSession(@PathVariable String sessionId) {
-        AgentSession session = queryService.getSession(sessionId);
+        return ApiResponse.success(responseMapper.toSessionResponse(queryService.getSession(sessionId)));
+    }
+
+    /**
+     * 分页列出会话（对齐 {@code GET /sessions}）。
+     */
+    @GetMapping
+    public ApiResponse<SessionListResponse> listSessions(
+            @RequestParam(name = "agent_id", required = false) String agentId,
+            @RequestParam(name = "statuses[]", required = false) List<String> statuses,
+            @RequestParam(name = "limit", required = false) Integer limit,
+            @RequestParam(name = "page", required = false) String page
+    ) {
+        int pageNum = parsePage(page);
+        AgentRuntimeQueryService.PaginatedResult<AgentSession> result =
+                queryService.listSessions(commandAssembler.toListQuery(DEFAULT_USER_ID, limit, pageNum));
+        List<SessionResponse> data = result.data().stream()
+                .map(responseMapper::toSessionResponse)
+                .toList();
+        int totalPages = (int) Math.ceil((double) result.total() / Math.max(result.size(), 1));
+        String nextPage = pageNum < totalPages ? String.valueOf(pageNum + 1) : null;
+        return ApiResponse.success(new SessionListResponse(data, nextPage));
+    }
+
+    /**
+     * 更新会话（对齐 {@code POST /sessions/{session_id}}，仅 title/metadata）。
+     */
+    @PostMapping("/{sessionId}")
+    public ApiResponse<SessionResponse> updateSession(@PathVariable String sessionId,
+                                                      @Valid @RequestBody UpdateSessionRequest request) {
+        AgentSession session = commandService.updateSession(sessionId, request.title(), toJson(request.metadata()));
         return ApiResponse.success(responseMapper.toSessionResponse(session));
     }
 
     /**
-     * 终止会话。
+     * 归档会话（对齐 {@code POST /sessions/{session_id}/archive}）：置 terminated 终态。
+     * <p>{@code archived_at} 尚未落库，当前以 terminated 状态表达归档语义，归档时间后续补充。</p>
+     */
+    @PostMapping("/{sessionId}/archive")
+    public ApiResponse<SessionResponse> archiveSession(@PathVariable String sessionId) {
+        commandService.terminateSession(commandAssembler.toTerminateCommand(sessionId));
+        return ApiResponse.success(responseMapper.toSessionResponse(queryService.getSession(sessionId)));
+    }
+
+    /**
+     * 删除会话（对齐 {@code DELETE /sessions/{session_id}}）。
      */
     @DeleteMapping("/{sessionId}")
-    public ApiResponse<String> terminateSession(@PathVariable String sessionId) {
+    public ApiResponse<SessionDeletedResponse> deleteSession(@PathVariable String sessionId) {
         commandService.terminateSession(commandAssembler.toTerminateCommand(sessionId));
-        return ApiResponse.success("会话已终止");
+        return ApiResponse.success(new SessionDeletedResponse(sessionId, "session_deleted"));
     }
 
-    /**
-     * 会话内轮次列表。
-     */
-    @GetMapping("/{sessionId}/rounds")
-    public ApiResponse<List<RoundResponse>> listRounds(@PathVariable String sessionId) {
-        List<ExecutionRound> rounds = queryService.listRounds(sessionId);
-        List<RoundResponse> responses = rounds.stream()
-                .map(responseMapper::toRoundResponse)
-                .toList();
-        return ApiResponse.success(responses);
+    /** 解析 offset 页码（cursor 化留待后续）。 */
+    private int parsePage(String page) {
+        if (page == null || page.isBlank()) {
+            return 1;
+        }
+        try {
+            return Math.max(Integer.parseInt(page.trim()), 1);
+        } catch (NumberFormatException ex) {
+            return 1;
+        }
     }
 
-    /**
-     * 单轮事件回放。
-     */
-    @GetMapping("/{sessionId}/rounds/{roundId}/events")
-    public ApiResponse<List<SseEventEnvelope>> roundEvents(@PathVariable String sessionId,
-                                                           @PathVariable String roundId) {
-        List<ChatEvent> events = queryService.roundEvents(roundId);
-        List<SseEventEnvelope> responses = events.stream()
-                .map(sseEventEnvelopeAssembler::toEnvelope)
-                .toList();
-        return ApiResponse.success(responses);
-    }
-
-    /**
-     * 轮次链路追踪（span 树）。
-     */
-    @GetMapping("/{sessionId}/rounds/{roundId}/trace")
-    public ApiResponse<List<RunTraceResponse>> trace(@PathVariable String sessionId,
-                                                     @PathVariable String roundId) {
-        List<RunTrace> traces = queryService.getTrace(roundId);
-        List<RunTraceResponse> responses = traces.stream()
-                .map(responseMapper::toRunTraceResponse)
-                .toList();
-        return ApiResponse.success(responses);
+    /** 对象 → JSON 文本（metadata 对象序列化为领域 String）。 */
+    private String toJson(Object value) {
+        if (value == null) {
+            return "{}";
+        }
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception ex) {
+            return "{}";
+        }
     }
 }

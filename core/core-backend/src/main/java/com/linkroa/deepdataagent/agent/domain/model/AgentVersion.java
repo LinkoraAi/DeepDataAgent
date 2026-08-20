@@ -22,7 +22,7 @@ import java.util.List;
  * @param modelProfileId   引用模型配置 profile_id
  * @param skillIds          挂载的技能（[{skillId, version}]，版本锁定，仅存引用）
  * @param knowledgeBaseIds  预留知识库引用
- * @param dataSourceIds     数据源引用（关联 datasource 域 connection_id）
+ * @param dataSourceIds     数据源引用（[数据源 id 数字数组]，关联 datasource 域 id）
  * @param createdAt         创建时间
  * @param updatedAt         更新时间
  * @param createdBy         创建人
@@ -134,6 +134,13 @@ public record AgentVersion(
      * 解析挂载的技能引用列表（[{skillId, version}]）
      */
     public List<SkillRef> parseSkillRefs() {
+        return parseSkillRefs(skillIds);
+    }
+
+    /**
+     * 静态解析挂载技能引用（供发布流程存在性校验复用，等价于 {@link #parseSkillRefs()}）
+     */
+    public static List<SkillRef> parseSkillRefs(String skillIds) {
         if (StringUtils.isBlank(skillIds)) {
             return List.of();
         }
@@ -142,6 +149,28 @@ public record AgentVersion(
             });
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("技能引用JSON解析失败", e);
+        }
+    }
+
+    /**
+     * 解析数据源引用列表（[数据源 id 数字数组]，供运行时按引用自动装配数据源查询工具）
+     */
+    public List<Long> parseDatasourceIds() {
+        return parseDatasourceIds(dataSourceIds);
+    }
+
+    /**
+     * 静态解析数据源引用列表（供发布语言出版复用，等价于 {@link #parseDatasourceIds()}）
+     */
+    public static List<Long> parseDatasourceIds(String dataSourceIds) {
+        if (StringUtils.isBlank(dataSourceIds)) {
+            return List.of();
+        }
+        try {
+            return OBJECT_MAPPER.readValue(dataSourceIds, new TypeReference<List<Long>>() {
+            });
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("数据源引用JSON解析失败", e);
         }
     }
 

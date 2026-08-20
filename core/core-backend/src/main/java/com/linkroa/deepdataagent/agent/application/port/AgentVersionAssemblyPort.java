@@ -29,4 +29,14 @@ public interface AgentVersionAssemblyPort {
      * @param versionNumber 发布号十进制字符串（如 "1"）
      */
     void assertResolvable(String agentId, String versionNumber);
+
+    /**
+     * 解析 Agent 当前最新发布号（十进制字符串，如 "1"）。
+     * <p>会话创建仅绑定 {@code agent} 时用于锁定最新版本快照（对齐 Managed Agents，
+     * 创建时不传版本号）；Agent 不存在 / 已归档 / 尚未发布版本 → 404。</p>
+     *
+     * @param agentId Agent 业务 ID
+     * @return 最新发布号（十进制字符串）
+     */
+    String latestVersionNumber(String agentId);
 }

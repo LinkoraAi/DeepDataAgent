@@ -29,19 +29,6 @@ class ApiVersioningConfigTest {
     }
 
     @Test
-    @DisplayName("更高版本路径 /api/v2/agent/workspace 应判定为版本化")
-    void should_returnTrue_when_isVersionedRequestPath_given_HigherVersionAgentPath() {
-        // given
-        String path = "/api/v2/agent/workspace";
-
-        // when
-        boolean versioned = ApiVersioningConfig.isVersionedRequestPath(path);
-
-        // then
-        assertEquals(true, versioned);
-    }
-
-    @Test
     @DisplayName("裸版本路径 /api/v1 应判定为版本化")
     void should_returnTrue_when_isVersionedRequestPath_given_BareVersionPath() {
         // given

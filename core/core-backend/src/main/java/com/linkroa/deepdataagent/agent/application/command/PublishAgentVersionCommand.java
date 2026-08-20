@@ -8,9 +8,9 @@ package com.linkroa.deepdataagent.agent.application.command;
  * @param description        版本描述
  * @param system             系统提示词
  * @param modelProfileId     模型配置引用
- * @param skillIds           挂载技能 JSON
+ * @param skillIds           挂载技能 JSON（[{skillId, version}]）
  * @param knowledgeBaseIds   预留知识库引用 JSON
- * @param dataSourceIds      数据源引用 JSON
+ * @param dataSourceIds      数据源引用 JSON（[数据源 id 数字数组]）
  */
 public record PublishAgentVersionCommand(
         String agentId,

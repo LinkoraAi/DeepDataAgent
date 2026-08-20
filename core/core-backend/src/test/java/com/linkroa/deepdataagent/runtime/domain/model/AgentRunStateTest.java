@@ -114,29 +114,13 @@ class AgentRunStateTest {
     }
 
     @Test
-    void should_deriveStopReason_when_stopReason_given_exceedMaxItersMarked() {
+    void should_markExceedMaxIters_when_markExceedMaxIters_given_default() {
         // given
         AgentRunState state = new AgentRunState();
 
-        // when & then
-        assertEquals("stop", state.stopReason()); // 默认正常终态
+        // when & then（迭代上限标记仅作 stop_reason 派生输入，不产出终态）
+        assertFalse(state.exceededMaxIters());
         state.markExceedMaxIters();
         assertTrue(state.exceededMaxIters());
-        assertEquals("max_iterations", state.stopReason()); // 迭代上限
-    }
-
-    @Test
-    void should_onlyAllowOneFinalization_when_tryFinalized_given_multipleCalls() {
-        // given
-        AgentRunState state = new AgentRunState();
-
-        // when
-        boolean first = state.tryFinalized();
-        boolean second = state.tryFinalized();
-
-        // then（CAS 守卫：终态唯一出口只生效一次）
-        assertTrue(first);
-        assertFalse(second);
-        assertTrue(state.isFinalized());
     }
 }

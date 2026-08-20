@@ -16,7 +16,7 @@ public interface ChatEventRepository {
 
     /**
      * 分配会话内下一序列号（须在事务内调用，当前事件独占事务边界，MAX+1 偶发竞争已由
-     * 单飞 CAS + 单实例 + 单事务写入保证，实现时以 RETURNING 消歧）。
+     * 会话级的「同一会话同时只有一个执行」+ 单实例 + 单事务写入保证，实现时以 RETURNING 消歧）。
      *
      * @param sessionId 会话 ID
      * @return 下一可用 sequence_num（从 1 开始）

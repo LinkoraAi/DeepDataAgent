@@ -2,6 +2,8 @@ package com.linkroa.deepdataagent.agent.application.contract;
 
 import org.apache.commons.lang3.StringUtils;
 
+import java.util.List;
+
 /**
  * Agent 运行时装配契约（发布语言 DTO，Published Language）。
  * <p>由 agent BC 在应用边界出版，作为 {@code AgentVersionAssemblyPort} 的返回类型，
@@ -19,6 +21,8 @@ import org.apache.commons.lang3.StringUtils;
  * @param maxIters       工具调用轮次上限
  * @param credential     解密后的模型凭证（无鉴权时可空）
  * @param apiEndpointUrl 模型 API 端点
+ * @param dataSourceIds 数据源引用（数据源 id，可空/空，供运行时自动装配数据源查询工具）
+ * @param skills         挂载技能装配契约（技能包原始字节，可空/空）
  */
 public record ResolvedAgentAssemblyDTO(
         String agentId,
@@ -28,7 +32,9 @@ public record ResolvedAgentAssemblyDTO(
         String modelIndicator,
         int maxIters,
         String credential,
-        String apiEndpointUrl
+        String apiEndpointUrl,
+        List<Long> dataSourceIds,
+        List<ResolvedSkillDTO> skills
 ) {
 
     private static final int MAX_SYSTEM_LENGTH = 20000;
@@ -55,10 +61,12 @@ public record ResolvedAgentAssemblyDTO(
         if (system != null && system.length() > MAX_SYSTEM_LENGTH) {
             throw new IllegalArgumentException("系统提示词长度不能超过20000个字符");
         }
+        dataSourceIds = dataSourceIds == null ? List.of() : List.copyOf(dataSourceIds);
+        skills = skills == null ? List.of() : List.copyOf(skills);
     }
 
     /**
-     * 脱敏 toString：明文凭证不随日志/异常链输出（保留前 4 位，其余掩码）。
+     * 脱敏 toString：明文凭证与技能包字节不随日志/异常链输出（凭证保留前 4 位，技能仅列名称）。
      */
     @Override
     public String toString() {
@@ -69,7 +77,11 @@ public record ResolvedAgentAssemblyDTO(
                 + ", modelIndicator=" + modelIndicator
                 + ", maxIters=" + maxIters
                 + ", credential=" + mask(credential)
-                + ", apiEndpointUrl=" + apiEndpointUrl + "]";
+                + ", apiEndpointUrl=" + apiEndpointUrl
+                + ", dataSourceIds=" + dataSourceIds
+                + ", skills=" + skills.stream()
+                        .map(s -> s.name() + "@v" + s.versionNumber())
+                        .toList() + "]";
     }
 
     /** 凭证打码：非空且长度大于 4 时保留前 4 位，其余替换为掩码（长度不足以保留时全掩码）。 */

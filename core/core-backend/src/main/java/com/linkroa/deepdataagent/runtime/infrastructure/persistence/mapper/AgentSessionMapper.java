@@ -35,7 +35,7 @@ public interface AgentSessionMapper extends BaseMapper<AgentSessionEntity> {
     }
 
     /**
-     * 单飞原子 CAS：仅当状态为 IDLE 时置 RUNNING（TERMINATED 会话不可复活）。
+     * 抢占执行权的原子 CAS：仅当状态为 IDLE 时置 RUNNING（保证同一会话同时只有一个执行；TERMINATED 会话不可复活）。
      *
      * @return 受影响行数（1=抢占成功，0=会话正忙或已终止）
      */
@@ -63,6 +63,14 @@ public interface AgentSessionMapper extends BaseMapper<AgentSessionEntity> {
     default int updateStatus(String sessionId, String status) {
         return update(null, Wrappers.<AgentSessionEntity>lambdaUpdate()
                 .set(AgentSessionEntity::getStatus, status)
+                .set(AgentSessionEntity::getUpdatedAt, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")))
+                .eq(AgentSessionEntity::getSessionId, sessionId));
+    }
+
+    default int updateMeta(String sessionId, String title, String metadata) {
+        return update(null, Wrappers.<AgentSessionEntity>lambdaUpdate()
+                .set(AgentSessionEntity::getTitle, title)
+                .set(AgentSessionEntity::getMetadata, metadata)
                 .set(AgentSessionEntity::getUpdatedAt, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")))
                 .eq(AgentSessionEntity::getSessionId, sessionId));
     }

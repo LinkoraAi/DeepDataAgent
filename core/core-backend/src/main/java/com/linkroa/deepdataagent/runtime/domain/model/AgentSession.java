@@ -9,8 +9,8 @@ import java.util.UUID;
 
 /**
  * Agent 会话领域模型（对应 agent_session 表）。
- * <p>状态机：IDLE → RUNNING → IDLE / TERMINATED；RUNNING 为单飞执行态，
- * 由仓储 {@code tryMarkRunning} 原子 CAS 保证并发安全。</p>
+ * <p>状态机：IDLE → RUNNING → IDLE / TERMINATED；RUNNING 表示正在执行，
+ * 且同一会话同一时刻仅允许一个执行，由仓储 {@code tryMarkRunning} 原子 CAS 保证并发安全。</p>
  */
 public record AgentSession(
         Long id,

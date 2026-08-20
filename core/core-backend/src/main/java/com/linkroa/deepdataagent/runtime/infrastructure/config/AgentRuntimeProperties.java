@@ -37,9 +37,6 @@ public class AgentRuntimeProperties {
     /** 是否启用启动恢复（进程重启后清理残留 RUNNING 会话） */
     private boolean startupRecoveryEnabled = true;
 
-    /** 工具执行异步超时 */
-    private Duration toolTimeout = Duration.ofMinutes(2);
-
     public String getSandboxImage() {
         return sandboxImage;
     }
@@ -94,13 +91,5 @@ public class AgentRuntimeProperties {
 
     public void setStartupRecoveryEnabled(boolean startupRecoveryEnabled) {
         this.startupRecoveryEnabled = startupRecoveryEnabled;
-    }
-
-    public Duration getToolTimeout() {
-        return toolTimeout;
-    }
-
-    public void setToolTimeout(Duration toolTimeout) {
-        this.toolTimeout = toolTimeout;
     }
 }
