@@ -16,6 +16,36 @@
     <description>Vue frontend for DeepDataAgent.</description>
 
     <build>
+        <!-- m2e（VS Code Java / Eclipse）生命周期映射：exec:exec 仅用于 Maven CLI 构建，
+             IDE 增量构建不执行，标记 ignore 以消除 "Plugin execution not covered by lifecycle configuration" 提示 -->
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.eclipse.m2e</groupId>
+                    <artifactId>lifecycle-mapping</artifactId>
+                    <version>1.0.0</version>
+                    <configuration>
+                        <lifecycleMappingMetadata>
+                            <pluginExecutions>
+                                <pluginExecution>
+                                    <pluginExecutionFilter>
+                                        <groupId>org.codehaus.mojo</groupId>
+                                        <artifactId>exec-maven-plugin</artifactId>
+                                        <versionRange>[${exec-maven-plugin.version},)</versionRange>
+                                        <goals>
+                                            <goal>exec</goal>
+                                        </goals>
+                                    </pluginExecutionFilter>
+                                    <action>
+                                        <ignore/>
+                                    </action>
+                                </pluginExecution>
+                            </pluginExecutions>
+                        </lifecycleMappingMetadata>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

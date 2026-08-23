@@ -144,7 +144,7 @@ class DatasourceApplicationServiceTest {
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanDisable(connection);
         doAnswer(invocation -> {
-            var consumer = (java.util.function.Consumer<org.springframework.transaction.TransactionStatus>) invocation.getArgument(0);
+            var consumer = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
             consumer.accept(null);
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
@@ -158,7 +158,7 @@ class DatasourceApplicationServiceTest {
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanDelete(connection);
         doAnswer(invocation -> {
-            var consumer = (java.util.function.Consumer<org.springframework.transaction.TransactionStatus>) invocation.getArgument(0);
+            var consumer = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
             consumer.accept(null);
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
@@ -175,7 +175,7 @@ class DatasourceApplicationServiceTest {
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanDelete(connection);
         doAnswer(invocation -> {
-            var consumer = (java.util.function.Consumer<org.springframework.transaction.TransactionStatus>) invocation.getArgument(0);
+            var consumer = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
             consumer.accept(null);
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
@@ -209,7 +209,7 @@ class DatasourceApplicationServiceTest {
         when(connectionRepository.findByName("new-api")).thenReturn(Optional.empty());
         when(connectionRepository.save(any())).thenReturn(savedConnection);
         doAnswer(invocation -> {
-            var callback = (org.springframework.transaction.support.TransactionCallback<DatasourceConnection>) invocation.getArgument(0);
+            var callback = invocation.<org.springframework.transaction.support.TransactionCallback<DatasourceConnection>>getArgument(0);
             return callback.doInTransaction(null);
         }).when(transactionTemplate).execute(any());
 
@@ -230,7 +230,7 @@ class DatasourceApplicationServiceTest {
         when(connectionRepository.findByName("new-jdbc")).thenReturn(Optional.empty());
         when(connectionRepository.save(any())).thenReturn(savedConnection);
         doAnswer(invocation -> {
-            var callback = (org.springframework.transaction.support.TransactionCallback<DatasourceConnection>) invocation.getArgument(0);
+            var callback = invocation.<org.springframework.transaction.support.TransactionCallback<DatasourceConnection>>getArgument(0);
             return callback.doInTransaction(null);
         }).when(transactionTemplate).execute(any());
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
@@ -266,7 +266,7 @@ class DatasourceApplicationServiceTest {
         when(connectionRepository.findByName("new-api")).thenReturn(Optional.empty());
         when(connectionRepository.save(any())).thenReturn(savedConnection);
         doAnswer(invocation -> {
-            var callback = (org.springframework.transaction.support.TransactionCallback<DatasourceConnection>) invocation.getArgument(0);
+            var callback = invocation.<org.springframework.transaction.support.TransactionCallback<DatasourceConnection>>getArgument(0);
             return callback.doInTransaction(null);
         }).when(transactionTemplate).execute(any());
         when(apiSchemaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -285,11 +285,11 @@ class DatasourceApplicationServiceTest {
         when(connectionRepository.findByName("updated-name")).thenReturn(Optional.empty());
         when(connectionRepository.update(any())).thenAnswer(inv -> inv.getArgument(0));
         doAnswer(invocation -> {
-            var callback = (org.springframework.transaction.support.TransactionCallback<DatasourceConnection>) invocation.getArgument(0);
+            var callback = invocation.<org.springframework.transaction.support.TransactionCallback<DatasourceConnection>>getArgument(0);
             return callback.doInTransaction(null);
         }).when(transactionTemplate).execute(any());
 
-        DatasourceConnection result = service.updateDatasource(command);
+        service.updateDatasource(command);
 
         verify(connectionRepository).update(any());
     }
@@ -306,7 +306,7 @@ class DatasourceApplicationServiceTest {
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(strategy.extractSchemas(any())).thenReturn(List.of());
         doAnswer(invocation -> {
-            var callback = (org.springframework.transaction.support.TransactionCallback<DatasourceConnection>) invocation.getArgument(0);
+            var callback = invocation.<org.springframework.transaction.support.TransactionCallback<DatasourceConnection>>getArgument(0);
             return callback.doInTransaction(null);
         }).when(transactionTemplate).execute(any());
 
@@ -337,7 +337,7 @@ class DatasourceApplicationServiceTest {
         when(strategy.testConnection(connection)).thenReturn(
                 DatasourceConnectionStrategy.ConnectionTestResult.ok());
         doAnswer(invocation -> {
-            var consumer = (java.util.function.Consumer<org.springframework.transaction.TransactionStatus>) invocation.getArgument(0);
+            var consumer = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
             consumer.accept(null);
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
@@ -385,7 +385,7 @@ class DatasourceApplicationServiceTest {
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanSync(connection);
         doAnswer(invocation -> {
-            var callback = (java.util.function.Consumer<org.springframework.transaction.TransactionStatus>) invocation.getArgument(0);
+            var callback = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
             callback.accept(null);
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
@@ -701,7 +701,7 @@ class DatasourceApplicationServiceTest {
     void should_deleteApiSchema_when_given_validSchemaId() {
         when(apiSchemaRepository.findById(1L)).thenReturn(Optional.of(mock(ApiSchema.class)));
         doAnswer(invocation -> {
-            var consumer = (java.util.function.Consumer<org.springframework.transaction.TransactionStatus>) invocation.getArgument(0);
+            var consumer = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
             consumer.accept(null);
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
@@ -751,7 +751,7 @@ class DatasourceApplicationServiceTest {
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanSync(connection);
         doAnswer(invocation -> {
-            var callback = (java.util.function.Consumer<org.springframework.transaction.TransactionStatus>) invocation.getArgument(0);
+            var callback = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
             callback.accept(null);
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
@@ -787,7 +787,7 @@ class DatasourceApplicationServiceTest {
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanSync(connection);
         doAnswer(invocation -> {
-            var callback = (java.util.function.Consumer<org.springframework.transaction.TransactionStatus>) invocation.getArgument(0);
+            var callback = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
             callback.accept(null);
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());

@@ -1,6 +1,5 @@
 package com.linkroa.deepdataagent.datasource.application.command;
 
-import com.linkroa.deepdataagent.datasource.domain.model.PreOperationConfig;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.ApiAuthType;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.HttpMethod;
 import org.junit.jupiter.api.Test;

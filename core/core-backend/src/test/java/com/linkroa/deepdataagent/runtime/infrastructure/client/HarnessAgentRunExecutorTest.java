@@ -184,7 +184,8 @@ class HarnessAgentRunExecutorTest {
         when(confirmResult.getReplyId()).thenReturn("reply-1");
 
         when(harness.streamEvents(any(Msg.class), any(RuntimeContext.class)))
-                .thenReturn(Flux.just(requireConfirm), Flux.just(confirmResult));
+                .thenAnswer(inv -> Flux.just(requireConfirm))
+                .thenAnswer(inv -> Flux.just(confirmResult));
         HarnessAgentRunExecutor executor = new HarnessAgentRunExecutor();
 
         // when：首轮暂存后按 reply-1 续流

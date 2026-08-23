@@ -195,7 +195,7 @@ public class ApiPaginationHandler {
                     if (finalConfig.method() == HttpMethod.POST) {
                         String body = buildRequestBody(finalConfig, effectiveBodyType, finalContext);
                         requestBuilder.POST(HttpRequest.BodyPublishers.ofString(body));
-                        if (finalConfig.headers() == null || finalConfig.headers().keySet().stream().map(String::toLowerCase).noneMatch("content-type"::equals)) {
+                        if (finalConfig.headers() == null || finalConfig.headers().keySet().stream().map(header -> header.toLowerCase()).noneMatch("content-type"::equals)) {
                             requestBuilder.header("Content-Type", resolveContentType(effectiveBodyType));
                         }
                     } else {
@@ -255,7 +255,7 @@ public class ApiPaginationHandler {
                             body = preOpConfig.body() == null ? "" : expressionEvaluator.evaluateString(preOpConfig.body(), context);
                         }
                         requestBuilder.POST(HttpRequest.BodyPublishers.ofString(body));
-                        if (preOpConfig.headers() == null || preOpConfig.headers().keySet().stream().map(String::toLowerCase).noneMatch("content-type"::equals)) {
+                        if (preOpConfig.headers() == null || preOpConfig.headers().keySet().stream().map(header -> header.toLowerCase()).noneMatch("content-type"::equals)) {
                             String contentType = resolveContentType(preOpBodyType);
                             requestBuilder.header("Content-Type", contentType);
                         }
@@ -354,24 +354,23 @@ public class ApiPaginationHandler {
 
     private <T> T executeWithRetry(Supplier<T> request, int maxRetries) {
         int effectiveRetries = Math.min(Math.max(maxRetries, 0), MAX_RETRY_COUNT);
-        IllegalStateException lastException = null;
-        for (int attempt = 0; attempt <= effectiveRetries; attempt++) {
+        for (int attempt = 0; ; attempt++) {
             try {
                 return request.get();
             } catch (IllegalStateException e) {
-                lastException = e;
-                if (attempt < effectiveRetries) {
-                    try {
-                        long backoff = Math.min(INITIAL_BACKOFF_MS * (1L << attempt), MAX_BACKOFF_MS);
-                        Thread.sleep(backoff);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw lastException;
-                    }
+                // 重试耗尽或中断时直接抛出原异常：循环必执行一次，此处 e 必非空
+                if (attempt >= effectiveRetries) {
+                    throw e;
+                }
+                try {
+                    long backoff = Math.min(INITIAL_BACKOFF_MS * (1L << attempt), MAX_BACKOFF_MS);
+                    Thread.sleep(backoff);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw e;
                 }
             }
         }
-        throw lastException;
     }
 
     private ResolvedConfig resolveConfig(ApiSchema apiSchema, ApiTableConfig tableConfig) {
@@ -494,7 +493,6 @@ public class ApiPaginationHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private List<Map<String, Object>> toMapList(Object data) {
         if (data == null) {
             return List.of();

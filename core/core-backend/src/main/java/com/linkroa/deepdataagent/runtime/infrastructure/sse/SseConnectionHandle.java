@@ -92,7 +92,7 @@ public class SseConnectionHandle implements ConnectionHandle {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
-            emitters.forEach(SseEmitter::complete);
+            emitters.forEach(emitter -> emitter.complete());
             emitters.clear();
             disconnectHandler.set(null);
         }

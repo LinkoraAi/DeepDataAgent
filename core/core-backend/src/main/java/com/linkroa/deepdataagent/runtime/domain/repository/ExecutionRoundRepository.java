@@ -1,7 +1,6 @@
 package com.linkroa.deepdataagent.runtime.domain.repository;
 
 import com.linkroa.deepdataagent.runtime.domain.model.ExecutionRound;
-import com.linkroa.deepdataagent.runtime.domain.model.enums.RoundStatus;
 
 import java.util.List;
 import java.util.Optional;

@@ -1,6 +1,5 @@
 package com.linkroa.deepdataagent.datasource.application.convert;
 
-import com.linkroa.deepdataagent.datasource.application.command.ApiFieldCommand;
 import com.linkroa.deepdataagent.datasource.application.command.ApiSchemaCommand;
 import com.linkroa.deepdataagent.datasource.application.command.CreateDatasourceCommand;
 import com.linkroa.deepdataagent.datasource.application.command.ParseApiResponseCommand;
@@ -9,7 +8,6 @@ import com.linkroa.deepdataagent.datasource.application.command.UpdateDatasource
 import com.linkroa.deepdataagent.datasource.application.query.ListDatasourceQuery;
 import com.linkroa.deepdataagent.datasource.application.query.TableListQuery;
 import com.linkroa.deepdataagent.datasource.controller.request.*;
-import com.linkroa.deepdataagent.datasource.domain.model.PreOperationConfig;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.*;
 import org.junit.jupiter.api.Test;
 

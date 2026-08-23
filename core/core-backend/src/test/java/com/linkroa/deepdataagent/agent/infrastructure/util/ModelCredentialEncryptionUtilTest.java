@@ -18,7 +18,8 @@ class ModelCredentialEncryptionUtilTest {
 
     @BeforeEach
     void setUp() {
-        ModelEncryptionProperties properties = new ModelEncryptionProperties("model-secret-test-key");
+        ModelEncryptionProperties properties = new ModelEncryptionProperties();
+        properties.setKey("model-secret-test-key");
         encryptionUtil = new ModelCredentialEncryptionUtil(properties);
     }
 
@@ -100,7 +101,8 @@ class ModelCredentialEncryptionUtilTest {
     @Test
     void should_throwException_when_encrypt_given_missingKey() {
         // given
-        ModelEncryptionProperties emptyProperties = new ModelEncryptionProperties("");
+        // 不设置密钥，模拟缺失配置（@PostConstruct 校验仅在 Spring 启动期触发，单测直接构造）
+        ModelEncryptionProperties emptyProperties = new ModelEncryptionProperties();
         ModelCredentialEncryptionUtil emptyKeyUtil = new ModelCredentialEncryptionUtil(emptyProperties);
 
         // when / then

@@ -9,7 +9,6 @@ import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.ConfirmResult;
 import io.agentscope.core.event.ModelCallEndEvent;
-import io.agentscope.core.event.ModelCallStartEvent;
 import io.agentscope.core.event.RequireExternalExecutionEvent;
 import io.agentscope.core.event.RequireUserConfirmEvent;
 import io.agentscope.core.event.TextBlockDeltaEvent;

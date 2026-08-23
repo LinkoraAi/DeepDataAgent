@@ -153,7 +153,7 @@ public class SkillApplicationService {
             throw new ResourceNotFoundException("技能不存在");
         }
         List<String> storageKeys = versions.stream()
-                .map(SkillResource::storageKey)
+                .map(resource -> resource.storageKey())
                 .filter(key -> key != null && !key.isBlank())
                 .toList();
         transactionTemplate.executeWithoutResult(status -> skillRepository.deleteBySkillId(skillId));

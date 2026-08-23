@@ -9,7 +9,8 @@ import org.springframework.web.servlet.config.annotation.PathMatchConfigurer;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * 运行时与 Agent 管理 API 版本化配置（基于 Spring Framework 7 一等公民 API Versioning）。
+ * 运行时与 Agent 管理 API 版本化配置（基于 Spring Framework 7 一等公民 API Versioning，
+ * WebMvcConfigurer#configureApiVersioning 覆盖由 Spring Boot 语言服务器识别为已配置版本化）。
  * <p>采用<b>路径版本化</b>策略：URL 形态为 {@code /api/v{主版本}/...}（如
  * {@code GET /api/v1/agent/sessions}、{@code GET /api/v1/agent/agents}），版本段
  * {@code v1} 由 {@link org.springframework.web.accept.PathApiVersionResolver} 从请求路径
@@ -21,7 +22,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * {@code /api/datasource/...} 不变，版本解析谓词返回 false 时回落到默认版本，
  * 避免误解析非版本段而影响既有接口。</p>
  */
-@Configuration(proxyBeanMethods = false)
+@Configuration
 public class ApiVersioningConfig implements WebMvcConfigurer {
 
     /** 版本化路径前缀：{@code version} 以 URI 变量形式声明，供版本段解析与路径匹配共用。 */

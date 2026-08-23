@@ -58,7 +58,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -94,7 +93,7 @@ class AgentRuntimeCommandServiceTest {
     private final Scheduler blockingScheduler = Schedulers.immediate();
 
     /** 默认同步执行器：消息发送同步直跑，断言完整链路；异步入口测试单独替换为 mock。 */
-    private Executor virtualExecutor = Runnable::run;
+    private Executor virtualExecutor = task -> task.run();
 
     private AgentRuntimeCommandService service;
 
@@ -504,7 +503,7 @@ class AgentRuntimeCommandServiceTest {
         when(agentRunExecutor.streamEvents(any(BuiltAgent.class), anyString(), anyString(), anyString()))
                 .thenAnswer(inv -> Flux.just(AgentStreamSignal.of(AgentStreamSignalType.TEXT_DELTA, "你好", "blk-1"))
                         .doOnNext(ignored -> sessionRegistry.get(session.sessionId())
-                                .ifPresent(AgentSessionContext::cancel)));
+                                .ifPresent(ctx -> ctx.cancel())));
 
         // when
         service.sendMessageAsync(new SendMessageCommand(session.sessionId(), "你好"));
@@ -552,7 +551,7 @@ class AgentRuntimeCommandServiceTest {
         // given
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
-        BuiltAgent agent = wireHappyPathForExecution();
+        wireHappyPathForExecution();
         bindConnection(session);
         when(agentRunExecutor.streamEvents(any(BuiltAgent.class), anyString(), anyString(), anyString()))
                 .thenReturn(Flux.just(AgentStreamSignal.of(AgentStreamSignalType.TEXT_DELTA, "答案", "blk-1"),
@@ -668,7 +667,7 @@ class AgentRuntimeCommandServiceTest {
         // given：REQUIRE 信号进入等待态并透传 human_confirm_required，确认后经端口透传 human_confirm_result
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
-        BuiltAgent agent = wireHappyPathForExecution();
+        wireHappyPathForExecution();
         bindConnection(session);
         when(agentRunExecutor.streamEvents(any(BuiltAgent.class), anyString(), anyString(), anyString()))
                 .thenReturn(Flux.just(

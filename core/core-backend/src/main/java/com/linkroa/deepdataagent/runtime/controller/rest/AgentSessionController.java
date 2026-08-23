@@ -72,8 +72,8 @@ public class AgentSessionController {
     public ApiResponse<SessionListResponse> listSessions(
             @RequestParam(name = "agent_id", required = false) String agentId,
             @RequestParam(name = "statuses[]", required = false) List<String> statuses,
-            @RequestParam(name = "limit", required = false) Integer limit,
-            @RequestParam(name = "cursor", required = false) String cursor
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) String cursor
     ) {
         AgentRuntimeQueryService.SessionPage result =
                 queryService.listSessions(AgentRuntimeCommandConvert.INSTANCE.toListQuery(DEFAULT_USER_ID, agentId, statuses, cursor, limit));

@@ -103,7 +103,7 @@ public record AgentAssemblySpec(
                 + ", credential=" + mask(credential)
                 + ", apiEndpointUrl=" + apiEndpointUrl
                 + ", dataSourceIds=" + dataSourceIds
-                + ", skills=" + skills.stream().map(Skill::name).toList()
+                + ", skills=" + skills.stream().map(skill -> skill.name()).toList()
                 + ", memoryStoreRefs=" + memoryStoreRefs + "]";
     }
 

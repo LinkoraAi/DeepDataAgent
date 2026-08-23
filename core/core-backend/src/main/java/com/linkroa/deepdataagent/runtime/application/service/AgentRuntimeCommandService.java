@@ -181,7 +181,7 @@ public class AgentRuntimeCommandService {
         transactionTemplate.executeWithoutResult(status ->
                 sessionRepository.updateStatus(command.sessionId(), AgentSessionStatus.TERMINATED));
         // 断连/终止语义：幂等取消在跑执行并标记中断（当前轮次经中断终态路径收尾）
-        sessionRegistry.get(command.sessionId()).ifPresent(AgentSessionContext::cancel);
+        sessionRegistry.get(command.sessionId()).ifPresent(ctx -> ctx.cancel());
         // HITL 等待期间的终止：SDK 流已收流，cancel 不再触发自然收尾，须显式终态化并释放阻塞虚拟线程
         PendingConfirmation pending = pendingConfirmations.remove(command.sessionId());
         if (pending != null) {

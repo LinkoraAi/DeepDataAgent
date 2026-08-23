@@ -1,0 +1,10 @@
+{
+  "properties": [
+    {
+      "name": "model.encryption.key",
+      "type": "java.lang.String",
+      "description": "模型配置凭证独立加密密钥（AES/GCM），与 datasource 密钥完全隔离。无默认值：生产部署必须通过环境变量 APP_MODEL_ENCRYPTION_KEY 显式配置，未配置时启动即失败（@ConfigurationProperties + @PostConstruct 校验，fail-fast）。",
+      "sourceType": "com.linkroa.deepdataagent.agent.infrastructure.config.ModelEncryptionProperties"
+    }
+  ]
+}

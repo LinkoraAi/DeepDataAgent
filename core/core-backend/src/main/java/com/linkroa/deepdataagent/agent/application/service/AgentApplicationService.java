@@ -16,7 +16,6 @@ import com.linkroa.deepdataagent.agent.domain.repository.ModelProfileRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.SkillRepository;
 import com.linkroa.deepdataagent.agent.domain.service.AgentVersionDomainService;
 import com.linkroa.deepdataagent.memory.api.MemoryStoreApi;
-import com.linkroa.deepdataagent.memory.application.contract.MemoryStoreReferenceDTO;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import jakarta.annotation.Resource;
@@ -208,7 +207,7 @@ public class AgentApplicationService {
         List<String> memoryIds = AgentVersion.parseMemoryStoreIds(memoryStoreIds);
         if (!memoryIds.isEmpty()) {
             List<String> foundIds = memoryStoreApi.resolveByIds(memoryIds).stream()
-                    .map(MemoryStoreReferenceDTO::memoryStoreId)
+                    .map(dto -> dto.memoryStoreId())
                     .toList();
             if (!foundIds.containsAll(memoryIds)) {
                 throw new ResourceNotFoundException("记忆库引用不存在");

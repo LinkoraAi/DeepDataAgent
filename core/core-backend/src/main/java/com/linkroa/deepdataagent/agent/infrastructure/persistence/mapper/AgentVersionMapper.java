@@ -3,7 +3,6 @@ package com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.AgentVersionEntity;
-import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.ModelProfileEntity;
 import org.apache.ibatis.annotations.Mapper;
 
 import java.util.List;

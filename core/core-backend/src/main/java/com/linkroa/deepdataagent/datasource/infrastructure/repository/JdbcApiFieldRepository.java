@@ -51,6 +51,7 @@ public class JdbcApiFieldRepository implements ApiFieldRepository {
     }
 
     @Override
+    @SuppressWarnings("null") // MyBatis-Plus SFunction 方法引用误报（改写为普通 lambda 会导致列名解析失败），运行时与 null 语义无关
     public void deleteByApiSchemaId(Long apiSchemaId) {
         // 逻辑删除由 MyBatis-Plus @TableLogic 内建实现
         mapper.delete(Wrappers.<ApiFieldEntity>lambdaQuery()

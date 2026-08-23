@@ -4,8 +4,6 @@ import com.jayway.jsonpath.JsonPath;
 import com.linkroa.deepdataagent.datasource.controller.response.ParsedFieldResponse;
 import com.linkroa.deepdataagent.datasource.domain.model.ApiField;
 import org.apache.commons.lang3.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.OffsetDateTime;
@@ -24,8 +22,6 @@ import java.util.Map;
  */
 @Component
 public class ApiResponseParser {
-
-    private static final Logger log = LoggerFactory.getLogger(ApiResponseParser.class);
 
     /**
      * 解析API响应，提取字段列表
@@ -69,7 +65,6 @@ public class ApiResponseParser {
         return buildTreeFromNode(rootNode, rootPath);
     }
 
-    @SuppressWarnings("unchecked")
     private List<ParsedFieldResponse> buildTreeFromNode(Object rootNode, String rootPath) {
         if (rootNode == null) {
             return List.of();
@@ -93,7 +88,6 @@ public class ApiResponseParser {
         return List.of();
     }
 
-    @SuppressWarnings("unchecked")
     private List<ParsedFieldResponse> buildTreeFromMap(Map<?, ?> map, String rootPath) {
         List<ParsedFieldResponse> fields = new ArrayList<>();
         for (Map.Entry<?, ?> entry : map.entrySet()) {
@@ -143,7 +137,6 @@ public class ApiResponseParser {
         throw new IllegalArgumentException("根路径必须指向Map或Array类型，当前类型为: " + rootNode.getClass().getSimpleName());
     }
 
-    @SuppressWarnings("unchecked")
     private List<ApiField> extractFieldsFromMap(Object obj, String rootPath) {
         if (!(obj instanceof Map<?, ?> map)) {
             return List.of();

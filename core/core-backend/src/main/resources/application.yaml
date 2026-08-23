@@ -26,8 +26,6 @@ spring:
     out-of-order: true
     # 迁移前对已应用脚本进行 checksum 校验（V{n} 一经应用不可修改，防止脚本被篡改）
     validate-on-migrate: true
-    # migrate 前自动执行 repair，清理 schema history 中的失败记录与 obsolete 描述
-    repair-on-migrate: false
   data:
     redis:
       host: ${REDIS_HOST:host.docker.internal}

@@ -3,10 +3,8 @@ package com.linkroa.deepdataagent.datasource.infrastructure.adapter;
 import com.linkroa.deepdataagent.datasource.api.DatasourceApi;
 import com.linkroa.deepdataagent.datasource.application.contract.DatasourcePreviewDTO;
 import com.linkroa.deepdataagent.datasource.application.contract.DatasourceReferenceDTO;
-import com.linkroa.deepdataagent.datasource.domain.model.ApiSchema;
 import com.linkroa.deepdataagent.datasource.domain.model.DatabaseSchema;
 import com.linkroa.deepdataagent.datasource.domain.model.DatasourceConnection;
-import com.linkroa.deepdataagent.datasource.domain.model.TableInfo;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceStatus;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceType;
 import com.linkroa.deepdataagent.datasource.domain.repository.ApiSchemaRepository;
@@ -60,7 +58,7 @@ public class DefaultDatasourceApi implements DatasourceApi {
         DatasourceConnection connection = requireConnection(dataSourceId);
         if (connection.type() == DatasourceType.API) {
             return apiSchemaRepository.findByConnectionId(connection.id()).stream()
-                    .map(ApiSchema::name)
+                    .map(schema -> schema.name())
                     .toList();
         }
         List<DatabaseSchema> schemas = databaseSchemaRepository.findByConnectionId(connection.id());
@@ -69,7 +67,7 @@ public class DefaultDatasourceApi implements DatasourceApi {
         }
         // 单活动 schema 假设：JDBC 连接仅维护一个默认 schema（currentSchema），只列出首个 schema 下的表
         return tableInfoRepository.findByDatabaseSchemaId(schemas.getFirst().id()).stream()
-                .map(TableInfo::tableName)
+                .map(table -> table.tableName())
                 .toList();
     }
 

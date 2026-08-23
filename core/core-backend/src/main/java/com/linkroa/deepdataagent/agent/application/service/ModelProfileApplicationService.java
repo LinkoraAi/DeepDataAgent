@@ -114,7 +114,8 @@ public class ModelProfileApplicationService {
     }
 
     public void disableProfile(String profileId) {
-        ModelProfile profile = modelProfileRepository.findByProfileId(profileId)
+        // 仅做存在性校验（与 enableProfile 一致），更新状态不依赖实例本身
+        modelProfileRepository.findByProfileId(profileId)
                 .orElseThrow(() -> new ResourceNotFoundException("模型配置不存在"));
         transactionTemplate.executeWithoutResult(status ->
                 modelProfileRepository.updateStatus(profileId, ModelProfileStatus.DISABLED));

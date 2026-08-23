@@ -7,7 +7,6 @@ import com.linkroa.deepdataagent.agent.application.query.ListModelProfileQuery;
 import com.linkroa.deepdataagent.agent.application.service.ModelProfileApplicationService;
 import com.linkroa.deepdataagent.agent.controller.convert.ModelProfileResponseConvert;
 import com.linkroa.deepdataagent.agent.controller.request.CreateModelProfileRequest;
-import com.linkroa.deepdataagent.agent.controller.request.ListModelProfileRequest;
 import com.linkroa.deepdataagent.agent.controller.request.UpdateModelProfileRequest;
 import com.linkroa.deepdataagent.agent.controller.response.ModelProfileResponse;
 import com.linkroa.deepdataagent.agent.domain.model.ModelProfile;

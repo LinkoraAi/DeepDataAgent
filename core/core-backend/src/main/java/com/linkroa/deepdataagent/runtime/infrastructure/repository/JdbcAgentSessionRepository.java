@@ -51,7 +51,7 @@ public class JdbcAgentSessionRepository implements AgentSessionRepository {
                 : OffsetDateTime.ofInstant(cursor.createdAt(), ZoneId.of("Asia/Shanghai"));
         List<String> statusNames = statuses == null || statuses.isEmpty()
                 ? List.of()
-                : statuses.stream().map(Enum::name).toList();
+                : statuses.stream().map(status -> status.name()).toList();
         return mapper.findByFilters(userId, agentId, statusNames, cursorCreatedAt,
                         cursor == null ? null : cursor.id(), limit)
                 .stream()

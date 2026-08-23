@@ -73,8 +73,9 @@ class BatchChatEventPersisterTest {
         // when
         persister.flush();
 
-        // then（单条失败不中断后续事件落库）
-        verify(repository).save(fail);
+        // then（单条失败不中断后续事件落库：失败事件按 MAX_WRITE_ATTEMPTS=2 重试一次后丢弃，
+        // 因此 save(fail) 共调用 2 次；后续事件正常落库）
+        verify(repository, times(2)).save(fail);
         verify(repository).save(ok);
     }
 

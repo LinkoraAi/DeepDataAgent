@@ -23,7 +23,6 @@ import com.linkroa.deepdataagent.agent.infrastructure.util.ModelCredentialEncryp
 import com.linkroa.deepdataagent.memory.api.MemoryStoreApi;
 import com.linkroa.deepdataagent.memory.application.contract.MemoryStoreReferenceDTO;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
-import com.linkroa.deepdataagent.vault.application.contract.SecretReferenceDTO;
 import com.linkroa.deepdataagent.vault.application.port.SecretResolutionPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
