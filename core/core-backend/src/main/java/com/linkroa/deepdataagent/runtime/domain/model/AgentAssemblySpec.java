@@ -20,6 +20,7 @@ import java.util.List;
  * @param apiEndpointUrl 模型 API 端点（可空，默认走提供方内置端点）
  * @param dataSourceIds 数据源引用（数据源 id，框架无关注，可空/空）
  * @param skills         挂载技能（已物化的框架无关注内容，可空/空）
+ * @param memoryStoreRefs 记忆库引用（框架无关注，可空/空，未引用不装配记忆检索工具）
  */
 public record AgentAssemblySpec(
         String agentId,
@@ -31,7 +32,8 @@ public record AgentAssemblySpec(
         String credential,
         String apiEndpointUrl,
         List<Long> dataSourceIds,
-        List<Skill> skills
+        List<Skill> skills,
+        List<MemoryStoreRef> memoryStoreRefs
 ) {
 
     /**
@@ -84,6 +86,7 @@ public record AgentAssemblySpec(
         }
         dataSourceIds = dataSourceIds == null ? List.of() : List.copyOf(dataSourceIds);
         skills = skills == null ? List.of() : List.copyOf(skills);
+        memoryStoreRefs = memoryStoreRefs == null ? List.of() : List.copyOf(memoryStoreRefs);
     }
 
     /**
@@ -100,7 +103,8 @@ public record AgentAssemblySpec(
                 + ", credential=" + mask(credential)
                 + ", apiEndpointUrl=" + apiEndpointUrl
                 + ", dataSourceIds=" + dataSourceIds
-                + ", skills=" + skills.stream().map(Skill::name).toList() + "]";
+                + ", skills=" + skills.stream().map(Skill::name).toList()
+                + ", memoryStoreRefs=" + memoryStoreRefs + "]";
     }
 
     /** 凭证打码：非空且长度大于 4 时保留前 4 位，其余替换为掩码（长度不足以保留时全掩码）。 */

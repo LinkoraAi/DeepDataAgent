@@ -47,4 +47,14 @@ public interface AgentVersionMapper extends BaseMapper<AgentVersionEntity> {
         return selectCount(Wrappers.<AgentVersionEntity>lambdaQuery()
                 .eq(e -> e.getModelProfileId(), modelProfileId));
     }
+
+    default Long countByEnvironmentId(String environmentId) {
+        return selectCount(Wrappers.<AgentVersionEntity>lambdaQuery()
+                .eq(e -> e.getEnvironmentId(), environmentId));
+    }
+
+    default Long countByMemoryStoreId(String memoryStoreId) {
+        return selectCount(Wrappers.<AgentVersionEntity>lambdaQuery()
+                .apply("memory_store_ids @> to_jsonb({0}::text)", memoryStoreId));
+    }
 }

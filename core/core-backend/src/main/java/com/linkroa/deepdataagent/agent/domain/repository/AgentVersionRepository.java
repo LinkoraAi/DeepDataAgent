@@ -41,6 +41,16 @@ public interface AgentVersionRepository {
     long countByModelProfileId(String modelProfileId);
 
     /**
+     * 统计仍引用指定运行环境的未删除版本数（删除冲突校验）
+     */
+    long countByEnvironmentId(String environmentId);
+
+    /**
+     * 统计仍引用指定记忆库（memory_store_ids JSONB 数组包含该 ID）的未删除版本数（删除冲突校验）
+     */
+    long countByMemoryStoreId(String memoryStoreId);
+
+    /**
      * 逻辑删除某 Agent 的全部版本
      */
     void deleteByAgentId(String agentId);

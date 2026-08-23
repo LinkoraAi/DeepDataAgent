@@ -1,9 +1,9 @@
 package com.linkroa.deepdataagent.agent.domain.model;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.lang3.StringUtils;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -23,6 +23,9 @@ import java.util.List;
  * @param skillIds          挂载的技能（[{skillId, version}]，版本锁定，仅存引用）
  * @param knowledgeBaseIds  预留知识库引用
  * @param dataSourceIds     数据源引用（[数据源 id 数字数组]，关联 datasource 域 id）
+ * @param environmentId     运行环境引用（environment_id，可空/未引用回退默认规格）
+ * @param memoryStoreIds    记忆库引用（[记忆库 id 字符串数组]，可空/未引用不装配记忆工具）
+ * @param workspaceId       工作空间归属（本期占位，不做边界校验）
  * @param createdAt         创建时间
  * @param updatedAt         更新时间
  * @param createdBy         创建人
@@ -40,6 +43,9 @@ public record AgentVersion(
         String skillIds,
         String knowledgeBaseIds,
         String dataSourceIds,
+        String environmentId,
+        String memoryStoreIds,
+        String workspaceId,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         String createdBy,
@@ -91,12 +97,15 @@ public record AgentVersion(
             String modelProfileId,
             String skillIds,
             String knowledgeBaseIds,
-            String dataSourceIds
+            String dataSourceIds,
+            String environmentId,
+            String memoryStoreIds,
+            String workspaceId
     ) {
         return new AgentVersion(
                 null, versionId, agentId, versionNumber, name, description,
                 system != null ? system : "", modelProfileId,
-                skillIds, knowledgeBaseIds, dataSourceIds,
+                skillIds, knowledgeBaseIds, dataSourceIds, environmentId, memoryStoreIds, workspaceId,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 null, null
@@ -118,6 +127,9 @@ public record AgentVersion(
             String skillIds,
             String knowledgeBaseIds,
             String dataSourceIds,
+            String environmentId,
+            String memoryStoreIds,
+            String workspaceId,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
             String createdBy,
@@ -126,19 +138,20 @@ public record AgentVersion(
         return new AgentVersion(
                 id, versionId, agentId, versionNumber, name, description,
                 system, modelProfileId, skillIds,
-                knowledgeBaseIds, dataSourceIds, createdAt, updatedAt, createdBy, updatedBy
+                knowledgeBaseIds, dataSourceIds, environmentId, memoryStoreIds, workspaceId,
+                createdAt, updatedAt, createdBy, updatedBy
         );
     }
 
     /**
-     * 解析挂载的技能引用列表（[{skillId, version}]）
+     * 解析挂载的技能引用列表（[{skillId, version}]）。
      */
     public List<SkillRef> parseSkillRefs() {
         return parseSkillRefs(skillIds);
     }
 
     /**
-     * 静态解析挂载技能引用（供发布流程存在性校验复用，等价于 {@link #parseSkillRefs()}）
+     * 静态解析挂载技能引用（供发布流程一致性校验复用）。
      */
     public static List<SkillRef> parseSkillRefs(String skillIds) {
         if (StringUtils.isBlank(skillIds)) {
@@ -147,30 +160,52 @@ public record AgentVersion(
         try {
             return OBJECT_MAPPER.readValue(skillIds, new TypeReference<>() {
             });
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("技能引用JSON解析失败", e);
         }
     }
 
     /**
-     * 解析数据源引用列表（[数据源 id 数字数组]，供运行时按引用自动装配数据源查询工具）
+     * 解析数据源引用列表（[数据源 id 数字数组]）。
      */
     public List<Long> parseDatasourceIds() {
         return parseDatasourceIds(dataSourceIds);
     }
 
     /**
-     * 静态解析数据源引用列表（供发布语言出版复用，等价于 {@link #parseDatasourceIds()}）
+     * 静态解析数据源引用（供运行装配复用）。
      */
     public static List<Long> parseDatasourceIds(String dataSourceIds) {
         if (StringUtils.isBlank(dataSourceIds)) {
             return List.of();
         }
         try {
-            return OBJECT_MAPPER.readValue(dataSourceIds, new TypeReference<List<Long>>() {
+            return OBJECT_MAPPER.readValue(dataSourceIds, new TypeReference<>() {
             });
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("数据源引用JSON解析失败", e);
+        }
+    }
+
+    /**
+     * 解析记忆库引用列表（[记忆库 id 字符串数组]）。
+     */
+    public List<String> parseMemoryStoreIds() {
+        return parseMemoryStoreIds(memoryStoreIds);
+    }
+
+    /**
+     * 静态解析记忆库引用（供发布完整性校验 / 运行装配复用）。
+     */
+    public static List<String> parseMemoryStoreIds(String memoryStoreIds) {
+        if (StringUtils.isBlank(memoryStoreIds)) {
+            return List.of();
+        }
+        try {
+            return OBJECT_MAPPER.readValue(memoryStoreIds, new TypeReference<>() {
+            });
+        } catch (JacksonException e) {
+            throw new IllegalStateException("记忆库引用JSON解析失败", e);
         }
     }
 

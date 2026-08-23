@@ -6,6 +6,7 @@ import com.linkroa.deepdataagent.agent.domain.model.AgentDefinition;
 import com.linkroa.deepdataagent.agent.domain.model.AgentVersion;
 import com.linkroa.deepdataagent.agent.domain.model.ModelProfile;
 import com.linkroa.deepdataagent.agent.domain.model.SkillResource;
+import com.linkroa.deepdataagent.agent.domain.model.SkillResourceManifest;
 import com.linkroa.deepdataagent.agent.domain.model.enums.ApiFormat;
 import com.linkroa.deepdataagent.agent.domain.model.enums.ModelProfileStatus;
 import com.linkroa.deepdataagent.agent.domain.model.enums.ModelType;
@@ -82,7 +83,7 @@ class AgentApplicationServiceTest {
     private ModelProfile buildEnabledProfile(String profileId) {
         return ModelProfile.restore(
                 profileId, "chat-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                "encrypted", "gpt", 8192, 2048, 10, ModelType.CHAT, null,
+                "encrypted", null, "gpt", 8192, 2048, 10, ModelType.CHAT, null,
                 ModelProfileStatus.ENABLED,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
@@ -91,7 +92,7 @@ class AgentApplicationServiceTest {
     private ModelProfile buildDisabledProfile(String profileId) {
         return ModelProfile.restore(
                 profileId, "disabled-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                "encrypted", "gpt", 8192, 2048, 10, ModelType.CHAT, null,
+                "encrypted", null, "gpt", 8192, 2048, 10, ModelType.CHAT, null,
                 ModelProfileStatus.DISABLED,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
@@ -99,13 +100,13 @@ class AgentApplicationServiceTest {
 
     private AgentDefinition buildDefinition(String agentId, String name, int latestVersion, boolean archived) {
         return AgentDefinition.restore(
-                1L, agentId, name, null, archived, null, latestVersion,
+                1L, agentId, name, null, archived, null, latestVersion, latestVersion, null,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
     }
 
     private CreateAgentCommand buildCreateCommand(String name) {
-        return new CreateAgentCommand(name, null, "你是助手", "profile-1", null, null, null);
+        return new CreateAgentCommand(name, null, "你是助手", "profile-1", null, null, null, null, null);
     }
 
     @Test
@@ -172,7 +173,7 @@ class AgentApplicationServiceTest {
         when(agentDefinitionRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v3", null, "新版系统提示", "profile-1", null, null, null);
+                "agent-1", "v3", null, "新版系统提示", "profile-1", null, null, null, null, null);
 
         // when
         AgentVersion published = service.publishVersion(command);
@@ -191,7 +192,7 @@ class AgentApplicationServiceTest {
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
                 "agent-1", "v2", null, "system", "profile-1",
-                "[{\"skillId\":\"skill-1\",\"version\":2}]", null, null);
+                "[{\"skillId\":\"skill-1\",\"version\":2}]", null, null, null, null);
 
         // when / then（挂载不存在的技能版本 → 校验错误，不产生数据变更）
         assertThrows(ResourceNotFoundException.class, () -> service.publishVersion(command));
@@ -205,7 +206,8 @@ class AgentApplicationServiceTest {
         when(modelProfileRepository.findByProfileId("profile-1")).thenReturn(Optional.of(buildEnabledProfile("profile-1")));
         when(skillRepository.findBySkillIdAndVersion("skill-1", 2))
                 .thenReturn(Optional.of(SkillResource.create("skill-1", 2, "代码评审", "评审代码",
-                        SkillType.CUSTOM, SkillStorageType.LOCAL_FILE, "s1-v2.zip", "0".repeat(64), 32L)));
+                        SkillType.CUSTOM, SkillStorageType.LOCAL_FILE, "s1-v2.zip", "0".repeat(64), 32L,
+                        SkillResourceManifest.empty())));
         when(agentDefinitionRepository.findByAgentIdForUpdate("agent-1")).thenReturn(Optional.of(definition));
         when(agentVersionRepository.findMaxVersionNumber("agent-1")).thenReturn(1);
         when(agentVersionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -213,7 +215,7 @@ class AgentApplicationServiceTest {
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
                 "agent-1", "v2", null, "system", "profile-1",
-                "[{\"skillId\":\"skill-1\",\"version\":2}]", null, null);
+                "[{\"skillId\":\"skill-1\",\"version\":2}]", null, null, null, null);
 
         // when
         AgentVersion published = service.publishVersion(command);
@@ -231,7 +233,7 @@ class AgentApplicationServiceTest {
         when(agentDefinitionRepository.findByAgentIdForUpdate("agent-1")).thenReturn(Optional.of(archived));
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v2", null, "system", "profile-1", null, null, null);
+                "agent-1", "v2", null, "system", "profile-1", null, null, null, null, null);
 
         // when / then
         assertThrows(ResourceConflictException.class, () -> service.publishVersion(command));
@@ -245,7 +247,7 @@ class AgentApplicationServiceTest {
         when(agentDefinitionRepository.findByAgentIdForUpdate("agent-1")).thenReturn(Optional.empty());
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v2", null, "system", "profile-1", null, null, null);
+                "agent-1", "v2", null, "system", "profile-1", null, null, null, null, null);
 
         // when / then
         assertThrows(ResourceNotFoundException.class, () -> service.publishVersion(command));
@@ -310,7 +312,7 @@ class AgentApplicationServiceTest {
         when(agentDefinitionRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v", null, "system", "profile-1", null, null, null);
+                "agent-1", "v", null, "system", "profile-1", null, null, null, null, null);
 
         // when
         AgentVersion first = service.publishVersion(command);

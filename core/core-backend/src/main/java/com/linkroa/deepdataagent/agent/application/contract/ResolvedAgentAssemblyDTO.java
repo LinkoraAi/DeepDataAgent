@@ -1,5 +1,6 @@
 package com.linkroa.deepdataagent.agent.application.contract;
 
+import com.linkroa.deepdataagent.memory.application.contract.MemoryStoreReferenceDTO;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.List;
@@ -11,7 +12,9 @@ import java.util.List;
  * {@code AgentAssemblySpec}。跨 BC 只共享本无逻辑的 DTO，双方领域层互不接触：
  * system ← {@code agent_version.system}、modelIndicator ← api_format + model_name 拼接结果、
  * maxIters ← {@code model_profile.tool_call_rounds}；凭证已在基础设施层解密
- * （不进 {@code AgentAssemblySpec}，直接注入运行时工厂装配配置）。</p>
+ * （不进 {@code AgentAssemblySpec}，直接注入运行时工厂装配配置）。
+ * 环境引用经 {@link EnvironmentReferenceDTO}、记忆库引用经 {@code MemoryStoreReferenceDTO}
+ * 对外输出已格式化值，不泄露 agent BC 领域枚举 / 值对象。</p>
  *
  * @param agentId        Agent 业务 ID
  * @param versionNumber  发布号（十进制）
@@ -23,6 +26,8 @@ import java.util.List;
  * @param apiEndpointUrl 模型 API 端点
  * @param dataSourceIds 数据源引用（数据源 id，可空/空，供运行时自动装配数据源查询工具）
  * @param skills         挂载技能装配契约（技能包原始字节，可空/空）
+ * @param environment    运行环境引用（可空，未引用回退默认规格）
+ * @param memoryStores   记忆库引用（可空/空，未引用不装配记忆工具）
  */
 public record ResolvedAgentAssemblyDTO(
         String agentId,
@@ -34,7 +39,9 @@ public record ResolvedAgentAssemblyDTO(
         String credential,
         String apiEndpointUrl,
         List<Long> dataSourceIds,
-        List<ResolvedSkillDTO> skills
+        List<ResolvedSkillDTO> skills,
+        EnvironmentReferenceDTO environment,
+        List<MemoryStoreReferenceDTO> memoryStores
 ) {
 
     private static final int MAX_SYSTEM_LENGTH = 20000;
@@ -63,6 +70,7 @@ public record ResolvedAgentAssemblyDTO(
         }
         dataSourceIds = dataSourceIds == null ? List.of() : List.copyOf(dataSourceIds);
         skills = skills == null ? List.of() : List.copyOf(skills);
+        memoryStores = memoryStores == null ? List.of() : List.copyOf(memoryStores);
     }
 
     /**
@@ -81,7 +89,9 @@ public record ResolvedAgentAssemblyDTO(
                 + ", dataSourceIds=" + dataSourceIds
                 + ", skills=" + skills.stream()
                         .map(s -> s.name() + "@v" + s.versionNumber())
-                        .toList() + "]";
+                        .toList()
+                + ", environment=" + environment
+                + ", memoryStores=" + memoryStores + "]";
     }
 
     /** 凭证打码：非空且长度大于 4 时保留前 4 位，其余替换为掩码（长度不足以保留时全掩码）。 */

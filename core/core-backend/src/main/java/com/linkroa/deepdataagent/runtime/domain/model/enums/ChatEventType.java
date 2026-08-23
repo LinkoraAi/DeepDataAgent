@@ -5,7 +5,7 @@ import java.util.Locale;
 /**
  * 聊天事件类型（对应 chat_event.event_type，SSE 的 {@code event} 字段）。
  * <p>事件模型：{@code payload} 内部采用 content-blocks 结构（结构定义与装配见
- * {@code application ChatEventPayloadAssembler}），本枚举承接流内增量事件、
+ * {@code application ChatEventPayloadConvert}），本枚举承接流内增量事件、
  * 应用层合成事件与终态事件三类：</p>
  * <ul>
  *   <li><b>流内增量</b>：THINKING / MESSAGE / TOOL_CALL / TOOL_CALL_OUTPUT——SDK 事件映射，
@@ -26,6 +26,8 @@ public enum ChatEventType {
     THINKING,
     /** 助手文本增量或最终块（delta 语义，is_last 标记文本块结束） */
     MESSAGE,
+    /** 用户消息回显（发送方为用户，envelope role=user，携带原文内容块） */
+    USER_MESSAGE,
     /** 工具调用（含入参 arguments，SDK TOOL_CALL_* 聚合后发出） */
     TOOL_CALL,
     /** 工具调用结果（head+tail 截断的最终输出） */
@@ -43,7 +45,11 @@ public enum ChatEventType {
     /** 执行进度占位（保留枚举，当前版本不产出事件） */
     AGENT_PROGRESS,
     /** 迭代上限触发（保留枚举，不产出事件；经 SESSION_STATUS 携带 stop_reason=max_iterations） */
-    EXCEED_MAX_ITERS;
+    EXCEED_MAX_ITERS,
+    /** HITL：需要人工确认（暂停执行等待确认，携带 reply_id） */
+    HUMAN_CONFIRM_REQUIRED,
+    /** HITL：人工确认结果（确认结果已注入并恢复执行，携带 reply_id） */
+    HUMAN_CONFIRM_RESULT;
 
     /**
      * 将事件名归一化（小写）后反解为枚举。

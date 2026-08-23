@@ -6,6 +6,7 @@ import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.domain.model.ExecutionRound;
 import com.linkroa.deepdataagent.runtime.domain.model.RunTrace;
+import com.linkroa.deepdataagent.runtime.domain.model.SessionCursor;
 import com.linkroa.deepdataagent.runtime.domain.repository.AgentSessionRepository;
 import com.linkroa.deepdataagent.runtime.domain.repository.ChatEventRepository;
 import com.linkroa.deepdataagent.runtime.domain.repository.ExecutionRoundRepository;
@@ -45,12 +46,22 @@ public class AgentRuntimeQueryService {
     }
 
     /**
-     * 分页查询会话列表。
+     * 游标分页查询会话列表。
      */
-    public PaginatedResult<AgentSession> listSessions(ListSessionsQuery query) {
-        List<AgentSession> sessions = sessionRepository.findByUserId(query.userId(), query.page(), query.size());
-        long total = sessionRepository.countByUserId(query.userId());
-        return new PaginatedResult<>(sessions, total, query.page(), query.size());
+    public SessionPage listSessions(ListSessionsQuery query) {
+        int fetchLimit = query.size() + 1;
+        List<AgentSession> fetched = sessionRepository.findByFilters(
+                query.userId(), query.agentId(), query.statuses(), query.cursor(), fetchLimit);
+        boolean hasMore = fetched.size() > query.size();
+        List<AgentSession> data = hasMore
+                ? List.copyOf(fetched.subList(0, query.size()))
+                : List.copyOf(fetched);
+        String nextCursor = null;
+        if (hasMore && !data.isEmpty()) {
+            AgentSession last = data.get(data.size() - 1);
+            nextCursor = SessionCursor.of(last.createdAt(), last.id()).encode();
+        }
+        return new SessionPage(data, nextCursor);
     }
 
     /**
@@ -102,8 +113,8 @@ public class AgentRuntimeQueryService {
     }
 
     /**
-     * 分页结果。
+     * 游标分页结果。
      */
-    public record PaginatedResult<T>(List<T> data, long total, int page, int size) {
+    public record SessionPage(List<AgentSession> data, String nextCursor) {
     }
 }

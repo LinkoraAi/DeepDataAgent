@@ -65,11 +65,12 @@ class AgentDefinitionTest {
 
         // when
         AgentDefinition definition = AgentDefinition.restore(
-                1L, "agent-1", "销售助手", null, true, archivedAt, 2,
+                1L, "agent-1", "销售助手", null, true, archivedAt, 2, 2, null,
                 archivedAt, archivedAt, null, null);
 
         // then
         assertTrue(definition.archived());
         assertEquals(2, definition.latestVersion());
+        assertEquals(2, definition.activeVersion());
     }
 }

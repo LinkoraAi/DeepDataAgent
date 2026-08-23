@@ -25,6 +25,7 @@ class AgentSessionTest {
         assertNotNull(session.sessionId());
         assertEquals(AgentSessionStatus.IDLE, session.status());
         assertEquals(userId, session.userId());
+        assertEquals(AgentSession.DEFAULT_WORKSPACE_ID, session.workspaceId());
         assertEquals("agent-a", session.agentId());
         assertEquals("1.0.0", session.agentVersion());
         assertEquals("你好会话", session.title());
@@ -40,7 +41,7 @@ class AgentSessionTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> new AgentSession(factory.id(), "", factory.userId(), factory.agentId(),
+                () -> new AgentSession(factory.id(), "", factory.userId(), factory.workspaceId(), factory.agentId(),
                         factory.agentVersion(), factory.status(), factory.metadata(), factory.sandboxId(),
                         factory.title(), factory.lastActiveAt(), factory.createdAt(), factory.updatedAt(),
                         factory.createdBy(), factory.updatedBy()));
@@ -53,7 +54,7 @@ class AgentSessionTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> new AgentSession(factory.id(), factory.sessionId(), "", factory.agentId(),
+                () -> new AgentSession(factory.id(), factory.sessionId(), "", factory.workspaceId(), factory.agentId(),
                         factory.agentVersion(), factory.status(), factory.metadata(), factory.sandboxId(),
                         factory.title(), factory.lastActiveAt(), factory.createdAt(), factory.updatedAt(),
                         factory.createdBy(), factory.updatedBy()));
@@ -66,7 +67,7 @@ class AgentSessionTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> new AgentSession(factory.id(), factory.sessionId(), factory.userId(), " ",
+                () -> new AgentSession(factory.id(), factory.sessionId(), factory.userId(), factory.workspaceId(), " ",
                         factory.agentVersion(), factory.status(), factory.metadata(), factory.sandboxId(),
                         factory.title(), factory.lastActiveAt(), factory.createdAt(), factory.updatedAt(),
                         factory.createdBy(), factory.updatedBy()));
@@ -79,8 +80,8 @@ class AgentSessionTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> new AgentSession(factory.id(), factory.sessionId(), factory.userId(), factory.agentId(),
-                        null, factory.status(), factory.metadata(), factory.sandboxId(),
+                () -> new AgentSession(factory.id(), factory.sessionId(), factory.userId(), factory.workspaceId(),
+                        factory.agentId(), null, factory.status(), factory.metadata(), factory.sandboxId(),
                         factory.title(), factory.lastActiveAt(), factory.createdAt(), factory.updatedAt(),
                         factory.createdBy(), factory.updatedBy()));
     }
@@ -92,8 +93,8 @@ class AgentSessionTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> new AgentSession(factory.id(), factory.sessionId(), factory.userId(), factory.agentId(),
-                        factory.agentVersion(), null, factory.metadata(), factory.sandboxId(),
+                () -> new AgentSession(factory.id(), factory.sessionId(), factory.userId(), factory.workspaceId(),
+                        factory.agentId(), factory.agentVersion(), null, factory.metadata(), factory.sandboxId(),
                         factory.title(), factory.lastActiveAt(), factory.createdAt(), factory.updatedAt(),
                         factory.createdBy(), factory.updatedBy()));
     }
@@ -105,8 +106,8 @@ class AgentSessionTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> new AgentSession(factory.id(), factory.sessionId(), factory.userId(), factory.agentId(),
-                        factory.agentVersion(), factory.status(), null, factory.sandboxId(),
+                () -> new AgentSession(factory.id(), factory.sessionId(), factory.userId(), factory.workspaceId(),
+                        factory.agentId(), factory.agentVersion(), factory.status(), null, factory.sandboxId(),
                         factory.title(), factory.lastActiveAt(), factory.createdAt(), factory.updatedAt(),
                         factory.createdBy(), factory.updatedBy()));
     }
@@ -119,8 +120,8 @@ class AgentSessionTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> new AgentSession(factory.id(), factory.sessionId(), factory.userId(), factory.agentId(),
-                        factory.agentVersion(), factory.status(), factory.metadata(), factory.sandboxId(),
+                () -> new AgentSession(factory.id(), factory.sessionId(), factory.userId(), factory.workspaceId(),
+                        factory.agentId(), factory.agentVersion(), factory.status(), factory.metadata(), factory.sandboxId(),
                         tooLong, factory.lastActiveAt(), factory.createdAt(), factory.updatedAt(),
                         factory.createdBy(), factory.updatedBy()));
     }
@@ -156,12 +157,29 @@ class AgentSessionTest {
 
         // when
         AgentSession restored = AgentSession.restore(
-                factory.id(), factory.sessionId(), factory.userId(), factory.agentId(), factory.agentVersion(),
-                factory.status(), null, factory.sandboxId(), factory.title(), factory.lastActiveAt(),
-                factory.createdAt(), factory.updatedAt(), factory.createdBy(), factory.updatedBy());
+                factory.id(), factory.sessionId(), factory.userId(), factory.workspaceId(), factory.agentId(),
+                factory.agentVersion(), factory.status(), null, factory.sandboxId(), factory.title(),
+                factory.lastActiveAt(), factory.createdAt(), factory.updatedAt(), factory.createdBy(),
+                factory.updatedBy());
 
         // then
         assertEquals("{}", restored.metadata());
+    }
+
+    @Test
+    void should_defaultWorkspaceId_when_restore_given_nullWorkspaceId() {
+        // given（旧数据 / 占位兜底：workspace 为空时回落默认工作空间）
+        AgentSession factory = validSession();
+
+        // when
+        AgentSession restored = AgentSession.restore(
+                factory.id(), factory.sessionId(), factory.userId(), null, factory.agentId(),
+                factory.agentVersion(), factory.status(), factory.metadata(), factory.sandboxId(), factory.title(),
+                factory.lastActiveAt(), factory.createdAt(), factory.updatedAt(), factory.createdBy(),
+                factory.updatedBy());
+
+        // then
+        assertEquals(AgentSession.DEFAULT_WORKSPACE_ID, restored.workspaceId());
     }
 
     @Test
@@ -174,6 +192,7 @@ class AgentSessionTest {
 
         // then
         assertEquals(AgentSessionStatus.RUNNING, running.status());
+        assertEquals(session.workspaceId(), running.workspaceId());
         assertNotEquals(session, running);
     }
 

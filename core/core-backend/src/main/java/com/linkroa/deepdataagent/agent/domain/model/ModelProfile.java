@@ -20,6 +20,7 @@ import java.util.regex.Pattern;
  * @param apiEndpointUrl      API端点URL
  * @param modelName           模型名称
  * @param encryptedCredential 加密后的凭证（AES/GCM，独立密钥；无鉴权时可空）
+ * @param secretId            凭证引用的密钥 ID（引用模式：仅记录引用，明文不落库，可空）
  * @param modelSeries         模型系列
  * @param contextWindowInput  输入上下文窗口大小
  * @param contextWindowOutput 输出上下文窗口大小
@@ -40,6 +41,7 @@ public record ModelProfile(
         String apiEndpointUrl,
         String modelName,
         String encryptedCredential,
+        String secretId,
         String modelSeries,
         Integer contextWindowInput,
         Integer contextWindowOutput,
@@ -102,6 +104,13 @@ public record ModelProfile(
         if (ObjectUtils.isNotEmpty(encryptedCredential) && encryptedCredential.length() > 4000) {
             throw new IllegalArgumentException("加密凭证内容过长");
         }
+        // 凭证双模式互斥：内嵌加密与密钥引用不可同时提供
+        if (StringUtils.isNotBlank(encryptedCredential) && StringUtils.isNotBlank(secretId)) {
+            throw new IllegalArgumentException("凭证仅能内嵌或引用密钥其一，不可同时提供");
+        }
+        if (ObjectUtils.isNotEmpty(secretId) && secretId.length() > 64) {
+            throw new IllegalArgumentException("密钥引用ID长度不能超过64个字符");
+        }
         if (ObjectUtils.isNotEmpty(contextWindowInput) && contextWindowInput < 0) {
             throw new IllegalArgumentException("输入上下文窗口大小不能为负数");
         }
@@ -121,6 +130,7 @@ public record ModelProfile(
             String apiEndpointUrl,
             String modelName,
             String encryptedCredential,
+            String secretId,
             String modelSeries,
             Integer contextWindowInput,
             Integer contextWindowOutput,
@@ -136,6 +146,7 @@ public record ModelProfile(
                 apiEndpointUrl,
                 modelName,
                 encryptedCredential,
+                secretId,
                 modelSeries,
                 contextWindowInput,
                 contextWindowOutput,
@@ -161,6 +172,7 @@ public record ModelProfile(
             String apiEndpointUrl,
             String modelName,
             String encryptedCredential,
+            String secretId,
             String modelSeries,
             Integer contextWindowInput,
             Integer contextWindowOutput,
@@ -175,7 +187,7 @@ public record ModelProfile(
     ) {
         return new ModelProfile(
                 profileId, displayName, description, apiFormat, apiEndpointUrl, modelName,
-                encryptedCredential, modelSeries, contextWindowInput, contextWindowOutput,
+                encryptedCredential, secretId, modelSeries, contextWindowInput, contextWindowOutput,
                 toolCallRounds, modelType, vectorDimension, status, createdAt, updatedAt, createdBy, updatedBy
         );
     }

@@ -12,6 +12,7 @@ import com.linkroa.deepdataagent.agent.infrastructure.util.ModelCredentialEncryp
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import jakarta.annotation.Resource;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -41,6 +42,7 @@ public class ModelProfileApplicationService {
                 });
 
         String profileId = UUID.randomUUID().toString();
+        CredentialResolution credential = resolveCreateCredential(command);
         ModelProfile profile = ModelProfile.create(
                 profileId,
                 command.displayName(),
@@ -48,8 +50,8 @@ public class ModelProfileApplicationService {
                 command.apiFormat(),
                 command.apiEndpointUrl(),
                 command.modelName(),
-                // 写库前加密（解密仅发生在运行时装配路径）
-                encryptionUtil.encrypt(command.credential()),
+                credential.encryptedCredential(),
+                credential.secretId(),
                 command.modelSeries(),
                 command.contextWindowInput(),
                 command.contextWindowOutput(),
@@ -71,8 +73,8 @@ public class ModelProfileApplicationService {
                     throw new ResourceConflictException("模型配置名称「" + command.displayName() + "」已被使用");
                 });
 
-        // 凭证语义：null 保留原值、空串清空、其他值重新加密
-        String credential = resolveCredential(command.credential(), existing.encryptedCredential());
+        // 凭证语义：null 保留原值、空串清空、其他值重新加密；secretId 同理并与内嵌凭证互斥
+        CredentialResolution credential = resolveUpdateCredential(command, existing);
 
         ModelProfile updated = ModelProfile.restore(
                 existing.profileId(),
@@ -81,7 +83,8 @@ public class ModelProfileApplicationService {
                 command.apiFormat(),
                 command.apiEndpointUrl(),
                 command.modelName(),
-                credential,
+                credential.encryptedCredential(),
+                credential.secretId(),
                 command.modelSeries(),
                 command.contextWindowInput(),
                 command.contextWindowOutput(),
@@ -136,15 +139,48 @@ public class ModelProfileApplicationService {
     }
 
     /**
-     * 凭证解析：null 保留原密文、空串清空、其他值加密
+     * 创建场景凭证解析：引用密钥则仅记录 secretId（明文不落库），否则内嵌凭证加密落库。
      */
-    private String resolveCredential(String provided, String existingEncrypted) {
-        if (provided == null) {
-            return existingEncrypted;
+    private CredentialResolution resolveCreateCredential(CreateModelProfileCommand command) {
+        if (StringUtils.isNotBlank(command.credential()) && StringUtils.isNotBlank(command.secretId())) {
+            throw new IllegalArgumentException("凭证仅能内嵌或引用密钥其一，不可同时提供");
         }
-        if (provided.isEmpty()) {
-            return "";
+        if (StringUtils.isNotBlank(command.secretId())) {
+            return new CredentialResolution("", command.secretId());
         }
-        return encryptionUtil.encrypt(provided);
+        return new CredentialResolution(encryptionUtil.encrypt(command.credential()), null);
+    }
+
+    /**
+     * 更新场景凭证解析：null 保留原值、空串清空、其他值替换；内嵌与引用互斥，切换模式时另一方清空。
+     */
+    private CredentialResolution resolveUpdateCredential(UpdateModelProfileCommand command, ModelProfile existing) {
+        String credential = command.credential();
+        String secretId = command.secretId();
+        if (StringUtils.isNotBlank(credential) && StringUtils.isNotBlank(secretId)) {
+            throw new IllegalArgumentException("凭证仅能内嵌或引用密钥其一，不可同时提供");
+        }
+
+        String newEncrypted = existing.encryptedCredential();
+        String newSecretId = existing.secretId();
+        if (StringUtils.isNotBlank(credential)) {
+            newEncrypted = encryptionUtil.encrypt(credential);
+            newSecretId = "";
+        } else if (StringUtils.isNotBlank(secretId)) {
+            newSecretId = secretId;
+            newEncrypted = "";
+        } else {
+            if (credential != null && credential.isEmpty()) {
+                newEncrypted = "";
+            }
+            if (secretId != null && secretId.isEmpty()) {
+                newSecretId = "";
+            }
+        }
+        return new CredentialResolution(newEncrypted, newSecretId);
+    }
+
+    /** 凭证解析结果（内嵌密文与密钥引用引用其一有效）。 */
+    private record CredentialResolution(String encryptedCredential, String secretId) {
     }
 }

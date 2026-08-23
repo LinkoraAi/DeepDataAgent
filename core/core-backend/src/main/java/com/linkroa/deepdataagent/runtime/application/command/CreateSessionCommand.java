@@ -7,7 +7,7 @@ import org.apache.commons.lang3.StringUtils;
  *
  * @param userId       用户 ID
  * @param agentId      Agent 业务 ID
- * @param agentVersion Agent 版本
+ * @param agentVersion Agent 版本（可空，省略时绑定该 Agent 的激活版本）
  * @param title        会话标题（可空）
  * @param metadata     会话元数据（可空，JSON 文本）
  */
@@ -25,9 +25,6 @@ public record CreateSessionCommand(
         }
         if (StringUtils.isBlank(agentId)) {
             throw new IllegalArgumentException("AgentID不能为空");
-        }
-        if (StringUtils.isBlank(agentVersion)) {
-            throw new IllegalArgumentException("Agent版本不能为空");
         }
         if (title != null && title.length() > 255) {
             throw new IllegalArgumentException("会话标题长度不能超过255");

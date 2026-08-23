@@ -5,11 +5,13 @@ import com.linkroa.deepdataagent.agent.application.command.PublishSkillVersionCo
 import com.linkroa.deepdataagent.agent.application.query.ListSkillQuery;
 import com.linkroa.deepdataagent.agent.application.validation.SkillValidator;
 import com.linkroa.deepdataagent.agent.domain.model.SkillResource;
+import com.linkroa.deepdataagent.agent.domain.model.SkillResourceManifest;
 import com.linkroa.deepdataagent.agent.domain.model.enums.SkillStorageType;
 import com.linkroa.deepdataagent.agent.domain.repository.SkillContentStore;
 import com.linkroa.deepdataagent.agent.domain.repository.SkillRepository;
 import com.linkroa.deepdataagent.agent.infrastructure.config.SkillStorageProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.util.Sha256Util;
+import com.linkroa.deepdataagent.agent.infrastructure.util.SkillPackageInspector;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import jakarta.annotation.Resource;
@@ -37,6 +39,8 @@ public class SkillApplicationService {
     @Resource
     private SkillStorageProperties storageProperties;
     @Resource
+    private SkillPackageInspector skillPackageInspector;
+    @Resource
     private TransactionTemplate transactionTemplate;
 
     /**
@@ -45,6 +49,8 @@ public class SkillApplicationService {
      */
     public SkillResource createSkill(CreateSkillCommand command) {
         validateContent(command.content(), command.declaredSha256());
+        // 上传侧校验知识结构（必需 SKILL.md）并提取 references / scripts 清单
+        SkillResourceManifest resources = skillPackageInspector.inspect(command.content());
 
         String skillId = UUID.randomUUID().toString();
         String storageKey = null;
@@ -53,7 +59,7 @@ public class SkillApplicationService {
             SkillResource skill = SkillResource.create(
                     skillId, 1, command.name(), command.description(), command.skillType(),
                     SkillStorageType.LOCAL_FILE, storageKey,
-                    Sha256Util.hex(command.content()), command.content().length
+                    Sha256Util.hex(command.content()), command.content().length, resources
             );
             return transactionTemplate.execute(status -> skillRepository.save(skill));
         } catch (RuntimeException ex) {
@@ -73,6 +79,7 @@ public class SkillApplicationService {
      */
     public SkillResource publishVersion(PublishSkillVersionCommand command) {
         validateContent(command.content(), command.declaredSha256());
+        SkillResourceManifest resources = skillPackageInspector.inspect(command.content());
         return transactionTemplate.execute(status -> {
             SkillResource latest = skillRepository.findMaxVersionForUpdate(command.skillId())
                     .orElseThrow(() -> new ResourceNotFoundException("技能不存在"));
@@ -86,7 +93,7 @@ public class SkillApplicationService {
                         command.description() != null ? command.description() : latest.description(),
                         latest.skillType(),
                         SkillStorageType.LOCAL_FILE, storageKey,
-                        Sha256Util.hex(command.content()), command.content().length
+                        Sha256Util.hex(command.content()), command.content().length, resources
                 );
                 return skillRepository.save(skill);
             } catch (DuplicateKeyException ex) {

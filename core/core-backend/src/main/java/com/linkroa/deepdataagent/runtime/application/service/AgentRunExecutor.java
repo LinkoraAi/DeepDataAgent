@@ -37,6 +37,34 @@ public interface AgentRunExecutor {
             String userId);
 
     /**
+     * 以携带确认结果元数据的新用户消息重新驱动一轮 agent 事件流（HITL 续流，确认语义）。
+     * <p>AgentScope v2 的 HITL 恢复不是通过外部事件注入，而是以「携带
+     * {@code agentscope_confirm_results} 元数据的新用户消息」重新驱动 {@code streamEvents}。
+     * 待确认的 {@code ToolUseBlock} 属 SDK 类型、由基础设施层按 {@code replyId} 暂存，
+     * 本方法据此构造确认结果并重新驱动流；领域 / 应用层不感知 SDK 类型。</p>
+     *
+     * @param agent     已装配的 Agent 句柄（与触发确认请求的同一会话 / 句柄）
+     * @param replyId   待确认项关联的回复 ID（基础设施层据此定位暂存的 toolCalls）
+     * @param sessionId 会话 ID
+     * @param userId    用户 ID
+     * @return 确认后继续执行的领域中性事件信号流（冷流）
+     */
+    Flux<AgentStreamSignal> resumeWithConfirmation(
+            BuiltAgent agent,
+            String replyId,
+            String sessionId,
+            String userId);
+
+    /**
+     * 丢弃基础设施层按 {@code replyId} 暂存的待确认工具调用（拒绝 / 终止路径专用，不续流）。
+     * <p>HITL 拒绝 / 会话终止不重新驱动流，需显式释放基础设施层暂存的 SDK
+     * {@code ToolUseBlock}，避免残留导致的内存泄漏。</p>
+     *
+     * @param replyId 待确认项关联的回复 ID
+     */
+    void discardPendingToolCalls(String replyId);
+
+    /**
      * 由事件流推导的 span 草案（应用层落库为 RunTrace）。
      *
      * @param spanName     span 名称（llm.call / tool.call / sandbox.exec）

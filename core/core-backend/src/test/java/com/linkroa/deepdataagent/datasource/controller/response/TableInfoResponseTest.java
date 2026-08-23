@@ -1,8 +1,8 @@
 package com.linkroa.deepdataagent.datasource.controller.response;
 
+import com.linkroa.deepdataagent.datasource.controller.convert.DatasourceResponseConvert;
 import com.linkroa.deepdataagent.datasource.domain.model.TableInfo;
 import org.junit.jupiter.api.Test;
-import org.mapstruct.factory.Mappers;
 
 import java.time.OffsetDateTime;
 
@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 class TableInfoResponseTest {
 
-    private final DatasourceResponseMapper mapper = Mappers.getMapper(DatasourceResponseMapper.class);
+    private final DatasourceResponseConvert mapper = DatasourceResponseConvert.INSTANCE;
 
     @Test
     void should_mapFields_when_toTableInfoResponse_given_tableInfo() {

@@ -4,12 +4,15 @@ import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignalType;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEndEvent;
+import io.agentscope.core.event.AgentEventType;
 import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.AgentStartEvent;
 import io.agentscope.core.event.CustomEvent;
 import io.agentscope.core.event.ExceedMaxItersEvent;
 import io.agentscope.core.event.ModelCallEndEvent;
 import io.agentscope.core.event.ModelCallStartEvent;
+import io.agentscope.core.event.RequireExternalExecutionEvent;
+import io.agentscope.core.event.RequireUserConfirmEvent;
 import io.agentscope.core.event.TextBlockDeltaEvent;
 import io.agentscope.core.event.TextBlockEndEvent;
 import io.agentscope.core.event.ThinkingBlockDeltaEvent;
@@ -19,12 +22,15 @@ import io.agentscope.core.event.ToolCallEndEvent;
 import io.agentscope.core.event.ToolCallStartEvent;
 import io.agentscope.core.event.ToolResultEndEvent;
 import io.agentscope.core.event.ToolResultTextDeltaEvent;
+import io.agentscope.core.event.UserConfirmResultEvent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.ToolResultState;
+import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.core.model.ChatUsage;
 import io.agentscope.harness.agent.HarnessAgent;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -32,8 +38,10 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -116,5 +124,84 @@ class HarnessAgentRunExecutorTest {
         // when & then
         assertThrows(IllegalArgumentException.class,
                 () -> executor.streamEvents(unsupported, "你好", "s-1", "u-1"));
+    }
+
+    @Test
+    void should_mapHitlEventsToSignals_when_streamEvents_given_requireAndConfirmEvents() {
+        // given
+        HarnessAgent harness = mock(HarnessAgent.class);
+        HarnessBuiltAgent agent = new HarnessBuiltAgent("agent-a", harness);
+        when(harness.getModel()).thenReturn(null);
+
+        RequireUserConfirmEvent requireConfirm = mock(RequireUserConfirmEvent.class);
+        when(requireConfirm.getType()).thenReturn(AgentEventType.REQUIRE_USER_CONFIRM);
+        when(requireConfirm.getReplyId()).thenReturn("reply-1");
+        when(requireConfirm.getToolCalls()).thenReturn(List.of(mock(ToolUseBlock.class)));
+
+        RequireExternalExecutionEvent requireExternal = mock(RequireExternalExecutionEvent.class);
+        when(requireExternal.getType()).thenReturn(AgentEventType.REQUIRE_EXTERNAL_EXECUTION);
+        when(requireExternal.getReplyId()).thenReturn("reply-2");
+        when(requireExternal.getToolCalls()).thenReturn(List.of(mock(ToolUseBlock.class)));
+
+        UserConfirmResultEvent confirmResult = mock(UserConfirmResultEvent.class);
+        when(confirmResult.getType()).thenReturn(AgentEventType.USER_CONFIRM_RESULT);
+        when(confirmResult.getReplyId()).thenReturn("reply-3");
+
+        when(harness.streamEvents(any(Msg.class), any(RuntimeContext.class)))
+                .thenReturn(Flux.just(requireConfirm, requireExternal, confirmResult));
+        HarnessAgentRunExecutor executor = new HarnessAgentRunExecutor();
+
+        // when
+        List<AgentStreamSignal> signals = executor.streamEvents(agent, "你好", "s-1", "u-1")
+                .collectList().block();
+
+        // then
+        assertNotNull(signals);
+        assertEquals(3, signals.size());
+        assertEquals(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, signals.get(0).type());
+        assertEquals("reply-1", signals.get(0).replyId());
+        assertEquals(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, signals.get(1).type());
+        assertEquals("reply-2", signals.get(1).replyId());
+        assertEquals(AgentStreamSignalType.HUMAN_CONFIRM_RESULT, signals.get(2).type());
+        assertEquals("reply-3", signals.get(2).replyId());
+    }
+
+    @Test
+    void should_resumeWithConfirmation_when_resumeWithConfirmation_given_stagedToolCalls() {
+        // given：先经 REQUIRE_USER_CONFIRM 事件暂存 reply-1 的 toolCalls
+        HarnessAgent harness = mock(HarnessAgent.class);
+        HarnessBuiltAgent agent = new HarnessBuiltAgent("agent-a", harness);
+        when(harness.getModel()).thenReturn(null);
+
+        ToolUseBlock toolCall = mock(ToolUseBlock.class);
+        RequireUserConfirmEvent requireConfirm = mock(RequireUserConfirmEvent.class);
+        when(requireConfirm.getType()).thenReturn(AgentEventType.REQUIRE_USER_CONFIRM);
+        when(requireConfirm.getReplyId()).thenReturn("reply-1");
+        when(requireConfirm.getToolCalls()).thenReturn(List.of(toolCall));
+
+        UserConfirmResultEvent confirmResult = mock(UserConfirmResultEvent.class);
+        when(confirmResult.getType()).thenReturn(AgentEventType.USER_CONFIRM_RESULT);
+        when(confirmResult.getReplyId()).thenReturn("reply-1");
+
+        when(harness.streamEvents(any(Msg.class), any(RuntimeContext.class)))
+                .thenReturn(Flux.just(requireConfirm), Flux.just(confirmResult));
+        HarnessAgentRunExecutor executor = new HarnessAgentRunExecutor();
+
+        // when：首轮暂存后按 reply-1 续流
+        executor.streamEvents(agent, "你好", "s-1", "u-1").collectList().block();
+        List<AgentStreamSignal> resumed = executor.resumeWithConfirmation(agent, "reply-1", "s-1", "u-1")
+                .collectList().block();
+
+        // then：续流输入消息携带 agentscope_confirm_results 元数据，确认结果指向暂存的 toolCall
+        ArgumentCaptor<Msg> msgCaptor = ArgumentCaptor.forClass(Msg.class);
+        verify(harness, times(2)).streamEvents(msgCaptor.capture(), any(RuntimeContext.class));
+        Msg confirmMsg = msgCaptor.getAllValues().get(1);
+        assertEquals(MsgRole.USER, confirmMsg.getRole());
+        assertTrue(confirmMsg.getMetadata().containsKey(Msg.METADATA_CONFIRM_RESULTS));
+        // then：续流事件透传为 HUMAN_CONFIRM_RESULT
+        assertNotNull(resumed);
+        assertEquals(1, resumed.size());
+        assertEquals(AgentStreamSignalType.HUMAN_CONFIRM_RESULT, resumed.get(0).type());
+        assertEquals("reply-1", resumed.get(0).replyId());
     }
 }

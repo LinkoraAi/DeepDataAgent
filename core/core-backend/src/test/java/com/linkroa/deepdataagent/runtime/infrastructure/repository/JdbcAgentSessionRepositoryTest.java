@@ -1,9 +1,9 @@
 package com.linkroa.deepdataagent.runtime.infrastructure.repository;
 
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
+import com.linkroa.deepdataagent.runtime.domain.model.SessionCursor;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.AgentSessionStatus;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.RuntimePersistenceMapper;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.RuntimePersistenceMapperImpl;
+import com.linkroa.deepdataagent.runtime.infrastructure.convert.RuntimePersistenceConvert;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.entity.AgentSessionEntity;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.mapper.AgentSessionMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,6 +13,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -32,22 +34,19 @@ class JdbcAgentSessionRepositoryTest {
     @Mock
     private AgentSessionMapper mapper;
 
-    private RuntimePersistenceMapper persistenceMapper;
     private JdbcAgentSessionRepository repository;
 
     @BeforeEach
     void setUp() {
-        persistenceMapper = new RuntimePersistenceMapperImpl();
         repository = new JdbcAgentSessionRepository();
         ReflectionTestUtils.setField(repository, "mapper", mapper);
-        ReflectionTestUtils.setField(repository, "persistenceMapper", persistenceMapper);
     }
 
     @Test
     void should_saveNewSession_when_save_given_entityWithoutId() {
         // given
         AgentSession session = AgentSession.create("u-1", "agent-a", "1.0.0", "{}", "标题");
-        AgentSessionEntity entity = persistenceMapper.toEntity(session);
+        AgentSessionEntity entity = RuntimePersistenceConvert.INSTANCE.toEntity(session);
         when(mapper.findBySessionId(session.sessionId())).thenReturn(entity);
 
         // when
@@ -64,7 +63,7 @@ class JdbcAgentSessionRepositoryTest {
         // given
         AgentSession session = AgentSession.create("u-1", "agent-a", "1.0.0", "{}", "标题");
         AgentSession withId = new AgentSession(
-                1L, session.sessionId(), session.userId(), session.agentId(), session.agentVersion(),
+                1L, session.sessionId(), session.userId(), session.workspaceId(), session.agentId(), session.agentVersion(),
                 session.status(), session.metadata(), session.sandboxId(), session.title(),
                 session.lastActiveAt(), session.createdAt(), session.updatedAt(), session.createdBy(),
                 session.updatedBy());
@@ -81,7 +80,7 @@ class JdbcAgentSessionRepositoryTest {
     void should_findById_when_findBySessionId_given_existingSession() {
         // given
         AgentSession session = AgentSession.create("u-1", "agent-a", "1.0.0", "{}", "标题");
-        when(mapper.findBySessionId(session.sessionId())).thenReturn(persistenceMapper.toEntity(session));
+        when(mapper.findBySessionId(session.sessionId())).thenReturn(RuntimePersistenceConvert.INSTANCE.toEntity(session));
 
         // when
         Optional<AgentSession> found = repository.findBySessionId(session.sessionId());
@@ -104,15 +103,15 @@ class JdbcAgentSessionRepositoryTest {
     }
 
     @Test
-    void should_returnPageEvents_when_findByUserId_given_user() {
+    void should_returnSessions_when_findByFilters_given_noFilters() {
         // given
         AgentSession s1 = AgentSession.create("u-1", "agent-a", "1.0.0", "{}", null);
         AgentSession s2 = AgentSession.create("u-1", "agent-a", "1.0.0", "{}", null);
-        when(mapper.findByUserId("u-1", 1, 20)).thenReturn(List.of(
-                persistenceMapper.toEntity(s1), persistenceMapper.toEntity(s2)));
+        when(mapper.findByFilters("u-1", null, List.of(), null, null, 21)).thenReturn(List.of(
+                RuntimePersistenceConvert.INSTANCE.toEntity(s1), RuntimePersistenceConvert.INSTANCE.toEntity(s2)));
 
         // when
-        List<AgentSession> found = repository.findByUserId("u-1", 1, 20);
+        List<AgentSession> found = repository.findByFilters("u-1", null, List.of(), null, 21);
 
         // then
         assertEquals(2, found.size());
@@ -120,15 +119,17 @@ class JdbcAgentSessionRepositoryTest {
     }
 
     @Test
-    void should_returnCount_when_countByUserId_given_user() {
+    void should_delegateWithFilters_when_findByFilters_given_filtersAndCursor() {
         // given
-        when(mapper.countByUserId("u-1")).thenReturn(5L);
+        SessionCursor cursor = SessionCursor.of(
+                OffsetDateTime.parse("2026-08-22T10:00:00+08:00"), 7L);
 
         // when
-        long count = repository.countByUserId("u-1");
+        repository.findByFilters("u-1", "agent-a", List.of(AgentSessionStatus.RUNNING), cursor, 21);
 
         // then
-        assertEquals(5L, count);
+        OffsetDateTime expectedTime = OffsetDateTime.ofInstant(cursor.createdAt(), ZoneId.of("Asia/Shanghai"));
+        verify(mapper).findByFilters("u-1", "agent-a", List.of("RUNNING"), expectedTime, 7L, 21);
     }
 
     @Test
@@ -199,14 +200,5 @@ class JdbcAgentSessionRepositoryTest {
         // then
         assertEquals(session.sessionId(), saved.sessionId());
         verify(mapper, never()).updateById(org.mockito.ArgumentMatchers.any(AgentSessionEntity.class));
-    }
-
-    @Test
-    void should_findByUserIdWithPagination_when_findByUserId_given_pageAndSize() {
-        // when
-        repository.findByUserId("u-1", 2, 50);
-
-        // then
-        verify(mapper).findByUserId("u-1", 2, 50);
     }
 }

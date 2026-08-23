@@ -27,6 +27,8 @@ public class ModelProfileEntity extends BaseEntity {
     private String modelName;
     /** 加密后的凭证 */
     private String encryptedCredential;
+    /** 凭证引用的密钥ID（引用模式，明文不落库） */
+    private String secretId;
     /** 模型系列 */
     private String modelSeries;
     /** 输入上下文窗口大小 */

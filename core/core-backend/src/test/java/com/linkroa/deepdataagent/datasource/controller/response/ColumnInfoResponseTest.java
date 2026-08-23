@@ -1,8 +1,8 @@
 package com.linkroa.deepdataagent.datasource.controller.response;
 
+import com.linkroa.deepdataagent.datasource.controller.convert.DatasourceResponseConvert;
 import com.linkroa.deepdataagent.datasource.domain.model.ColumnInfo;
 import org.junit.jupiter.api.Test;
-import org.mapstruct.factory.Mappers;
 
 import java.time.OffsetDateTime;
 
@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ColumnInfoResponseTest {
 
-    private final DatasourceResponseMapper mapper = Mappers.getMapper(DatasourceResponseMapper.class);
+    private final DatasourceResponseConvert mapper = DatasourceResponseConvert.INSTANCE;
 
     @Test
     void should_mapFields_when_toColumnInfoResponse_given_columnInfo() {

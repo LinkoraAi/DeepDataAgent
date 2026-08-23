@@ -37,6 +37,21 @@ class SkillPackageMaterializerTest {
     }
 
     @Test
+    void should_materializeResources_when_materialize_given_skillMdWithReferencesAndScripts() {
+        // given（技能包含 SKILL.md + references + scripts）
+        String skillMd = "---\nname: code-reviewer\ndescription: 代码评审技能\n---\n# Code Reviewer\n指令正文";
+        ResolvedSkillDTO dto = new ResolvedSkillDTO("s-1", 3, "台账名称", "台账描述", "s1-v3.zip",
+                zip(skillMd, "references/api.md", "参考文档", "scripts/run.py", "print('ok')"));
+
+        // when
+        Skill skill = materializer.materialize(dto);
+
+        // then（结构化资源按相对路径物化到 resources）
+        assertEquals("参考文档", skill.resources().get("references/api.md"));
+        assertEquals("print('ok')", skill.resources().get("scripts/run.py"));
+    }
+
+    @Test
     void should_fallbackToLedger_when_materialize_given_skillMdWithoutName() {
         // given（SKILL.md 无 frontmatter name → 回退台账 name）
         String skillMd = "# Code Reviewer\n指令正文";
@@ -59,8 +74,23 @@ class SkillPackageMaterializerTest {
         assertThrows(IllegalStateException.class, () -> materializer.materialize(dto));
     }
 
-    private byte[] zip(String skillMd) {
-        return zipEntry("code-reviewer/SKILL.md", skillMd);
+    private byte[] zip(String skillMd, String... resources) {
+        try {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            try (ZipOutputStream zos = new ZipOutputStream(bos)) {
+                zos.putNextEntry(new ZipEntry("code-reviewer/SKILL.md"));
+                zos.write(skillMd.getBytes(StandardCharsets.UTF_8));
+                zos.closeEntry();
+                for (int i = 0; i < resources.length; i += 2) {
+                    zos.putNextEntry(new ZipEntry(resources[i]));
+                    zos.write(resources[i + 1].getBytes(StandardCharsets.UTF_8));
+                    zos.closeEntry();
+                }
+            }
+            return bos.toByteArray();
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private byte[] zipEntry(String name, String content) {

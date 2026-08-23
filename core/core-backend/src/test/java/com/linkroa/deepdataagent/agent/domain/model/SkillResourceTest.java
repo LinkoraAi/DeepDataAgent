@@ -31,13 +31,15 @@ class SkillResourceTest {
         // when
         SkillResource skill = SkillResource.create(
                 "skill-1", 1, "数据清洗", "描述", SkillType.CUSTOM,
-                SkillStorageType.LOCAL_FILE, "skill-1/1/skill-1-1.zip", sha256(), content().length);
+                SkillStorageType.LOCAL_FILE, "skill-1/1/skill-1-1.zip", sha256(), content().length,
+                SkillResourceManifest.empty());
 
         // then
         assertEquals(1, skill.versionNumber());
         assertEquals("数据清洗", skill.name());
         assertEquals(SkillStatus.ACTIVE, skill.status());
         assertEquals(SkillType.CUSTOM, skill.skillType());
+        assertEquals(SkillResourceManifest.empty(), skill.resources());
     }
 
     @Test
@@ -46,7 +48,7 @@ class SkillResourceTest {
         // then
         assertThrows(IllegalArgumentException.class, () -> SkillResource.create(
                 "skill-1", 1, "  ", null, SkillType.CUSTOM,
-                SkillStorageType.LOCAL_FILE, "k", sha256(), 1));
+                SkillStorageType.LOCAL_FILE, "k", sha256(), 1, SkillResourceManifest.empty()));
     }
 
     @Test
@@ -55,7 +57,7 @@ class SkillResourceTest {
         // then
         assertThrows(IllegalArgumentException.class, () -> SkillResource.create(
                 "skill-1", 0, "数据清洗", null, SkillType.CUSTOM,
-                SkillStorageType.LOCAL_FILE, "k", sha256(), 1));
+                SkillStorageType.LOCAL_FILE, "k", sha256(), 1, SkillResourceManifest.empty()));
     }
 
     @Test
@@ -64,7 +66,7 @@ class SkillResourceTest {
         // then
         assertThrows(IllegalArgumentException.class, () -> SkillResource.create(
                 "skill-1", 1, "数据清洗", null, SkillType.CUSTOM,
-                SkillStorageType.LOCAL_FILE, "k", "not-a-sha256", 1));
+                SkillStorageType.LOCAL_FILE, "k", "not-a-sha256", 1, SkillResourceManifest.empty()));
     }
 
     @Test
@@ -73,7 +75,7 @@ class SkillResourceTest {
         // then
         assertThrows(IllegalArgumentException.class, () -> SkillResource.create(
                 "  ", 1, "数据清洗", null, SkillType.CUSTOM,
-                SkillStorageType.LOCAL_FILE, "k", sha256(), 1));
+                SkillStorageType.LOCAL_FILE, "k", sha256(), 1, SkillResourceManifest.empty()));
     }
 
     @Test
@@ -84,8 +86,8 @@ class SkillResourceTest {
         // when
         SkillResource skill = SkillResource.restore(
                 1L, "skill-1", 1, "数据清洗", "描述", SkillType.CUSTOM,
-                SkillStorageType.LOCAL_FILE, "k", sha256(), 10, SkillStatus.REJECTED,
-                now, now, "admin", "admin");
+                SkillStorageType.LOCAL_FILE, "k", sha256(), 10, SkillResourceManifest.empty(),
+                SkillStatus.REJECTED, now, now, "admin", "admin");
 
         // then
         assertEquals(1L, skill.id());

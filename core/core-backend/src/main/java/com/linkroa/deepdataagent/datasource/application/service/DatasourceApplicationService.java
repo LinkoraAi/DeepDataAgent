@@ -1,14 +1,15 @@
 package com.linkroa.deepdataagent.datasource.application.service;
 
-import com.linkroa.deepdataagent.datasource.application.assembler.DatasourceAssembler;
 import com.linkroa.deepdataagent.datasource.application.command.ApiSchemaCommand;
 import com.linkroa.deepdataagent.datasource.application.command.CreateDatasourceCommand;
 import com.linkroa.deepdataagent.datasource.application.command.ParseApiResponseCommand;
 import com.linkroa.deepdataagent.datasource.application.command.TestConnectionCommand;
 import com.linkroa.deepdataagent.datasource.application.command.UpdateDatasourceCommand;
+import com.linkroa.deepdataagent.datasource.application.convert.DatasourceConvert;
 import com.linkroa.deepdataagent.datasource.application.query.ListDatasourceQuery;
 import com.linkroa.deepdataagent.datasource.application.query.TableListQuery;
 import com.linkroa.deepdataagent.datasource.application.validation.DatasourceValidator;
+import com.linkroa.deepdataagent.datasource.controller.convert.DatasourceResponseConvert;
 import com.linkroa.deepdataagent.datasource.controller.request.*;
 import com.linkroa.deepdataagent.datasource.controller.response.*;
 import com.linkroa.deepdataagent.datasource.domain.model.*;
@@ -50,8 +51,6 @@ public class DatasourceApplicationService {
     private final ApiFieldRepository apiFieldRepository;
     private final ApiResponseParser apiResponseParser;
     private final ApiPaginationHandler apiPaginationHandler;
-    private final DatasourceResponseMapper responseMapper;
-    private final DatasourceAssembler datasourceAssembler;
 
     public DatasourceApplicationService(
             DatasourceConnectionRepository connectionRepository,
@@ -64,9 +63,7 @@ public class DatasourceApplicationService {
             ApiSchemaRepository apiSchemaRepository,
             ApiFieldRepository apiFieldRepository,
             ApiResponseParser apiResponseParser,
-            ApiPaginationHandler apiPaginationHandler,
-            DatasourceResponseMapper responseMapper,
-            DatasourceAssembler datasourceAssembler
+            ApiPaginationHandler apiPaginationHandler
     ) {
         this.connectionRepository = connectionRepository;
         this.strategyFactory = strategyFactory;
@@ -79,8 +76,6 @@ public class DatasourceApplicationService {
         this.apiFieldRepository = apiFieldRepository;
         this.apiResponseParser = apiResponseParser;
         this.apiPaginationHandler = apiPaginationHandler;
-        this.responseMapper = responseMapper;
-        this.datasourceAssembler = datasourceAssembler;
     }
 
     public List<DatasourceTypeResponse> getSupportedTypes() {
@@ -101,7 +96,7 @@ public class DatasourceApplicationService {
         if (command.type() == DatasourceType.JDBC && command.jdbcConfig() != null) {
             DatasourceValidator.validatePostgresqlSchema(command.subType(), command.jdbcConfig().schema());
         }
-        DatasourceConnection connection = datasourceAssembler.toDatasourceConnection(command);
+        DatasourceConnection connection = DatasourceConvert.INSTANCE.toDatasourceConnection(command);
         return transactionTemplate.execute(status -> {
             DatasourceConnection saved = connectionRepository.save(connection);
             if (saved.type() == DatasourceType.API && ObjectUtils.isNotEmpty(command.apiSchemas())) {
@@ -126,7 +121,7 @@ public class DatasourceApplicationService {
         if (command.jdbcConfig() != null) {
             DatasourceValidator.validatePostgresqlSchema(existing.subType(), command.jdbcConfig().schema());
         }
-        DatasourceConnection updated = datasourceAssembler.toDatasourceConnection(command, existing);
+        DatasourceConnection updated = DatasourceConvert.INSTANCE.toDatasourceConnection(command, existing);
         DatasourceConnection saved = transactionTemplate.execute(status -> connectionRepository.update(updated));
         // JDBC 数据源更新成功后重新同步元数据（置于事务外，避免远程调用占用数据库连接）
         if (saved.type() == DatasourceType.JDBC) {
@@ -544,7 +539,7 @@ public class DatasourceApplicationService {
         ApiSchema schema = apiSchemaRepository.findById(schemaId)
                 .orElseThrow(() -> new DeepDataAgentException("API表不存在"));
         List<ApiField> fields = apiFieldRepository.findByApiSchemaId(schemaId);
-        return responseMapper.toApiSchemaDetailResponse(schema, fields);
+        return DatasourceResponseConvert.INSTANCE.toApiSchemaDetailResponse(schema, fields);
     }
 
     public List<ApiSchema> listApiSchemas(Long connectionId) {

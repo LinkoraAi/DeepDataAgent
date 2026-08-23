@@ -11,6 +11,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
@@ -19,8 +20,9 @@ import java.util.zip.ZipInputStream;
 /**
  * 技能包物化器：将发布语言 {@link ResolvedSkillDTO}（技能包 ZIP 原始字节）物化为
  * 框架无关注值对象 {@link Skill}（解压 ZIP → 解析 SKILL.md frontmatter + 指令正文）。
- * <p>技能包以 SKILL.md 为内容契约（YAML frontmatter：name / description + 指令正文）。
- * 本期仅物化 SKILL.md 指令集，references/scripts 资源文件落地后续补充。</p>
+ * <p>技能包以 SKILL.md 为内容契约（YAML frontmatter：name / description + 指令正文），
+ * 其余非目录文件（references / scripts 等结构化资源）物化到 {@link Skill#resources}
+ * 的相对路径 → 文本内容映射，实现「SKILL.md + references + scripts」完整落地。</p>
  */
 @Slf4j
 @Component
@@ -48,21 +50,25 @@ public class SkillPackageMaterializer {
     }
 
     /**
-     * 单个技能物化：解压 SKILL.md 并以 frontmatter 的 name/description 优先，台账值为回退。
+     * 单个技能物化：解压 SKILL.md 并以 frontmatter 的 name/description 优先，台账值为回退；
+     * references / scripts 等结构化资源物化到 {@code Skill.resources}。
      */
     public Skill materialize(ResolvedSkillDTO dto) {
-        String skillMd = extractSkillMd(dto.content());
+        PackageContent pkg = extractPackage(dto.content());
+        String skillMd = pkg.skillMd();
         var parsed = MarkdownSkillParser.parse(skillMd);
         Map<String, Object> metadata = parsed.getMetadata();
 
         String name = firstNonBlank(stringOf(metadata.get("name")), dto.name());
         String description = firstNonBlank(stringOf(metadata.get("description")), dto.description());
-        return new Skill(name, description, parsed.getContent(), Map.of());
+        return new Skill(name, description, parsed.getContent(), pkg.resources());
     }
 
-    /** 解压技能包并返回 SKILL.md 文本；缺失或未找到时抛非法状态。 */
-    private String extractSkillMd(byte[] content) {
+    /** 解压技能包并返回 SKILL.md 文本与结构化资源（相对路径 → 文本内容）；缺失 SKILL.md 抛非法状态。 */
+    private PackageContent extractPackage(byte[] content) {
         try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(content))) {
+            String skillMd = null;
+            Map<String, String> resources = new LinkedHashMap<>();
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 if (entry.isDirectory()) {
@@ -70,13 +76,22 @@ public class SkillPackageMaterializer {
                 }
                 String name = entry.getName().replace('\\', '/');
                 if (name.endsWith(SKILL_MD_SUFFIX) || name.equalsIgnoreCase("SKILL.md")) {
-                    return new String(zis.readAllBytes(), StandardCharsets.UTF_8);
+                    skillMd = new String(zis.readAllBytes(), StandardCharsets.UTF_8);
+                } else {
+                    resources.put(name, new String(zis.readAllBytes(), StandardCharsets.UTF_8));
                 }
             }
+            if (skillMd == null) {
+                throw new IllegalStateException("技能包缺少 SKILL.md");
+            }
+            return new PackageContent(skillMd, resources);
         } catch (IOException e) {
             throw new IllegalStateException("技能包解压失败", e);
         }
-        throw new IllegalStateException("技能包缺少 SKILL.md");
+    }
+
+    /** 技能包解压结果：SKILL.md 文本 + 结构化资源映射。 */
+    private record PackageContent(String skillMd, Map<String, String> resources) {
     }
 
     private static String firstNonBlank(String primary, String fallback) {

@@ -85,6 +85,11 @@ model:
   encryption:
     key: ${APP_MODEL_ENCRYPTION_KEY}
 
+# 凭证库（vault BC）：密钥（Secret）独立加密密钥（AES/GCM），与 datasource / model 密钥完全隔离
+vault:
+  encryption:
+    key: ${APP_VAULT_ENCRYPTION_KEY:deepdataagent-vault-key}
+
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true

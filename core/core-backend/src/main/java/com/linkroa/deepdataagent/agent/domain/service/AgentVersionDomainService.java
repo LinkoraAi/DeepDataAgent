@@ -1,8 +1,11 @@
 package com.linkroa.deepdataagent.agent.domain.service;
 
+import org.springframework.stereotype.Service;
+
 /**
  * Agent 版本领域服务：发布号计算
  */
+@Service
 public class AgentVersionDomainService {
 
     /**

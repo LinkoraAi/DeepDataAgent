@@ -1,14 +1,14 @@
 package com.linkroa.deepdataagent.agent.controller.rest;
 
-import com.linkroa.deepdataagent.agent.application.assembler.AgentCommandAssembler;
+import com.linkroa.deepdataagent.agent.application.convert.AgentCommandConvert;
 import com.linkroa.deepdataagent.agent.application.command.CreateAgentCommand;
 import com.linkroa.deepdataagent.agent.application.command.PublishAgentVersionCommand;
 import com.linkroa.deepdataagent.agent.application.query.ListAgentQuery;
 import com.linkroa.deepdataagent.agent.application.service.AgentApplicationService;
 import com.linkroa.deepdataagent.agent.controller.request.AgentConfigRequest;
+import com.linkroa.deepdataagent.agent.controller.convert.AgentResponseConvert;
 import com.linkroa.deepdataagent.agent.controller.response.AgentDetailResponse;
 import com.linkroa.deepdataagent.agent.controller.response.AgentResponse;
-import com.linkroa.deepdataagent.agent.controller.response.AgentResponseMapper;
 import com.linkroa.deepdataagent.agent.controller.response.AgentVersionResponse;
 import com.linkroa.deepdataagent.agent.domain.model.AgentDefinition;
 import com.linkroa.deepdataagent.agent.domain.model.AgentVersion;
@@ -37,15 +37,11 @@ public class AgentController {
 
     @Resource
     private AgentApplicationService applicationService;
-    @Resource
-    private AgentResponseMapper responseMapper;
-    @Resource
-    private AgentCommandAssembler commandAssembler;
 
     @PostMapping
     public ApiResponse<AgentResponse> create(@Valid @RequestBody AgentConfigRequest request) {
-        CreateAgentCommand command = commandAssembler.toCreateCommand(request);
-        return ApiResponse.success(responseMapper.toResponse(applicationService.createAgent(command)));
+        CreateAgentCommand command = AgentCommandConvert.INSTANCE.toCreateCommand(request);
+        return ApiResponse.success(AgentResponseConvert.INSTANCE.toResponse(applicationService.createAgent(command)));
     }
 
     @GetMapping
@@ -59,7 +55,7 @@ public class AgentController {
         List<AgentDefinition> definitions = applicationService.listAgents(query);
         long total = applicationService.countAgents(query);
         List<AgentResponse> responses = definitions.stream()
-                .map(responseMapper::toResponse)
+                .map(AgentResponseConvert.INSTANCE::toResponse)
                 .toList();
         return ApiResponse.success(new PaginatedResponse<>(responses, total, query.page(), query.size()));
     }
@@ -68,7 +64,7 @@ public class AgentController {
     public ApiResponse<AgentDetailResponse> detail(@PathVariable String agentId) {
         AgentDefinition definition = applicationService.getAgent(agentId);
         AgentVersion latestVersion = applicationService.getLatestVersion(agentId);
-        return ApiResponse.success(responseMapper.toDetailResponse(definition, latestVersion));
+        return ApiResponse.success(AgentResponseConvert.INSTANCE.toDetailResponse(definition, latestVersion));
     }
 
     @PostMapping("/{agentId}/versions")
@@ -76,14 +72,14 @@ public class AgentController {
             @PathVariable String agentId,
             @Valid @RequestBody AgentConfigRequest request
     ) {
-        PublishAgentVersionCommand command = commandAssembler.toPublishCommand(agentId, request);
-        return ApiResponse.success(responseMapper.toVersionResponse(applicationService.publishVersion(command)));
+        PublishAgentVersionCommand command = AgentCommandConvert.INSTANCE.toPublishCommand(agentId, request);
+        return ApiResponse.success(AgentResponseConvert.INSTANCE.toVersionResponse(applicationService.publishVersion(command)));
     }
 
     @GetMapping("/{agentId}/versions")
     public ApiResponse<List<AgentVersionResponse>> listVersions(@PathVariable String agentId) {
         List<AgentVersionResponse> responses = applicationService.listVersions(agentId).stream()
-                .map(responseMapper::toVersionResponse)
+                .map(AgentResponseConvert.INSTANCE::toVersionResponse)
                 .toList();
         return ApiResponse.success(responses);
     }

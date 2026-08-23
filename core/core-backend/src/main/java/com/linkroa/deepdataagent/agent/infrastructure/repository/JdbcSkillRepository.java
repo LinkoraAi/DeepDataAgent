@@ -3,7 +3,7 @@ package com.linkroa.deepdataagent.agent.infrastructure.repository;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.agent.domain.model.SkillResource;
 import com.linkroa.deepdataagent.agent.domain.repository.SkillRepository;
-import com.linkroa.deepdataagent.agent.infrastructure.persistence.SkillResourcePersistenceMapper;
+import com.linkroa.deepdataagent.agent.infrastructure.convert.SkillResourcePersistenceConvert;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.SkillResourceEntity;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper.SkillResourceMapper;
 import org.springframework.stereotype.Repository;
@@ -18,16 +18,14 @@ import java.util.Optional;
 public class JdbcSkillRepository implements SkillRepository {
 
     private final SkillResourceMapper mapper;
-    private final SkillResourcePersistenceMapper persistenceMapper;
 
-    public JdbcSkillRepository(SkillResourceMapper mapper, SkillResourcePersistenceMapper persistenceMapper) {
+    public JdbcSkillRepository(SkillResourceMapper mapper) {
         this.mapper = mapper;
-        this.persistenceMapper = persistenceMapper;
     }
 
     @Override
     public SkillResource save(SkillResource skillResource) {
-        SkillResourceEntity entity = persistenceMapper.toEntity(skillResource);
+        SkillResourceEntity entity = SkillResourcePersistenceConvert.INSTANCE.toEntity(skillResource);
         entity.setId(null);
         mapper.insert(entity);
         return findBySkillIdAndVersion(skillResource.skillId(), skillResource.versionNumber()).orElse(skillResource);
@@ -35,13 +33,13 @@ public class JdbcSkillRepository implements SkillRepository {
 
     @Override
     public Optional<SkillResource> findBySkillIdAndVersion(String skillId, int versionNumber) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectBySkillIdAndVersion(skillId, versionNumber)));
+        return Optional.ofNullable(SkillResourcePersistenceConvert.INSTANCE.toDomain(mapper.selectBySkillIdAndVersion(skillId, versionNumber)));
     }
 
     @Override
     public List<SkillResource> listBySkillId(String skillId) {
         return mapper.selectBySkillId(skillId).stream()
-                .map(persistenceMapper::toDomain)
+                .map(SkillResourcePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 
@@ -53,7 +51,7 @@ public class JdbcSkillRepository implements SkillRepository {
 
     @Override
     public Optional<SkillResource> findMaxVersionForUpdate(String skillId) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectMaxVersionForUpdate(skillId)));
+        return Optional.ofNullable(SkillResourcePersistenceConvert.INSTANCE.toDomain(mapper.selectMaxVersionForUpdate(skillId)));
     }
 
     @Override
@@ -63,7 +61,7 @@ public class JdbcSkillRepository implements SkillRepository {
                         (long) Math.max(0, page - 1) * size,
                         size)
                 .stream()
-                .map(persistenceMapper::toDomain)
+                .map(SkillResourcePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 

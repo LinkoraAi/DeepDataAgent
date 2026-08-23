@@ -3,7 +3,7 @@ package com.linkroa.deepdataagent.agent.infrastructure.repository;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.agent.domain.model.AgentVersion;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentVersionRepository;
-import com.linkroa.deepdataagent.agent.infrastructure.persistence.AgentPersistenceMapper;
+import com.linkroa.deepdataagent.agent.infrastructure.convert.AgentPersistenceConvert;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.AgentVersionEntity;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper.AgentVersionMapper;
 import org.springframework.stereotype.Repository;
@@ -18,16 +18,14 @@ import java.util.Optional;
 public class JdbcAgentVersionRepository implements AgentVersionRepository {
 
     private final AgentVersionMapper mapper;
-    private final AgentPersistenceMapper persistenceMapper;
 
-    public JdbcAgentVersionRepository(AgentVersionMapper mapper, AgentPersistenceMapper persistenceMapper) {
+    public JdbcAgentVersionRepository(AgentVersionMapper mapper) {
         this.mapper = mapper;
-        this.persistenceMapper = persistenceMapper;
     }
 
     @Override
     public AgentVersion save(AgentVersion version) {
-        AgentVersionEntity entity = persistenceMapper.toEntity(version);
+        AgentVersionEntity entity = AgentPersistenceConvert.INSTANCE.toEntity(version);
         entity.setId(null);
         mapper.insert(entity);
         return findByVersionId(version.versionId()).orElse(version);
@@ -35,19 +33,19 @@ public class JdbcAgentVersionRepository implements AgentVersionRepository {
 
     @Override
     public Optional<AgentVersion> findByVersionId(String versionId) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectByVersionId(versionId)));
+        return Optional.ofNullable(AgentPersistenceConvert.INSTANCE.toDomain(mapper.selectByVersionId(versionId)));
     }
 
     @Override
     public Optional<AgentVersion> findByAgentIdAndVersionNumber(String agentId, int versionNumber) {
-        return Optional.ofNullable(persistenceMapper.toDomain(
+        return Optional.ofNullable(AgentPersistenceConvert.INSTANCE.toDomain(
                 mapper.selectByAgentIdAndVersionNumber(agentId, versionNumber)));
     }
 
     @Override
     public List<AgentVersion> listByAgentId(String agentId) {
         return mapper.selectByAgentId(agentId).stream()
-                .map(persistenceMapper::toDomain)
+                .map(AgentPersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 
@@ -60,6 +58,18 @@ public class JdbcAgentVersionRepository implements AgentVersionRepository {
     @Override
     public long countByModelProfileId(String modelProfileId) {
         Long count = mapper.countByModelProfileId(modelProfileId);
+        return count != null ? count : 0;
+    }
+
+    @Override
+    public long countByEnvironmentId(String environmentId) {
+        Long count = mapper.countByEnvironmentId(environmentId);
+        return count != null ? count : 0;
+    }
+
+    @Override
+    public long countByMemoryStoreId(String memoryStoreId) {
+        Long count = mapper.countByMemoryStoreId(memoryStoreId);
         return count != null ? count : 0;
     }
 

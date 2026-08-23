@@ -22,16 +22,28 @@ public interface AgentSessionMapper extends BaseMapper<AgentSessionEntity> {
                 .last("LIMIT 1"));
     }
 
-    default List<AgentSessionEntity> findByUserId(String userId, int page, int size) {
-        return selectList(Wrappers.<AgentSessionEntity>lambdaQuery()
-                .eq(AgentSessionEntity::getUserId, userId)
+    default List<AgentSessionEntity> findByFilters(String userId, String agentId,
+                                                   List<String> statuses,
+                                                   OffsetDateTime cursorCreatedAt, Long cursorId,
+                                                   int limit) {
+        LambdaQueryWrapper<AgentSessionEntity> wrapper = Wrappers.<AgentSessionEntity>lambdaQuery()
+                .eq(AgentSessionEntity::getUserId, userId);
+        if (agentId != null && !agentId.isBlank()) {
+            wrapper.eq(AgentSessionEntity::getAgentId, agentId);
+        }
+        if (statuses != null && !statuses.isEmpty()) {
+            wrapper.in(AgentSessionEntity::getStatus, statuses);
+        }
+        if (cursorCreatedAt != null && cursorId != null) {
+            wrapper.and(w -> w
+                    .gt(AgentSessionEntity::getCreatedAt, cursorCreatedAt)
+                    .or(o -> o.eq(AgentSessionEntity::getCreatedAt, cursorCreatedAt)
+                            .gt(AgentSessionEntity::getId, cursorId)));
+        }
+        return selectList(wrapper
                 .orderByAsc(AgentSessionEntity::getCreatedAt)
-                .last("LIMIT " + size + " OFFSET " + ((long) Math.max(0, page - 1) * size)));
-    }
-
-    default long countByUserId(String userId) {
-        return selectCount(Wrappers.<AgentSessionEntity>lambdaQuery()
-                .eq(AgentSessionEntity::getUserId, userId));
+                .orderByAsc(AgentSessionEntity::getId)
+                .last("LIMIT " + limit));
     }
 
     /**

@@ -1,8 +1,7 @@
 package com.linkroa.deepdataagent.runtime.application.service;
 
-import com.linkroa.deepdataagent.runtime.application.assembler.AgentRuntimeAssemblerImpl;
-import com.linkroa.deepdataagent.runtime.application.assembler.ChatEventPayloadAssembler;
 import com.linkroa.deepdataagent.runtime.application.command.CreateSessionCommand;
+import com.linkroa.deepdataagent.runtime.application.command.ResolveHumanConfirmationCommand;
 import com.linkroa.deepdataagent.runtime.application.command.SendMessageCommand;
 import com.linkroa.deepdataagent.runtime.application.command.TerminateSessionCommand;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
@@ -45,6 +44,9 @@ import tools.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -54,6 +56,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
@@ -93,12 +97,9 @@ class AgentRuntimeCommandServiceTest {
     private Executor virtualExecutor = Runnable::run;
 
     private AgentRuntimeCommandService service;
-    private ChatEventPayloadAssembler payloadAssembler;
 
     @BeforeEach
     void setUp() {
-        payloadAssembler = new ChatEventPayloadAssembler();
-        ReflectionTestUtils.setField(payloadAssembler, "objectMapper", new ObjectMapper());
         assembleService();
     }
 
@@ -114,11 +115,10 @@ class AgentRuntimeCommandServiceTest {
         ReflectionTestUtils.setField(svc, "runTraceRepository", runTraceRepository);
         ReflectionTestUtils.setField(svc, "agentFactory", agentFactory);
         ReflectionTestUtils.setField(svc, "agentRunExecutor", executor);
-        ReflectionTestUtils.setField(svc, "assembler", new AgentRuntimeAssemblerImpl());
         ReflectionTestUtils.setField(svc, "runtimeAgentAssemblyResolver", runtimeAgentAssemblyResolver);
         ReflectionTestUtils.setField(svc, "sessionRegistry", sessionRegistry);
         ReflectionTestUtils.setField(svc, "transactionTemplate", transactionTemplate);
-        ReflectionTestUtils.setField(svc, "payloadAssembler", payloadAssembler);
+        ReflectionTestUtils.setField(svc, "chatEventPersister", synchronousPersister());
         ReflectionTestUtils.setField(svc, "virtualExecutor", virtualExecutor);
         ReflectionTestUtils.setField(svc, "blockingScheduler", blockingScheduler);
         ReflectionTestUtils.setField(svc, "objectMapper", new ObjectMapper());
@@ -168,6 +168,20 @@ class AgentRuntimeCommandServiceTest {
                 .filter(inv -> inv.getMethod().getName().equals("save"))
                 .map(inv -> inv.getArgument(0, ChatEvent.class))
                 .collect(Collectors.toList());
+    }
+
+    /** 同步落库的测试替身：编排单测关注「哪些事件按何序被提交」，异步批量行为由 BatchChatEventPersister 单测覆盖。 */
+    private ChatEventPersister synchronousPersister() {
+        return new ChatEventPersister() {
+            @Override
+            public void enqueue(ChatEvent event) {
+                chatEventRepository.save(event);
+            }
+
+            @Override
+            public void flush() {
+            }
+        };
     }
 
     // ==================== 会话管理 ====================
@@ -226,6 +240,24 @@ class AgentRuntimeCommandServiceTest {
         // when & then
         assertThrows(ResourceNotFoundException.class, () -> service.createSession(command));
         verify(sessionRepository, never()).save(any(AgentSession.class));
+    }
+
+    @Test
+    void should_resolveActiveVersion_when_createSession_given_blankVersion() {
+        // given（省略版本 → 解析激活版本并物化到会话）
+        wireTransactionTemplate();
+        when(sessionRepository.save(any(AgentSession.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(runtimeAgentAssemblyResolver.activeVersionNumber("agent-a")).thenReturn("2");
+        CreateSessionCommand command = new CreateSessionCommand("u-1", "agent-a", null, "会话", "{}");
+
+        // when
+        AgentSession session = service.createSession(command);
+
+        // then（未走显式校验链，版本物化为激活版本 "2"）
+        assertEquals("2", session.agentVersion());
+        verify(runtimeAgentAssemblyResolver).activeVersionNumber("agent-a");
+        verify(runtimeAgentAssemblyResolver, never()).assertResolvable(anyString(), anyString());
+        verify(sessionRepository).save(any(AgentSession.class));
     }
 
     @Test
@@ -289,16 +321,19 @@ class AgentRuntimeCommandServiceTest {
 
         // then（短事务 A + 应用层编排事件流 + 短事务 B 完整路径）
         verify(sessionRepository).tryMarkRunning(session.sessionId());
-        // AGENT_END 贪婪触发终态、注入 SDK 事件按序落库：run_start + text_delta(+thinking_end) + run_end + session_status
+        // AGENT_END 贪婪触发终态、注入 SDK 事件按序落库：user_message + run_start + text_delta(+thinking_end) + run_end + session_status
         List<ChatEvent> saved = savedChatEvents();
-        assertEquals(ChatEventType.RUN_START, saved.get(0).eventType());
-        assertEquals(ChatEventType.MESSAGE, saved.get(1).eventType());
-        assertEquals(ChatEventType.THINKING, saved.get(2).eventType());
-        assertEquals(ChatEventType.RUN_END, saved.get(3).eventType());
-        assertTrue(saved.get(3).payload().contains("\"stop_reason\":\"stop\""),
+        assertEquals(ChatEventType.USER_MESSAGE, saved.get(0).eventType());
+        assertEquals(ChatEventType.RUN_START, saved.get(1).eventType());
+        assertEquals(ChatEventType.MESSAGE, saved.get(2).eventType());
+        assertEquals(ChatEventType.THINKING, saved.get(3).eventType());
+        assertEquals(ChatEventType.RUN_END, saved.get(4).eventType());
+        assertTrue(saved.get(4).payload().contains("\"stop_reason\":\"stop\""),
                 "RUN_END 应携带 stop_reason=stop");
-        assertEquals(ChatEventType.SESSION_STATUS, saved.get(4).eventType());
-        assertTrue(saved.get(1).payload().contains("你好"),
+        assertEquals(ChatEventType.SESSION_STATUS, saved.get(5).eventType());
+        assertTrue(saved.get(0).payload().contains("你好"),
+                "用户消息回显 payload 应携带用户输入");
+        assertTrue(saved.get(2).payload().contains("你好"),
                 "文本增量 payload 应携带实时头部窗口文本");
         // 终态：round complete + 会话回 IDLE + 根 span 结束
         ArgumentCaptor<ExecutionRound> roundCaptor = ArgumentCaptor.forClass(ExecutionRound.class);
@@ -310,8 +345,8 @@ class AgentRuntimeCommandServiceTest {
         verify(sessionRepository).markIdle(session.sessionId());
         verify(sessionRepository).touchLastActive(session.sessionId());
         verify(runTraceRepository, times(2)).save(any(RunTrace.class));
-        // run_start + text_delta + thinking_end + session_status 四次广播；SDK 终态只落库不广播
-        verify(connectionHandle, times(4)).push(any(ChatEvent.class));
+        // user_message + run_start + text_delta + thinking_end + session_status 五次广播；SDK 终态只落库不广播
+        verify(connectionHandle, times(5)).push(any(ChatEvent.class));
         verify(agent).close();
         // 会话级状态机一轮终态后回落 IDLE
         assertEquals(SessionState.IDLE, sessionRegistry.get(session.sessionId()).orElseThrow().state());
@@ -413,13 +448,14 @@ class AgentRuntimeCommandServiceTest {
 
         // then：双错误事件 + FAILED 终态 + 会话回 IDLE + agent 释放
         List<ChatEvent> captured = savedChatEvents();
-        assertEquals(4, captured.size()); // run_start + run_error + error + session_status
-        assertEquals(ChatEventType.RUN_START, captured.get(0).eventType());
-        assertEquals(ChatEventType.RUN_ERROR, captured.get(1).eventType());
-        assertTrue(captured.get(1).payload().contains("\"stop_reason\":\"error\""),
+        assertEquals(5, captured.size()); // user_message + run_start + run_error + error + session_status
+        assertEquals(ChatEventType.USER_MESSAGE, captured.get(0).eventType());
+        assertEquals(ChatEventType.RUN_START, captured.get(1).eventType());
+        assertEquals(ChatEventType.RUN_ERROR, captured.get(2).eventType());
+        assertTrue(captured.get(2).payload().contains("\"stop_reason\":\"error\""),
                 "RUN_ERROR 应携带 stop_reason=error");
-        assertEquals(ChatEventType.ERROR, captured.get(2).eventType());
-        assertEquals(ChatEventType.SESSION_STATUS, captured.get(3).eventType());
+        assertEquals(ChatEventType.ERROR, captured.get(3).eventType());
+        assertEquals(ChatEventType.SESSION_STATUS, captured.get(4).eventType());
         verify(sessionRepository).markIdle(session.sessionId());
         verify(agent).close();
     }
@@ -447,13 +483,14 @@ class AgentRuntimeCommandServiceTest {
 
         // then：双错误事件 + 会话回 IDLE + stop_reason=error（系统故障不误报中断）
         List<ChatEvent> captured = savedChatEvents();
-        assertEquals(4, captured.size()); // run_start + run_error + error + session_status
-        assertEquals(ChatEventType.RUN_START, captured.get(0).eventType());
-        assertEquals(ChatEventType.RUN_ERROR, captured.get(1).eventType());
-        assertTrue(captured.get(1).payload().contains("\"stop_reason\":\"error\""),
+        assertEquals(5, captured.size()); // user_message + run_start + run_error + error + session_status
+        assertEquals(ChatEventType.USER_MESSAGE, captured.get(0).eventType());
+        assertEquals(ChatEventType.RUN_START, captured.get(1).eventType());
+        assertEquals(ChatEventType.RUN_ERROR, captured.get(2).eventType());
+        assertTrue(captured.get(2).payload().contains("\"stop_reason\":\"error\""),
                 "RUN_ERROR 应携带 stop_reason=error");
-        assertEquals(ChatEventType.ERROR, captured.get(2).eventType());
-        assertEquals(ChatEventType.SESSION_STATUS, captured.get(3).eventType());
+        assertEquals(ChatEventType.ERROR, captured.get(3).eventType());
+        assertEquals(ChatEventType.SESSION_STATUS, captured.get(4).eventType());
         verify(sessionRepository).markIdle(session.sessionId());
     }
 
@@ -545,6 +582,138 @@ class AgentRuntimeCommandServiceTest {
         verify(virtualExecutor).execute(any(Runnable.class));
     }
 
+    // ==================== HITL 人工确认 / 拒绝 ====================
+
+    @Test
+    void should_throwNoPendingConfirm_when_resolveHumanConfirmation_given_sessionWithoutPendingConfirm() {
+        // given（会话聚合存在但无待确认项，越界 / 重复确认指令被忽略）
+        AgentSession session = idleSession();
+        when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
+        sessionRegistry.getOrCreate(session);
+
+        // when & then
+        DeepDataAgentException ex = assertThrows(DeepDataAgentException.class,
+                () -> service.resolveHumanConfirmation(new ResolveHumanConfirmationCommand(session.sessionId(), true)));
+        assertTrue(ex.getMessage().contains("DEEP_AGENT_NO_PENDING_CONFIRM"));
+    }
+
+    @Test
+    void should_rejectAndFinalizeInterrupted_when_resolveHumanConfirmation_given_confirmedFalse() throws Exception {
+        // given：真实多线程执行器（等待态阻塞不得占用后续拒绝指令的执行线程）
+        AgentSession session = idleSession();
+        when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
+        BuiltAgent agent = wireHappyPathForExecution();
+        bindConnection(session);
+        when(agentRunExecutor.streamEvents(any(BuiltAgent.class), anyString(), anyString(), anyString()))
+                .thenReturn(Flux.just(
+                        AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, "reply-1"),
+                        AgentStreamSignal.of(AgentStreamSignalType.AGENT_END, null, null)));
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        virtualExecutor = executor;
+        assembleService();
+
+        // when：异步进入等待确认态后提交拒绝
+        service.sendMessageAsync(new SendMessageCommand(session.sessionId(), "你好"));
+        awaitWaitingConfirm(session.sessionId());
+        service.resolveHumanConfirmation(new ResolveHumanConfirmationCommand(session.sessionId(), false));
+
+        // then：拒绝走中断终态（round FAILED + 会话回 IDLE + agent 释放）
+        executor.shutdown();
+        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        ArgumentCaptor<ExecutionRound> roundCaptor = ArgumentCaptor.forClass(ExecutionRound.class);
+        verify(roundRepository, times(2)).save(roundCaptor.capture());
+        assertEquals(RoundStatus.FAILED, roundCaptor.getAllValues().get(1).status());
+        verify(agent).close();
+        assertEquals(SessionState.IDLE, sessionRegistry.get(session.sessionId()).orElseThrow().state());
+    }
+
+    @Test
+    void should_resumeAndFinish_when_resolveHumanConfirmation_given_confirmedTrue() throws Exception {
+        // given：确认后经 executor 端口重新驱动流续跑本轮直至正常终态
+        AgentSession session = idleSession();
+        when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
+        BuiltAgent agent = wireHappyPathForExecution();
+        bindConnection(session);
+        when(agentRunExecutor.streamEvents(any(BuiltAgent.class), anyString(), anyString(), anyString()))
+                .thenReturn(Flux.just(
+                        AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, "reply-1"),
+                        AgentStreamSignal.of(AgentStreamSignalType.AGENT_END, null, null)));
+        when(agentRunExecutor.resumeWithConfirmation(any(BuiltAgent.class), anyString(), anyString(), anyString()))
+                .thenReturn(Flux.just(
+                        AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_RESULT, "reply-1"),
+                        AgentStreamSignal.of(AgentStreamSignalType.TEXT_DELTA, "确认后继续", "blk-2"),
+                        AgentStreamSignal.of(AgentStreamSignalType.AGENT_END, null, null)));
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        virtualExecutor = executor;
+        assembleService();
+
+        // when：异步进入等待确认态后提交确认
+        service.sendMessageAsync(new SendMessageCommand(session.sessionId(), "你好"));
+        awaitWaitingConfirm(session.sessionId());
+        service.resolveHumanConfirmation(new ResolveHumanConfirmationCommand(session.sessionId(), true));
+
+        // then：经 executor 端口续流，本轮正常 COMPLETED
+        executor.shutdown();
+        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        verify(agentRunExecutor).resumeWithConfirmation(any(BuiltAgent.class), eq("reply-1"), anyString(), anyString());
+        ArgumentCaptor<ExecutionRound> roundCaptor = ArgumentCaptor.forClass(ExecutionRound.class);
+        verify(roundRepository, times(2)).save(roundCaptor.capture());
+        assertEquals(RoundStatus.COMPLETED, roundCaptor.getAllValues().get(1).status());
+        verify(agent).close();
+        assertEquals(SessionState.IDLE, sessionRegistry.get(session.sessionId()).orElseThrow().state());
+    }
+
+    @Test
+    void should_persistAndBroadcastHitlEvents_when_resolveHumanConfirmation_given_confirmFlow() throws Exception {
+        // given：REQUIRE 信号进入等待态并透传 human_confirm_required，确认后经端口透传 human_confirm_result
+        AgentSession session = idleSession();
+        when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
+        BuiltAgent agent = wireHappyPathForExecution();
+        bindConnection(session);
+        when(agentRunExecutor.streamEvents(any(BuiltAgent.class), anyString(), anyString(), anyString()))
+                .thenReturn(Flux.just(
+                        AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, "reply-1"),
+                        AgentStreamSignal.of(AgentStreamSignalType.AGENT_END, null, null)));
+        when(agentRunExecutor.resumeWithConfirmation(any(BuiltAgent.class), anyString(), anyString(), anyString()))
+                .thenReturn(Flux.just(
+                        AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_RESULT, "reply-1"),
+                        AgentStreamSignal.of(AgentStreamSignalType.AGENT_END, null, null)));
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        virtualExecutor = executor;
+        assembleService();
+
+        // when：异步进入等待确认态后提交确认，续流直至正常终态
+        service.sendMessageAsync(new SendMessageCommand(session.sessionId(), "你好"));
+        awaitWaitingConfirm(session.sessionId());
+        service.resolveHumanConfirmation(new ResolveHumanConfirmationCommand(session.sessionId(), true));
+        executor.shutdown();
+        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+
+        // then：HITL 请求与确认结果事件均落库并广播，携带 reply_id 关联
+        List<ChatEvent> saved = savedChatEvents();
+        assertTrue(saved.stream().anyMatch(e -> e.eventType() == ChatEventType.HUMAN_CONFIRM_REQUIRED
+                        && e.payload().contains("\"reply_id\":\"reply-1\"")),
+                "应落库 human_confirm_required 事件并携带 reply_id");
+        assertTrue(saved.stream().anyMatch(e -> e.eventType() == ChatEventType.HUMAN_CONFIRM_RESULT
+                        && e.payload().contains("\"reply_id\":\"reply-1\"")),
+                "应落库 human_confirm_result 事件并携带 reply_id");
+        verify(connectionHandle).push(argThat(e -> e.eventType() == ChatEventType.HUMAN_CONFIRM_REQUIRED));
+        verify(connectionHandle).push(argThat(e -> e.eventType() == ChatEventType.HUMAN_CONFIRM_RESULT));
+    }
+
+    /** 轮询等待会话进入等待确认态（异步执行器场景下与主线程协同）。 */
+    private void awaitWaitingConfirm(String sessionId) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 5_000L;
+        while (System.currentTimeMillis() < deadline) {
+            AgentSessionContext context = sessionRegistry.get(sessionId).orElse(null);
+            if (context != null && context.isWaitingConfirm()) {
+                return;
+            }
+            Thread.sleep(10);
+        }
+        throw new AssertionError("会话未在预期时间内进入等待确认态: " + sessionId);
+    }
+
     // ==================== 工具 ====================
 
     private AgentSession idleSession() {
@@ -556,6 +725,6 @@ class AgentRuntimeCommandServiceTest {
         return new AgentAssemblySpec(
                 "agent-a", "v1", "openai:gpt-4", "你是数据分析专家",
                 10, AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L),
-                "sk-cred", "https://api.example.com/v1", null, null);
+                "sk-cred", "https://api.example.com/v1", null, null, null);
     }
 }

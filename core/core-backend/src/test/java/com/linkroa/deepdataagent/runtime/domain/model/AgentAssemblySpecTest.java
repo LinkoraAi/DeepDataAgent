@@ -2,6 +2,8 @@ package com.linkroa.deepdataagent.runtime.domain.model;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -20,7 +22,7 @@ class AgentAssemblySpecTest {
         // when
         AgentAssemblySpec spec = new AgentAssemblySpec(
                 "agent-a", "数据分析Agent", "dashscope:qwen-plus", "你是助手",
-                20, sandbox, "sk-cred", "https://api.example.com/v1", null, null);
+                20, sandbox, "sk-cred", "https://api.example.com/v1", null, null, null);
 
         // then
         assertEquals("agent-a", spec.agentId());
@@ -39,7 +41,7 @@ class AgentAssemblySpecTest {
         // when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new AgentAssemblySpec("", "数据分析Agent", "dashscope:qwen-plus",
-                        "你是助手", 20, sandbox, null, null, null, null));
+                        "你是助手", 20, sandbox, null, null, null, null, null));
     }
 
     @Test
@@ -50,7 +52,7 @@ class AgentAssemblySpecTest {
         // when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new AgentAssemblySpec("agent-a", " ", "dashscope:qwen-plus",
-                        "你是助手", 20, sandbox, null, null, null, null));
+                        "你是助手", 20, sandbox, null, null, null, null, null));
     }
 
     @Test
@@ -61,7 +63,7 @@ class AgentAssemblySpecTest {
         // when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new AgentAssemblySpec("agent-a", "n".repeat(129), "dashscope:qwen-plus",
-                        "你是助手", 20, sandbox, null, null, null, null));
+                        "你是助手", 20, sandbox, null, null, null, null, null));
     }
 
     @Test
@@ -72,7 +74,7 @@ class AgentAssemblySpecTest {
         // when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new AgentAssemblySpec("agent-a", "数据分析Agent", " ",
-                        "你是助手", 20, sandbox, null, null, null, null));
+                        "你是助手", 20, sandbox, null, null, null, null, null));
     }
 
     @Test
@@ -83,7 +85,7 @@ class AgentAssemblySpecTest {
         // when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new AgentAssemblySpec("agent-a", "数据分析Agent", "dashscope:qwen-plus",
-                        "你是助手", 0, sandbox, null, null, null, null));
+                        "你是助手", 0, sandbox, null, null, null, null, null));
     }
 
     @Test
@@ -108,12 +110,41 @@ class AgentAssemblySpecTest {
     }
 
     @Test
+    void should_keepMemoryStoreRefs_when_construct_given_memoryStoreRefs() {
+        // given
+        AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("ubuntu:22.04", null, null);
+        MemoryStoreRef ref = new MemoryStoreRef("mem-1", "会话记忆", "SHORT_TERM");
+
+        // when
+        AgentAssemblySpec spec = new AgentAssemblySpec(
+                "agent-a", "数据分析Agent", "dashscope:qwen-plus", "你是助手",
+                20, sandbox, null, null, null, null, List.of(ref));
+
+        // then
+        assertEquals(List.of(ref), spec.memoryStoreRefs());
+    }
+
+    @Test
+    void should_normalizeNullMemoryStoreRefs_when_construct_given_null() {
+        // given
+        AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("ubuntu:22.04", null, null);
+
+        // when
+        AgentAssemblySpec spec = new AgentAssemblySpec(
+                "agent-a", "数据分析Agent", "dashscope:qwen-plus", "你是助手",
+                20, sandbox, null, null, null, null, null);
+
+        // then
+        assertTrue(spec.memoryStoreRefs().isEmpty());
+    }
+
+    @Test
     void should_maskCredential_when_toString_given_plainCredential() {
         // given（明文凭证不得随 toString 泄露）
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("ubuntu:22.04", null, null);
         AgentAssemblySpec spec = new AgentAssemblySpec(
                 "agent-a", "数据分析Agent", "dashscope:qwen-plus", "你是助手",
-                20, sandbox, "sk-plain-secret", "https://api.example.com/v1", null, null);
+                20, sandbox, "sk-plain-secret", "https://api.example.com/v1", null, null, null);
 
         // when
         String text = spec.toString();

@@ -2,8 +2,7 @@ package com.linkroa.deepdataagent.runtime.infrastructure.repository;
 
 import com.linkroa.deepdataagent.runtime.domain.model.ExecutionRound;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.RoundStatus;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.RuntimePersistenceMapper;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.RuntimePersistenceMapperImpl;
+import com.linkroa.deepdataagent.runtime.infrastructure.convert.RuntimePersistenceConvert;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.entity.ExecutionRoundEntity;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.mapper.ExecutionRoundMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,22 +31,20 @@ class JdbcExecutionRoundRepositoryTest {
     @Mock
     private ExecutionRoundMapper mapper;
 
-    private RuntimePersistenceMapper persistenceMapper;
     private JdbcExecutionRoundRepository repository;
 
     @BeforeEach
     void setUp() {
-        persistenceMapper = new RuntimePersistenceMapperImpl();
         repository = new JdbcExecutionRoundRepository();
         ReflectionTestUtils.setField(repository, "mapper", mapper);
-        ReflectionTestUtils.setField(repository, "persistenceMapper", persistenceMapper);
     }
 
     @Test
     void should_insertNewRound_when_save_given_entityWithoutId() {
         // given
         ExecutionRound round = ExecutionRound.create("s-1", "run-1", 1, "你好");
-        when(mapper.findByRoundId(round.roundId())).thenReturn(persistenceMapper.toEntity(round));
+        when(mapper.findByRoundId(round.roundId()))
+                .thenReturn(RuntimePersistenceConvert.INSTANCE.toEntity(round));
 
         // when
         ExecutionRound saved = repository.save(round);
@@ -80,7 +77,8 @@ class JdbcExecutionRoundRepositoryTest {
     void should_findByRoundId_when_exists() {
         // given
         ExecutionRound round = ExecutionRound.create("s-1", "run-1", 1, "你好");
-        when(mapper.findByRoundId(round.roundId())).thenReturn(persistenceMapper.toEntity(round));
+        when(mapper.findByRoundId(round.roundId()))
+                .thenReturn(RuntimePersistenceConvert.INSTANCE.toEntity(round));
 
         // when
         Optional<ExecutionRound> found = repository.findByRoundId(round.roundId());
@@ -108,7 +106,7 @@ class JdbcExecutionRoundRepositoryTest {
         ExecutionRound r1 = ExecutionRound.create("s-1", "run-1", 1, "你好");
         ExecutionRound r2 = ExecutionRound.create("s-1", "run-2", 2, "再见");
         when(mapper.findBySessionId("s-1")).thenReturn(List.of(
-                persistenceMapper.toEntity(r1), persistenceMapper.toEntity(r2)));
+                RuntimePersistenceConvert.INSTANCE.toEntity(r1), RuntimePersistenceConvert.INSTANCE.toEntity(r2)));
 
         // when
         List<ExecutionRound> found = repository.findBySessionId("s-1");

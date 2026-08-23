@@ -1,10 +1,13 @@
 package com.linkroa.deepdataagent.runtime.application.service;
 
+import com.linkroa.deepdataagent.agent.application.contract.EnvironmentReferenceDTO;
 import com.linkroa.deepdataagent.agent.application.contract.ResolvedAgentAssemblyDTO;
 import com.linkroa.deepdataagent.agent.application.port.AgentVersionAssemblyPort;
-import com.linkroa.deepdataagent.runtime.application.assembler.AgentAssemblyAssembler;
+import com.linkroa.deepdataagent.memory.application.contract.MemoryStoreReferenceDTO;
+import com.linkroa.deepdataagent.runtime.application.convert.AgentAssemblyConvert;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
+import com.linkroa.deepdataagent.runtime.domain.model.MemoryStoreRef;
 import com.linkroa.deepdataagent.runtime.domain.model.Skill;
 import com.linkroa.deepdataagent.runtime.infrastructure.client.SkillPackageMaterializer;
 import com.linkroa.deepdataagent.runtime.infrastructure.config.AgentRuntimeProperties;
@@ -21,15 +24,13 @@ import java.util.List;
  * 沙箱/工作区等运行时基础设施参数仍取 {@link AgentRuntimeProperties}；
  * 凭证/API 端点作为工厂装配参数一并映射进装配规格。
  * 契约获取经 {@link AgentVersionAssemblyPort}（返回发布语言 DTO），DTO → 装配规格
- * 由 {@link AgentAssemblyAssembler}（防腐映射）完成。</p>
+ * 由 {@link AgentAssemblyConvert}（防腐映射）完成。</p>
  */
 @Service
 public class RuntimeAgentAssemblyResolver {
 
     @Resource
     private AgentVersionAssemblyPort agentVersionAssemblyPort;
-    @Resource
-    private AgentAssemblyAssembler agentAssemblyAssembler;
     @Resource
     private SkillPackageMaterializer skillPackageMaterializer;
     @Resource
@@ -51,6 +52,13 @@ public class RuntimeAgentAssemblyResolver {
     }
 
     /**
+     * 解析 Agent 当前激活版本号（会话创建省略版本号时物化激活版本用）。
+     */
+    public String activeVersionNumber(String agentId) {
+        return agentVersionAssemblyPort.activeVersionNumber(agentId);
+    }
+
+    /**
      * 会话 → 装配规格（每次构建实时解析，profile 改动对后续轮次生效）。
      *
      * @return 装配规格（领域值对象，含凭证/API 端点，仅入工厂装配，不参与持久化）
@@ -59,14 +67,39 @@ public class RuntimeAgentAssemblyResolver {
         ResolvedAgentAssemblyDTO resolved = agentVersionAssemblyPort.resolve(
                 session.agentId(), session.agentVersion());
         List<Skill> skills = skillPackageMaterializer.materialize(resolved.skills());
-        return agentAssemblyAssembler.toSpec(
+        List<MemoryStoreRef> memoryStoreRefs = toMemoryStoreRefs(resolved.memoryStores());
+        return AgentAssemblyConvert.INSTANCE.toSpec(
                 resolved,
-                AgentAssemblySpec.Sandbox.of(
-                        properties.getSandboxImage(),
-                        properties.getSandboxMemoryBytes(),
-                        properties.getSandboxCpuCount()
-                ),
-                skills
+                toSandbox(resolved.environment()),
+                skills,
+                memoryStoreRefs
         );
+    }
+
+    /**
+     * 版本引用环境 → 运行时沙箱规格（未引用回退全局默认规格）。
+     * <p>环境规格以 MB / 双精度 CPU 存储，运行时沙箱以字节 / 整核表达，此处做单位换算；
+     * 未显式配置（0 或非正）的维度回退为「不限制」（null）。</p>
+     */
+    private AgentAssemblySpec.Sandbox toSandbox(EnvironmentReferenceDTO environment) {
+        if (environment == null) {
+            return AgentAssemblySpec.Sandbox.of(
+                    properties.getSandboxImage(),
+                    properties.getSandboxMemoryBytes(),
+                    properties.getSandboxCpuCount());
+        }
+        Long memoryBytes = environment.memoryMb() > 0 ? environment.memoryMb() * 1024L * 1024L : null;
+        Long cpuCount = environment.cpu() > 0 ? Math.max(1L, Math.round(environment.cpu())) : null;
+        return AgentAssemblySpec.Sandbox.of(environment.image(), memoryBytes, cpuCount);
+    }
+
+    /** memory 契约引用 → runtime 领域记忆库引用值对象（未引用返回空）。 */
+    private List<MemoryStoreRef> toMemoryStoreRefs(List<MemoryStoreReferenceDTO> stores) {
+        if (stores == null) {
+            return List.of();
+        }
+        return stores.stream()
+                .map(store -> new MemoryStoreRef(store.memoryStoreId(), store.name(), store.type()))
+                .toList();
     }
 }

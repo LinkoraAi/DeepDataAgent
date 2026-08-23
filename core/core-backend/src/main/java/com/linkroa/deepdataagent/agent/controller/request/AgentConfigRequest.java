@@ -30,6 +30,12 @@ public record AgentConfigRequest(
         String knowledgeBaseIds,
 
         /** 数据源引用 JSON（[数据源 id 数字数组]） */
-        String dataSourceIds
+        String dataSourceIds,
+
+        /** 运行环境引用环境ID（可空，未引用回退系统默认规格） */
+        String environmentId,
+
+        /** 记忆库引用 JSON（[记忆库 id 字符串数组]，可空） */
+        String memoryStoreIds
 ) {
 }

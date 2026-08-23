@@ -2,7 +2,7 @@ package com.linkroa.deepdataagent.runtime.infrastructure.repository;
 
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.domain.repository.ChatEventRepository;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.RuntimePersistenceMapper;
+import com.linkroa.deepdataagent.runtime.infrastructure.convert.RuntimePersistenceConvert;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.entity.ChatEventEntity;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.mapper.ChatEventMapper;
 import jakarta.annotation.Resource;
@@ -20,12 +20,10 @@ public class JdbcChatEventRepository implements ChatEventRepository {
 
     @Resource
     private ChatEventMapper mapper;
-    @Resource
-    private RuntimePersistenceMapper persistenceMapper;
 
     @Override
     public ChatEvent save(ChatEvent event) {
-        ChatEventEntity entity = persistenceMapper.toEntity(event);
+        ChatEventEntity entity = RuntimePersistenceConvert.INSTANCE.toEntity(event);
         // 基础字段（created_at/updated_at/created_by/updated_by/is_deleted）由 MybatisPlusMetaObjectHandler 自动填充
         entity.setId(null);
         mapper.insert(entity);
@@ -41,7 +39,7 @@ public class JdbcChatEventRepository implements ChatEventRepository {
     public List<ChatEvent> findBySessionAfter(String sessionId, long afterSequenceNum) {
         return mapper.findBySessionAfter(sessionId, afterSequenceNum)
                 .stream()
-                .map(persistenceMapper::toDomain)
+                .map(RuntimePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 
@@ -49,7 +47,7 @@ public class JdbcChatEventRepository implements ChatEventRepository {
     public List<ChatEvent> findByRound(String roundId) {
         return mapper.findByRound(roundId)
                 .stream()
-                .map(persistenceMapper::toDomain)
+                .map(RuntimePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 }

@@ -27,4 +27,8 @@ public class AgentDefinitionEntity extends BaseEntity {
     private OffsetDateTime archivedAt;
     /** 最新发布号 */
     private Integer latestVersion;
+    /** 当前生效版本号（默认随发布同步，可回滚） */
+    private Integer activeVersion;
+    /** 工作空间ID（占位） */
+    private String workspaceId;
 }

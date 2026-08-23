@@ -6,6 +6,8 @@ import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.domain.model.ExecutionRound;
 import com.linkroa.deepdataagent.runtime.domain.model.RunTrace;
+import com.linkroa.deepdataagent.runtime.domain.model.SessionCursor;
+import com.linkroa.deepdataagent.runtime.domain.model.enums.AgentSessionStatus;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.ChatEventType;
 import com.linkroa.deepdataagent.runtime.domain.repository.AgentSessionRepository;
 import com.linkroa.deepdataagent.runtime.domain.repository.ChatEventRepository;
@@ -19,6 +21,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -82,20 +86,58 @@ class AgentRuntimeQueryServiceTest {
     }
 
     @Test
-    void should_returnPage_when_listSessions_given_validQuery() {
+    void should_returnPageWithoutNextCursor_when_listSessions_given_validQuery() {
         // given
-        when(sessionRepository.findByUserId("u-1", 1, 20)).thenReturn(List.of(idleSession()));
-        when(sessionRepository.countByUserId("u-1")).thenReturn(1L);
-        ListSessionsQuery query = new ListSessionsQuery("u-1", 1, 20);
+        when(sessionRepository.findByFilters("u-1", null, List.of(), null, 21))
+                .thenReturn(List.of(idleSession()));
+        ListSessionsQuery query = new ListSessionsQuery("u-1", null, null, null, 20);
 
         // when
-        AgentRuntimeQueryService.PaginatedResult<AgentSession> page = service.listSessions(query);
+        AgentRuntimeQueryService.SessionPage page = service.listSessions(query);
 
         // then
         assertEquals(1, page.data().size());
-        assertEquals(1L, page.total());
-        assertEquals(1, page.page());
-        assertEquals(20, page.size());
+        assertEquals(null, page.nextCursor());
+    }
+
+    @Test
+    void should_returnNextCursor_when_listSessions_given_moreThanOnePage() {
+        // given
+        List<AgentSession> sessions = new ArrayList<>();
+        for (int i = 1; i <= 21; i++) {
+            sessions.add(sessionWithId((long) i, "s-" + i, OffsetDateTime.parse("2026-08-22T10:00:00+08:00").plusSeconds(i)));
+        }
+        when(sessionRepository.findByFilters("u-1", "agent-a",
+                List.of(AgentSessionStatus.IDLE), null, 21)).thenReturn(sessions);
+        ListSessionsQuery query = new ListSessionsQuery("u-1", "agent-a",
+                List.of(AgentSessionStatus.IDLE), null, 20);
+
+        // when
+        AgentRuntimeQueryService.SessionPage page = service.listSessions(query);
+
+        // then
+        assertEquals(20, page.data().size());
+        assertEquals("s-20", page.data().get(19).sessionId());
+        String nextCursor = page.nextCursor();
+        assertEquals(20L, SessionCursor.parse(nextCursor).id());
+    }
+
+    @Test
+    void should_passFiltersAndCursor_when_listSessions_given_filterQuery() {
+        // given
+        SessionCursor cursor = SessionCursor.of(
+                OffsetDateTime.parse("2026-08-22T10:00:00+08:00"), 7L);
+        when(sessionRepository.findByFilters("u-1", "agent-a",
+                List.of(AgentSessionStatus.RUNNING), cursor, 21)).thenReturn(List.of());
+        ListSessionsQuery query = new ListSessionsQuery("u-1", "agent-a",
+                List.of(AgentSessionStatus.RUNNING), cursor, 20);
+
+        // when
+        AgentRuntimeQueryService.SessionPage page = service.listSessions(query);
+
+        // then
+        assertEquals(0, page.data().size());
+        assertEquals(null, page.nextCursor());
     }
 
     // ==================== 轮次 / 事件 / 追踪查询 ====================
@@ -178,5 +220,10 @@ class AgentRuntimeQueryServiceTest {
 
     private AgentSession idleSession() {
         return AgentSession.create("u-1", "agent-a", "1.0.0", "{}", null);
+    }
+
+    private AgentSession sessionWithId(Long id, String sessionId, OffsetDateTime createdAt) {
+        return AgentSession.restore(id, sessionId, "u-1", "default", "agent-a", "1.0.0",
+                AgentSessionStatus.IDLE, "{}", null, null, createdAt, createdAt, createdAt, null, null);
     }
 }

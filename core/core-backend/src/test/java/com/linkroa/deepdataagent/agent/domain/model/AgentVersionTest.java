@@ -13,7 +13,7 @@ class AgentVersionTest {
         // given // when
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", "初始版本", "你是销售助手",
-                "profile-1", "[{\"skillId\":\"s1\",\"version\":1}]", null, null);
+                "profile-1", "[{\"skillId\":\"s1\",\"version\":1}]", null, null, null, null, null);
 
         // then
         assertEquals(1, version.versionNumber());
@@ -26,7 +26,7 @@ class AgentVersionTest {
         // given // when // then
         assertThrows(IllegalArgumentException.class,
                 () -> AgentVersion.create("v-1", "agent-1", 0, "v0", null,
-                        "system", "profile-1", null, null, null));
+                        "system", "profile-1", null, null, null, null, null, null));
     }
 
     @Test
@@ -34,14 +34,14 @@ class AgentVersionTest {
         // given // when // then
         assertThrows(IllegalArgumentException.class,
                 () -> AgentVersion.create("v-1", "agent-1", 1, "v1", null,
-                        "system", "", null, null, null));
+                        "system", "", null, null, null, null, null, null));
     }
 
     @Test
     void should_defaultSystemToEmpty_when_create_given_nullSystem() {
         // given // when
         AgentVersion version = AgentVersion.create(
-                "v-1", "agent-1", 1, "v1", null, null, "profile-1", null, null, null);
+                "v-1", "agent-1", 1, "v1", null, null, "profile-1", null, null, null, null, null, null);
 
         // then
         assertEquals("", version.system());
@@ -51,7 +51,8 @@ class AgentVersionTest {
     void should_returnEmptySkills_when_parseSkillRefs_given_blankSkillIds() {
         // given
         AgentVersion version = AgentVersion.create(
-                "v-1", "agent-1", 1, "v1", null, "system", "profile-1", null, null, null);
+                "v-1", "agent-1", 1, "v1", null, "system", "profile-1",
+                null, null, null, null, null, null);
 
         // when
         var refs = version.parseSkillRefs();
@@ -65,7 +66,8 @@ class AgentVersionTest {
         // given
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", null, "system", "profile-1",
-                "[{\"skillId\":\"s1\",\"version\":1},{\"skillId\":\"s2\",\"version\":3}]", null, null);
+                "[{\"skillId\":\"s1\",\"version\":1},{\"skillId\":\"s2\",\"version\":3}]",
+                null, null, null, null, null);
 
         // when
         var refs = version.parseSkillRefs();
@@ -80,7 +82,8 @@ class AgentVersionTest {
     void should_returnEmptyDatasourceIds_when_parseDatasourceIds_given_blankDataSourceIds() {
         // given
         AgentVersion version = AgentVersion.create(
-                "v-1", "agent-1", 1, "v1", null, "system", "profile-1", null, null, null);
+                "v-1", "agent-1", 1, "v1", null, "system", "profile-1",
+                null, null, null, null, null, null);
 
         // when
         var ids = version.parseDatasourceIds();
@@ -94,7 +97,7 @@ class AgentVersionTest {
         // given
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", null, "system", "profile-1",
-                "[{\"skillId\":\"s1\",\"version\":1}]", null, "[1,2]");
+                "[{\"skillId\":\"s1\",\"version\":1}]", null, "[1,2]", null, null, null);
 
         // when
         var ids = version.parseDatasourceIds();
@@ -103,5 +106,35 @@ class AgentVersionTest {
         assertEquals(2, ids.size());
         assertEquals(1L, ids.get(0));
         assertEquals(2L, ids.get(1));
+    }
+
+    @Test
+    void should_returnMemoryStoreIds_when_parseMemoryStoreIds_given_jsonMemoryStoreIds() {
+        // given
+        AgentVersion version = AgentVersion.create(
+                "v-1", "agent-1", 1, "v1", null, "system", "profile-1",
+                null, null, null, null, "[\"m1\",\"m2\"]", null);
+
+        // when
+        var ids = version.parseMemoryStoreIds();
+
+        // then
+        assertEquals(2, ids.size());
+        assertEquals("m1", ids.get(0));
+        assertEquals("m2", ids.get(1));
+    }
+
+    @Test
+    void should_returnEmptyMemoryStoreIds_when_parseMemoryStoreIds_given_blankMemoryStoreIds() {
+        // given
+        AgentVersion version = AgentVersion.create(
+                "v-1", "agent-1", 1, "v1", null, "system", "profile-1",
+                null, null, null, null, null, null);
+
+        // when
+        var ids = version.parseMemoryStoreIds();
+
+        // then
+        assertTrue(ids.isEmpty());
     }
 }

@@ -3,7 +3,7 @@ package com.linkroa.deepdataagent.agent.infrastructure.repository;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.agent.domain.model.AgentDefinition;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentDefinitionRepository;
-import com.linkroa.deepdataagent.agent.infrastructure.persistence.AgentPersistenceMapper;
+import com.linkroa.deepdataagent.agent.infrastructure.convert.AgentPersistenceConvert;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.AgentDefinitionEntity;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper.AgentDefinitionMapper;
 import org.springframework.stereotype.Repository;
@@ -20,16 +20,14 @@ import java.util.Optional;
 public class JdbcAgentDefinitionRepository implements AgentDefinitionRepository {
 
     private final AgentDefinitionMapper mapper;
-    private final AgentPersistenceMapper persistenceMapper;
 
-    public JdbcAgentDefinitionRepository(AgentDefinitionMapper mapper, AgentPersistenceMapper persistenceMapper) {
+    public JdbcAgentDefinitionRepository(AgentDefinitionMapper mapper) {
         this.mapper = mapper;
-        this.persistenceMapper = persistenceMapper;
     }
 
     @Override
     public AgentDefinition save(AgentDefinition definition) {
-        AgentDefinitionEntity entity = persistenceMapper.toEntity(definition);
+        AgentDefinitionEntity entity = AgentPersistenceConvert.INSTANCE.toEntity(definition);
         entity.setId(null);
         mapper.insert(entity);
         return findByAgentId(definition.agentId()).orElse(definition);
@@ -37,7 +35,7 @@ public class JdbcAgentDefinitionRepository implements AgentDefinitionRepository 
 
     @Override
     public AgentDefinition update(AgentDefinition definition) {
-        AgentDefinitionEntity entity = persistenceMapper.toEntity(definition);
+        AgentDefinitionEntity entity = AgentPersistenceConvert.INSTANCE.toEntity(definition);
         mapper.update(entity, Wrappers.<AgentDefinitionEntity>lambdaUpdate()
                 .eq(e -> e.getAgentId(), definition.agentId()));
         return findByAgentId(definition.agentId()).orElse(definition);
@@ -45,17 +43,17 @@ public class JdbcAgentDefinitionRepository implements AgentDefinitionRepository 
 
     @Override
     public Optional<AgentDefinition> findByAgentId(String agentId) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectByAgentId(agentId)));
+        return Optional.ofNullable(AgentPersistenceConvert.INSTANCE.toDomain(mapper.selectByAgentId(agentId)));
     }
 
     @Override
     public Optional<AgentDefinition> findByAgentIdForUpdate(String agentId) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectByAgentIdForUpdate(agentId)));
+        return Optional.ofNullable(AgentPersistenceConvert.INSTANCE.toDomain(mapper.selectByAgentIdForUpdate(agentId)));
     }
 
     @Override
     public Optional<AgentDefinition> findByName(String name) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectByName(name)));
+        return Optional.ofNullable(AgentPersistenceConvert.INSTANCE.toDomain(mapper.selectByName(name)));
     }
 
     @Override
@@ -66,7 +64,7 @@ public class JdbcAgentDefinitionRepository implements AgentDefinitionRepository 
                         (long) Math.max(0, page - 1) * size,
                         size)
                 .stream()
-                .map(persistenceMapper::toDomain)
+                .map(AgentPersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 
@@ -81,6 +79,11 @@ public class JdbcAgentDefinitionRepository implements AgentDefinitionRepository 
                 .set(e -> e.getArchived(), archived)
                 .set(e -> e.getArchivedAt(), archived ? OffsetDateTime.now(ZoneId.of("Asia/Shanghai")) : null)
                 .eq(e -> e.getAgentId(), agentId));
+    }
+
+    @Override
+    public void updateActiveVersion(String agentId, int versionNumber) {
+        mapper.updateActiveVersion(agentId, versionNumber);
     }
 
     @Override

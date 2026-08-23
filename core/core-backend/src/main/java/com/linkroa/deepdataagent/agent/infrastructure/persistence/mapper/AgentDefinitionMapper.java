@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.AgentDefinitionEntity;
 import org.apache.ibatis.annotations.Mapper;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 /**
@@ -43,6 +45,13 @@ public interface AgentDefinitionMapper extends BaseMapper<AgentDefinitionEntity>
 
     default long countByCondition(String keyword, boolean includeArchived) {
         return selectCount(buildCondition(keyword, includeArchived));
+    }
+
+    default int updateActiveVersion(String agentId, int versionNumber) {
+        return update(null, Wrappers.<AgentDefinitionEntity>lambdaUpdate()
+                .set(e -> e.getActiveVersion(), versionNumber)
+                .set(e -> e.getUpdatedAt(), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")))
+                .eq(e -> e.getAgentId(), agentId));
     }
 
     private LambdaQueryWrapper<AgentDefinitionEntity> buildCondition(String keyword, boolean includeArchived) {

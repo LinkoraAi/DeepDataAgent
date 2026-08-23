@@ -1,15 +1,15 @@
 package com.linkroa.deepdataagent.agent.controller.rest;
 
-import com.linkroa.deepdataagent.agent.application.assembler.SkillCommandAssembler;
+import com.linkroa.deepdataagent.agent.application.convert.SkillCommandConvert;
 import com.linkroa.deepdataagent.agent.application.command.CreateSkillCommand;
 import com.linkroa.deepdataagent.agent.application.command.PublishSkillVersionCommand;
 import com.linkroa.deepdataagent.agent.application.query.ListSkillQuery;
 import com.linkroa.deepdataagent.agent.application.service.SkillApplicationService;
+import com.linkroa.deepdataagent.agent.controller.convert.SkillResourceResponseConvert;
 import com.linkroa.deepdataagent.agent.controller.request.CreateSkillRequest;
 import com.linkroa.deepdataagent.agent.controller.request.PublishSkillVersionRequest;
 import com.linkroa.deepdataagent.agent.controller.response.SkillDetailResponse;
 import com.linkroa.deepdataagent.agent.controller.response.SkillResourceResponse;
-import com.linkroa.deepdataagent.agent.controller.response.SkillResourceResponseMapper;
 import com.linkroa.deepdataagent.agent.domain.model.SkillResource;
 import com.linkroa.deepdataagent.shared.constant.api.ApiVersionConstants;
 import com.linkroa.deepdataagent.shared.result.PaginatedResponse;
@@ -43,10 +43,6 @@ public class SkillController {
 
     @Resource
     private SkillApplicationService applicationService;
-    @Resource
-    private SkillResourceResponseMapper responseMapper;
-    @Resource
-    private SkillCommandAssembler commandAssembler;
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<SkillResourceResponse> create(
@@ -54,8 +50,8 @@ public class SkillController {
             @Valid @RequestPart("meta") CreateSkillRequest meta
     ) throws IOException {
         byte[] content = readContent(file);
-        CreateSkillCommand command = commandAssembler.toCreateCommand(meta, content);
-        return ApiResponse.success(responseMapper.toResponse(applicationService.createSkill(command)));
+        CreateSkillCommand command = SkillCommandConvert.INSTANCE.toCreateCommand(meta, content);
+        return ApiResponse.success(SkillResourceResponseConvert.INSTANCE.toResponse(applicationService.createSkill(command)));
     }
 
     @PostMapping(value = "/{skillId}/versions", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -65,8 +61,8 @@ public class SkillController {
             @Valid @RequestPart("meta") PublishSkillVersionRequest meta
     ) throws IOException {
         byte[] content = readContent(file);
-        PublishSkillVersionCommand command = commandAssembler.toPublishCommand(skillId, meta, content);
-        return ApiResponse.success(responseMapper.toResponse(applicationService.publishVersion(command)));
+        PublishSkillVersionCommand command = SkillCommandConvert.INSTANCE.toPublishCommand(skillId, meta, content);
+        return ApiResponse.success(SkillResourceResponseConvert.INSTANCE.toResponse(applicationService.publishVersion(command)));
     }
 
     @GetMapping
@@ -79,7 +75,7 @@ public class SkillController {
         List<SkillResource> skills = applicationService.listSkills(query);
         long total = applicationService.countSkills(query);
         List<SkillResourceResponse> responses = skills.stream()
-                .map(responseMapper::toResponse)
+                .map(SkillResourceResponseConvert.INSTANCE::toResponse)
                 .toList();
         return ApiResponse.success(new PaginatedResponse<>(responses, total, query.page(), query.size()));
     }
@@ -87,7 +83,7 @@ public class SkillController {
     @GetMapping("/{skillId}")
     public ApiResponse<SkillDetailResponse> detail(@PathVariable String skillId) {
         List<SkillResourceResponse> versions = applicationService.getSkillVersions(skillId).stream()
-                .map(responseMapper::toResponse)
+                .map(SkillResourceResponseConvert.INSTANCE::toResponse)
                 .toList();
         return ApiResponse.success(new SkillDetailResponse(skillId, versions));
     }

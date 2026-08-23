@@ -1,5 +1,6 @@
 package com.linkroa.deepdataagent.runtime.domain.model;
 
+import com.linkroa.deepdataagent.runtime.domain.model.enums.HitlState;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.SessionState;
 import lombok.extern.slf4j.Slf4j;
 
@@ -51,6 +52,9 @@ public final class AgentSessionContext {
 
     /** 会话执行状态机（内存态，默认 IDLE） */
     private final AtomicReference<SessionState> state = new AtomicReference<>(SessionState.IDLE);
+
+    /** HITL 正交子态（内存态，默认 NONE，与会话执行状态机正交） */
+    private final AtomicReference<HitlState> hitlState = new AtomicReference<>(HitlState.NONE);
 
     public AgentSessionContext(AgentSession session) {
         this.session = session;
@@ -199,6 +203,66 @@ public final class AgentSessionContext {
             }
             if (state.compareAndSet(current, target)) {
                 return true;
+            }
+        }
+    }
+
+    // ==================== HITL 正交子态 ====================
+
+    /**
+     * 当前 HITL 正交子态。
+     *
+     * @return 子态当前状态
+     */
+    public HitlState hitlState() {
+        return hitlState.get();
+    }
+
+    /**
+     * 是否处于等待人工确认态。
+     *
+     * @return true=等待确认
+     */
+    public boolean isWaitingConfirm() {
+        return hitlState.get() == HitlState.WAITING_CONFIRM;
+    }
+
+    /**
+     * 进入等待确认态（HITL 暂停）：{@code NONE → WAITING_CONFIRM}，
+     * 非 {@code NONE} 时视为非法转换抛 {@link IllegalStateException}。
+     */
+    public void enterWaitingConfirm() {
+        transitionHitlState(HitlState.WAITING_CONFIRM);
+    }
+
+    /**
+     * 离开等待确认态（HITL 恢复 / 拒绝共用）：{@code WAITING_CONFIRM → NONE}，
+     * 已处于 {@code NONE} 时幂等返回（对已结束等待的越界确认指令不产生副作用）。
+     */
+    public void leaveWaitingConfirm() {
+        while (true) {
+            HitlState current = hitlState.get();
+            if (current == HitlState.NONE) {
+                return;
+            }
+            current.validateTransition(HitlState.NONE);
+            if (hitlState.compareAndSet(current, HitlState.NONE)) {
+                return;
+            }
+        }
+    }
+
+    /**
+     * HITL 子态迁移（CAS 重试 + 合法性校验），非法转换抛 {@link IllegalStateException}。
+     *
+     * @param target 目标子态
+     */
+    private void transitionHitlState(HitlState target) {
+        while (true) {
+            HitlState current = hitlState.get();
+            current.validateTransition(target);
+            if (hitlState.compareAndSet(current, target)) {
+                return;
             }
         }
     }

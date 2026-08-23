@@ -1,7 +1,7 @@
 package com.linkroa.deepdataagent.runtime.controller.rest;
 
-import com.linkroa.deepdataagent.runtime.application.assembler.AgentRuntimeCommandAssembler;
-import com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler;
+import com.linkroa.deepdataagent.runtime.application.convert.AgentRuntimeCommandConvert;
+import com.linkroa.deepdataagent.runtime.application.convert.SseEventEnvelopeConvert;
 import com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope;
 import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeCommandService;
 import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeQueryService;
@@ -54,10 +54,6 @@ public class AgentChatEventController {
     @Resource
     private AgentRuntimeQueryService queryService;
     @Resource
-    private AgentRuntimeCommandAssembler commandAssembler;
-    @Resource
-    private SseEventEnvelopeAssembler sseEventEnvelopeAssembler;
-    @Resource
     private SseEmitterRegistry emitterRegistry;
     @Resource
     private AgentRuntimeProperties properties;
@@ -73,7 +69,7 @@ public class AgentChatEventController {
                                                          @Valid @RequestBody SendEventRequest request) {
         String message = extractMessage(request);
         String runId = UUID.randomUUID().toString().replace("-", "");
-        commandService.sendMessageAsync(commandAssembler.toSendCommand(sessionId, message, runId));
+        commandService.sendMessageAsync(AgentRuntimeCommandConvert.INSTANCE.toSendCommand(sessionId, message, runId));
         return ApiResponse.success(List.of(userMessageEcho(sessionId, message)));
     }
 
@@ -82,9 +78,9 @@ public class AgentChatEventController {
      */
     @GetMapping
     public ApiResponse<EventListResponse> listEvents(@PathVariable String sessionId) {
-        List<ChatEvent> events = queryService.replayEvents(commandAssembler.toReplayQuery(sessionId, 0));
+        List<ChatEvent> events = queryService.replayEvents(AgentRuntimeCommandConvert.INSTANCE.toReplayQuery(sessionId, 0));
         List<SseEventEnvelope> data = events.stream()
-                .map(sseEventEnvelopeAssembler::toEnvelope)
+                .map(SseEventEnvelopeConvert.INSTANCE::toEnvelope)
                 .toList();
         return ApiResponse.success(new EventListResponse(data, null));
     }
@@ -109,9 +105,9 @@ public class AgentChatEventController {
             // 绑定完成后再回放：绑定到回放之间的实时广播与该 emitter 同步，
             // 客户端按 event_id / sequence_number 幂等去重，杜绝「回放先于绑定」的丢失窗口
             List<ChatEvent> history = queryService.replayEvents(
-                    commandAssembler.toReplayQuery(sessionId, parseLastEventId(lastEventId)));
+                    AgentRuntimeCommandConvert.INSTANCE.toReplayQuery(sessionId, parseLastEventId(lastEventId)));
             for (ChatEvent event : history) {
-                emitter.send(ChatEventCodec.toSseEvent(sseEventEnvelopeAssembler.toEnvelope(event)));
+                emitter.send(ChatEventCodec.toSseEvent(SseEventEnvelopeConvert.INSTANCE.toEnvelope(event)));
             }
         } catch (Exception ex) {
             emitter.completeWithError(ex);

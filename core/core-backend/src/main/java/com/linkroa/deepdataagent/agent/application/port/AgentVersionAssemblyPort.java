@@ -39,4 +39,14 @@ public interface AgentVersionAssemblyPort {
      * @return 最新发布号（十进制字符串）
      */
     String latestVersionNumber(String agentId);
+
+    /**
+     * 解析 Agent 当前激活版本号（十进制字符串，如 "1"）。
+     * <p>会话创建省略版本号时用于物化激活版本（{@code active_version}，默认随发布同步、
+     * 可回滚）；Agent 不存在 / 已归档 / 无激活版本 → 404。</p>
+     *
+     * @param agentId Agent 业务 ID
+     * @return 激活版本号（十进制字符串）
+     */
+    String activeVersionNumber(String agentId);
 }

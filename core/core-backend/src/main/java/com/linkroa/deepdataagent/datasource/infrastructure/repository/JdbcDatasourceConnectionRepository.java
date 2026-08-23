@@ -4,7 +4,7 @@ import com.linkroa.deepdataagent.datasource.domain.model.DatasourceConnection;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceStatus;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceType;
 import com.linkroa.deepdataagent.datasource.domain.repository.DatasourceConnectionRepository;
-import com.linkroa.deepdataagent.datasource.infrastructure.persistence.DatasourcePersistenceMapper;
+import com.linkroa.deepdataagent.datasource.infrastructure.convert.DatasourcePersistenceConvert;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.DatasourceConnectionEntity;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.mapper.DatasourceConnectionMapper;
 import com.linkroa.deepdataagent.datasource.infrastructure.util.PasswordEncryptionUtil;
@@ -17,20 +17,17 @@ import java.util.Optional;
 public class JdbcDatasourceConnectionRepository implements DatasourceConnectionRepository {
 
     private final DatasourceConnectionMapper mapper;
-    private final DatasourcePersistenceMapper persistenceMapper;
     private final PasswordEncryptionUtil encryptionUtil;
 
     public JdbcDatasourceConnectionRepository(DatasourceConnectionMapper mapper,
-                                              DatasourcePersistenceMapper persistenceMapper,
                                               PasswordEncryptionUtil encryptionUtil) {
         this.mapper = mapper;
-        this.persistenceMapper = persistenceMapper;
         this.encryptionUtil = encryptionUtil;
     }
 
     @Override
     public DatasourceConnection save(DatasourceConnection connection) {
-        DatasourceConnectionEntity entity = persistenceMapper.toEntity(connection, encryptionUtil);
+        DatasourceConnectionEntity entity = DatasourcePersistenceConvert.INSTANCE.toEntity(connection, encryptionUtil);
         entity.setId(null);
         // 基础字段（created_at/updated_at/created_by/updated_by/is_deleted）由 MybatisPlusMetaObjectHandler 自动填充
         mapper.insert(entity);
@@ -39,7 +36,7 @@ public class JdbcDatasourceConnectionRepository implements DatasourceConnectionR
 
     @Override
     public DatasourceConnection update(DatasourceConnection connection) {
-        DatasourceConnectionEntity entity = persistenceMapper.toEntity(connection, encryptionUtil);
+        DatasourceConnectionEntity entity = DatasourcePersistenceConvert.INSTANCE.toEntity(connection, encryptionUtil);
         // updated_at/updated_by 由 MybatisPlusMetaObjectHandler 自动填充
         mapper.updateById(entity);
         return findById(connection.id()).orElse(connection);
@@ -47,14 +44,14 @@ public class JdbcDatasourceConnectionRepository implements DatasourceConnectionR
 
     @Override
     public Optional<DatasourceConnection> findById(Long id) {
-        return Optional.ofNullable(persistenceMapper.toDomain(
+        return Optional.ofNullable(DatasourcePersistenceConvert.INSTANCE.toDomain(
                 mapper.selectById(id), encryptionUtil
         ));
     }
 
     @Override
     public Optional<DatasourceConnection> findByName(String name) {
-        return Optional.ofNullable(persistenceMapper.toDomain(
+        return Optional.ofNullable(DatasourcePersistenceConvert.INSTANCE.toDomain(
                 mapper.selectByName(name), encryptionUtil
         ));
     }
@@ -63,7 +60,7 @@ public class JdbcDatasourceConnectionRepository implements DatasourceConnectionR
     public List<DatasourceConnection> findAll() {
         return mapper.selectAll()
                 .stream()
-                .map(e -> persistenceMapper.toDomain(e, encryptionUtil))
+                .map(e -> DatasourcePersistenceConvert.INSTANCE.toDomain(e, encryptionUtil))
                 .toList();
     }
 
@@ -76,7 +73,7 @@ public class JdbcDatasourceConnectionRepository implements DatasourceConnectionR
                         (long) Math.max(0, page - 1) * size,
                         size)
                 .stream()
-                .map(e -> persistenceMapper.toDomain(e, encryptionUtil))
+                .map(e -> DatasourcePersistenceConvert.INSTANCE.toDomain(e, encryptionUtil))
                 .toList();
     }
 

@@ -22,6 +22,7 @@ import java.util.regex.Pattern;
  * @param storageKey    存储路径（本地相对路径或对象存储key）
  * @param contentSha256 内容 SHA-256 校验值
  * @param contentSize   内容大小（字节）
+ * @param resources     结构化资源清单（references / scripts，值对象）
  * @param status        状态
  * @param createdAt     创建时间
  * @param updatedAt     更新时间
@@ -39,6 +40,7 @@ public record SkillResource(
         String storageKey,
         String contentSha256,
         long contentSize,
+        SkillResourceManifest resources,
         SkillStatus status,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
@@ -80,6 +82,7 @@ public record SkillResource(
         if (contentSize < 0) {
             throw new IllegalArgumentException("内容大小不能为负数");
         }
+        resources = resources == null ? SkillResourceManifest.empty() : resources;
     }
 
     /**
@@ -94,13 +97,14 @@ public record SkillResource(
             SkillStorageType storageType,
             String storageKey,
             String contentSha256,
-            long contentSize
+            long contentSize,
+            SkillResourceManifest resources
     ) {
         return new SkillResource(
                 null, skillId, versionNumber, name, description,
                 skillType != null ? skillType : SkillType.CUSTOM,
                 storageType != null ? storageType : SkillStorageType.LOCAL_FILE,
-                storageKey, contentSha256, contentSize, SkillStatus.ACTIVE,
+                storageKey, contentSha256, contentSize, resources, SkillStatus.ACTIVE,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 null, null
@@ -121,6 +125,7 @@ public record SkillResource(
             String storageKey,
             String contentSha256,
             long contentSize,
+            SkillResourceManifest resources,
             SkillStatus status,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
@@ -129,7 +134,7 @@ public record SkillResource(
     ) {
         return new SkillResource(
                 id, skillId, versionNumber, name, description,
-                skillType, storageType, storageKey, contentSha256, contentSize,
+                skillType, storageType, storageKey, contentSha256, contentSize, resources,
                 status, createdAt, updatedAt, createdBy, updatedBy
         );
     }

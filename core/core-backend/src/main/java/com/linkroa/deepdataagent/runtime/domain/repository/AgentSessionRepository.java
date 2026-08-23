@@ -1,6 +1,7 @@
 package com.linkroa.deepdataagent.runtime.domain.repository;
 
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
+import com.linkroa.deepdataagent.runtime.domain.model.SessionCursor;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.AgentSessionStatus;
 
 import java.util.List;
@@ -22,19 +23,17 @@ public interface AgentSessionRepository {
     Optional<AgentSession> findBySessionId(String sessionId);
 
     /**
-     * 按用户 ID 分页查询（按创建时间升序）。
+     * 按用户 + 过滤条件游标分页查询（按 {@code (created_at, id)} 升序）。
      *
-     * @param userId 用户 ID
-     * @param page   页码（从 1 开始）
-     * @param size   每页大小
-     * @return 会话列表
+     * @param userId   用户 ID
+     * @param agentId  Agent ID（可空，不过滤）
+     * @param statuses 状态集合（空表示不过滤）
+     * @param cursor   游标断点（null 表示第一页）
+     * @param limit    本次最多返回条数（含用于判断是否还有下一页的多取一条）
+     * @return 会话列表（按游标升序）
      */
-    List<AgentSession> findByUserId(String userId, int page, int size);
-
-    /**
-     * 按用户 ID 统计会话数。
-     */
-    long countByUserId(String userId);
+    List<AgentSession> findByFilters(String userId, String agentId,
+                                     List<AgentSessionStatus> statuses, SessionCursor cursor, int limit);
 
     /**
      * 抢占执行权的原子 CAS：仅当会话处于 IDLE 时置为 RUNNING（保证同一会话同时只有一个执行；TERMINATED 不可复活）。

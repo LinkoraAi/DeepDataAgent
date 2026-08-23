@@ -11,12 +11,16 @@ import com.linkroa.deepdataagent.agent.domain.model.AgentVersion;
 import com.linkroa.deepdataagent.agent.domain.model.ModelProfile;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentDefinitionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentVersionRepository;
+import com.linkroa.deepdataagent.agent.domain.repository.EnvironmentRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.ModelProfileRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.SkillRepository;
 import com.linkroa.deepdataagent.agent.domain.service.AgentVersionDomainService;
+import com.linkroa.deepdataagent.memory.api.MemoryStoreApi;
+import com.linkroa.deepdataagent.memory.application.contract.MemoryStoreReferenceDTO;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import jakarta.annotation.Resource;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -38,6 +42,10 @@ public class AgentApplicationService {
     @Resource
     private SkillRepository skillRepository;
     @Resource
+    private EnvironmentRepository environmentRepository;
+    @Resource
+    private MemoryStoreApi memoryStoreApi;
+    @Resource
     private AgentVersionDomainService versionDomainService;
     @Resource
     private TransactionTemplate transactionTemplate;
@@ -56,13 +64,16 @@ public class AgentApplicationService {
         ModelProfile profile = resolveReferableProfile(command.modelProfileId());
         // 挂载的技能引用（skillId + version）须存在
         SkillMountValidator.validateReferable(command.skillIds(), skillRepository);
+        // 引用的环境 / 记忆库须存在（引用不存在 → 拒绝发布）
+        validateReferences(command.environmentId(), command.memoryStoreIds());
 
         String agentId = UUID.randomUUID().toString();
         return transactionTemplate.execute(status -> {
             AgentDefinition definition = agentDefinitionRepository.save(AgentDefinition.create(agentId, command.name(), command.description()));
             AgentVersion v1 = publishVersionInTransaction(definition, command.name(), command.description(), command.system(),
                     profile.profileId(), command.skillIds(),
-                    command.knowledgeBaseIds(), command.dataSourceIds());
+                    command.knowledgeBaseIds(), command.dataSourceIds(),
+                    command.environmentId(), command.memoryStoreIds());
             return agentDefinitionRepository.update(withLatestVersion(definition, v1.versionNumber()));
         });
     }
@@ -76,6 +87,8 @@ public class AgentApplicationService {
         ModelProfile profile = resolveReferableProfile(command.modelProfileId());
         // 挂载的技能引用（skillId + version）须存在
         SkillMountValidator.validateReferable(command.skillIds(), skillRepository);
+        // 引用的环境 / 记忆库须存在（引用不存在 → 拒绝发布）
+        validateReferences(command.environmentId(), command.memoryStoreIds());
 
         return transactionTemplate.execute(status -> {
             AgentDefinition definition = agentDefinitionRepository.findByAgentIdForUpdate(command.agentId())
@@ -84,7 +97,8 @@ public class AgentApplicationService {
             AgentValidator.validatePublishable(definition);
             AgentVersion version = publishVersionInTransaction(definition, command.name(), command.description(),
                     command.system(), profile.profileId(), command.skillIds(),
-                    command.knowledgeBaseIds(), command.dataSourceIds());
+                    command.knowledgeBaseIds(), command.dataSourceIds(),
+                    command.environmentId(), command.memoryStoreIds());
             agentDefinitionRepository.update(withLatestVersion(definition, version.versionNumber()));
             return version;
         });
@@ -95,7 +109,8 @@ public class AgentApplicationService {
      */
     private AgentVersion publishVersionInTransaction(AgentDefinition definition, String name, String description,
                                                      String system, String modelProfileId,
-                                                     String skillIds, String knowledgeBaseIds, String dataSourceIds) {
+                                                     String skillIds, String knowledgeBaseIds, String dataSourceIds,
+                                                     String environmentId, String memoryStoreIds) {
         int maxVersion = agentVersionRepository.findMaxVersionNumber(definition.agentId());
         int nextVersion = versionDomainService.nextVersionNumber(maxVersion);
         AgentVersion version = AgentVersion.create(
@@ -108,7 +123,10 @@ public class AgentApplicationService {
                 modelProfileId,
                 skillIds,
                 knowledgeBaseIds,
-                dataSourceIds
+                dataSourceIds,
+                environmentId,
+                memoryStoreIds,
+                definition.workspaceId()
         );
         return agentVersionRepository.save(version);
     }
@@ -178,7 +196,28 @@ public class AgentApplicationService {
     }
 
     /**
-     * 复制 definition 并更新 latest_version
+     * 校验版本引用的环境 / 记忆库存在性（引用不存在 → 拒绝发布）。
+     * <p>环境为 agent BC 内部聚合，直接经环境仓储校验；记忆库为跨 BC 引用，
+     * 经 memory 的服务契约 {@link MemoryStoreApi} 批量校验。</p>
+     */
+    private void validateReferences(String environmentId, String memoryStoreIds) {
+        if (StringUtils.isNotBlank(environmentId)) {
+            environmentRepository.findByEnvironmentId(environmentId)
+                    .orElseThrow(() -> new ResourceNotFoundException("运行环境不存在"));
+        }
+        List<String> memoryIds = AgentVersion.parseMemoryStoreIds(memoryStoreIds);
+        if (!memoryIds.isEmpty()) {
+            List<String> foundIds = memoryStoreApi.resolveByIds(memoryIds).stream()
+                    .map(MemoryStoreReferenceDTO::memoryStoreId)
+                    .toList();
+            if (!foundIds.containsAll(memoryIds)) {
+                throw new ResourceNotFoundException("记忆库引用不存在");
+            }
+        }
+    }
+
+    /**
+     * 复制 definition 并更新 latest_version（active_version 默认随发布同步）。
      */
     private AgentDefinition withLatestVersion(AgentDefinition definition, int latestVersion) {
         return AgentDefinition.restore(
@@ -189,6 +228,8 @@ public class AgentApplicationService {
                 definition.archived(),
                 definition.archivedAt(),
                 latestVersion,
+                latestVersion,
+                definition.workspaceId(),
                 definition.createdAt(),
                 definition.updatedAt(),
                 definition.createdBy(),

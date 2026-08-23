@@ -1,5 +1,6 @@
 package com.linkroa.deepdataagent.runtime.domain.model;
 
+import com.linkroa.deepdataagent.runtime.domain.model.enums.HitlState;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.SessionState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -130,6 +131,56 @@ class AgentSessionContextTest {
 
         // then
         assertEquals(SessionState.INTERRUPTED, context.state());
+    }
+
+    // ==================== HITL 正交子态 ====================
+
+    @Test
+    void should_defaultNone_when_hitlState_given_newContext() {
+        // when & then（默认无待确认项）
+        assertEquals(HitlState.NONE, context.hitlState());
+        assertFalse(context.isWaitingConfirm());
+    }
+
+    @Test
+    void should_enterWaitingConfirm_when_enterWaitingConfirm_given_none() {
+        // when（HITL 暂停）
+        context.enterWaitingConfirm();
+
+        // then
+        assertEquals(HitlState.WAITING_CONFIRM, context.hitlState());
+        assertTrue(context.isWaitingConfirm());
+    }
+
+    @Test
+    void should_throwOnReenter_when_enterWaitingConfirm_given_alreadyWaiting() {
+        // given
+        context.enterWaitingConfirm();
+
+        // when & then（重复暂停非法）
+        assertThrows(IllegalStateException.class, context::enterWaitingConfirm);
+    }
+
+    @Test
+    void should_leaveWaitingConfirm_when_leaveWaitingConfirm_given_waiting() {
+        // given
+        context.enterWaitingConfirm();
+
+        // when（HITL 恢复 / 拒绝）
+        context.leaveWaitingConfirm();
+
+        // then
+        assertEquals(HitlState.NONE, context.hitlState());
+        assertFalse(context.isWaitingConfirm());
+    }
+
+    @Test
+    void should_beIdempotent_when_leaveWaitingConfirm_given_none() {
+        // when（对已结束等待的越界确认指令幂等，不产生副作用）
+        context.leaveWaitingConfirm();
+
+        // then
+        assertEquals(HitlState.NONE, context.hitlState());
     }
 
     // ==================== 连接层 ====================

@@ -16,6 +16,7 @@ public record AgentSession(
         Long id,
         String sessionId,
         String userId,
+        String workspaceId,
         String agentId,
         String agentVersion,
         AgentSessionStatus status,
@@ -28,6 +29,9 @@ public record AgentSession(
         String createdBy,
         String updatedBy
 ) {
+
+    /** 本期占位默认工作空间（无用户体系，会话统一归属默认工作空间，不做边界校验）。 */
+    public static final String DEFAULT_WORKSPACE_ID = "default";
 
     public AgentSession {
         if (StringUtils.isBlank(sessionId)) {
@@ -68,6 +72,7 @@ public record AgentSession(
                 null,
                 UUID.randomUUID().toString().replace("-", ""),
                 userId,
+                DEFAULT_WORKSPACE_ID,
                 agentId,
                 agentVersion,
                 AgentSessionStatus.IDLE,
@@ -89,6 +94,7 @@ public record AgentSession(
             Long id,
             String sessionId,
             String userId,
+            String workspaceId,
             String agentId,
             String agentVersion,
             AgentSessionStatus status,
@@ -102,7 +108,9 @@ public record AgentSession(
             String updatedBy
     ) {
         return new AgentSession(
-                id, sessionId, userId, agentId, agentVersion, status,
+                id, sessionId, userId,
+                workspaceId == null || workspaceId.isBlank() ? DEFAULT_WORKSPACE_ID : workspaceId,
+                agentId, agentVersion, status,
                 metadata == null ? "{}" : metadata,
                 sandboxId, title, lastActiveAt, createdAt, updatedAt, createdBy, updatedBy
         );
@@ -114,7 +122,7 @@ public record AgentSession(
     public AgentSession withStatus(AgentSessionStatus nextStatus) {
         OffsetDateTime now = OffsetDateTime.now(ZoneId.of("Asia/Shanghai"));
         return new AgentSession(
-                id, sessionId, userId, agentId, agentVersion, nextStatus,
+                id, sessionId, userId, workspaceId, agentId, agentVersion, nextStatus,
                 metadata, sandboxId, title, now, createdAt, now, createdBy, updatedBy
         );
     }

@@ -1,12 +1,12 @@
 package com.linkroa.deepdataagent.runtime.controller.rest;
 
-import com.linkroa.deepdataagent.runtime.application.assembler.AgentRuntimeCommandAssembler;
+import com.linkroa.deepdataagent.runtime.application.convert.AgentRuntimeCommandConvert;
 import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeCommandService;
 import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeQueryService;
-import com.linkroa.deepdataagent.runtime.application.service.RuntimeAgentAssemblyResolver;
 import com.linkroa.deepdataagent.runtime.controller.request.CreateSessionRequest;
+import com.linkroa.deepdataagent.runtime.controller.request.ResolveHumanConfirmationRequest;
 import com.linkroa.deepdataagent.runtime.controller.request.UpdateSessionRequest;
-import com.linkroa.deepdataagent.runtime.controller.response.AgentRuntimeResponseMapper;
+import com.linkroa.deepdataagent.runtime.controller.convert.AgentRuntimeResponseConvert;
 import com.linkroa.deepdataagent.runtime.controller.response.SessionDeletedResponse;
 import com.linkroa.deepdataagent.runtime.controller.response.SessionListResponse;
 import com.linkroa.deepdataagent.runtime.controller.response.SessionResponse;
@@ -29,8 +29,8 @@ import java.util.List;
 
 /**
  * Agent 会话管理 REST 控制器（前缀 {@code /api/v1/agent/sessions}，对齐 Managed Agents Session 接口）。
- * <p>会话身份字段 userId 对外隐藏、内部以默认身份保留；{@code agent_id / statuses[]} 过滤与
- * cursor 分页游标物化留待后续，当前列表采用 limit/page 近似对齐。</p>
+ * <p>会话身份字段 userId 对外隐藏、内部以默认身份保留；列表支持 {@code agent_id / statuses[]} 过滤与
+ * 游标（cursor）分页。</p>
  */
 @RestController
 @RequestMapping(path = "/agent/sessions", version = ApiVersionConstants.CURRENT_API_VERSION)
@@ -44,12 +44,6 @@ public class AgentSessionController {
     @Resource
     private AgentRuntimeQueryService queryService;
     @Resource
-    private AgentRuntimeResponseMapper responseMapper;
-    @Resource
-    private AgentRuntimeCommandAssembler commandAssembler;
-    @Resource
-    private RuntimeAgentAssemblyResolver runtimeAgentAssemblyResolver;
-    @Resource
     private ObjectMapper objectMapper;
 
     /**
@@ -57,11 +51,10 @@ public class AgentSessionController {
      */
     @PostMapping
     public ApiResponse<SessionResponse> createSession(@Valid @RequestBody CreateSessionRequest request) {
-        // 对齐 Managed Agents：创建仅传 agent，服务端锁定其最新发布号
-        String agentVersion = runtimeAgentAssemblyResolver.latestVersionNumber(request.agent());
+        // 对齐 Managed Agents：创建仅传 agent，省略版本号由服务端解析激活版本（active_version）物化
         AgentSession session = commandService.createSession(
-                commandAssembler.toCreateCommand(DEFAULT_USER_ID, request, agentVersion, toJson(request.metadata())));
-        return ApiResponse.success(responseMapper.toSessionResponse(session));
+                AgentRuntimeCommandConvert.INSTANCE.toCreateCommand(DEFAULT_USER_ID, request, null, toJson(request.metadata())));
+        return ApiResponse.success(AgentRuntimeResponseConvert.INSTANCE.toSessionResponse(session));
     }
 
     /**
@@ -69,28 +62,25 @@ public class AgentSessionController {
      */
     @GetMapping("/{sessionId}")
     public ApiResponse<SessionResponse> getSession(@PathVariable String sessionId) {
-        return ApiResponse.success(responseMapper.toSessionResponse(queryService.getSession(sessionId)));
+        return ApiResponse.success(AgentRuntimeResponseConvert.INSTANCE.toSessionResponse(queryService.getSession(sessionId)));
     }
 
     /**
-     * 分页列出会话（对齐 {@code GET /sessions}）。
+     * 游标分页列出会话（对齐 {@code GET /sessions}，支持 agent_id / statuses[] 过滤）。
      */
     @GetMapping
     public ApiResponse<SessionListResponse> listSessions(
             @RequestParam(name = "agent_id", required = false) String agentId,
             @RequestParam(name = "statuses[]", required = false) List<String> statuses,
             @RequestParam(name = "limit", required = false) Integer limit,
-            @RequestParam(name = "page", required = false) String page
+            @RequestParam(name = "cursor", required = false) String cursor
     ) {
-        int pageNum = parsePage(page);
-        AgentRuntimeQueryService.PaginatedResult<AgentSession> result =
-                queryService.listSessions(commandAssembler.toListQuery(DEFAULT_USER_ID, limit, pageNum));
+        AgentRuntimeQueryService.SessionPage result =
+                queryService.listSessions(AgentRuntimeCommandConvert.INSTANCE.toListQuery(DEFAULT_USER_ID, agentId, statuses, cursor, limit));
         List<SessionResponse> data = result.data().stream()
-                .map(responseMapper::toSessionResponse)
+                .map(AgentRuntimeResponseConvert.INSTANCE::toSessionResponse)
                 .toList();
-        int totalPages = (int) Math.ceil((double) result.total() / Math.max(result.size(), 1));
-        String nextPage = pageNum < totalPages ? String.valueOf(pageNum + 1) : null;
-        return ApiResponse.success(new SessionListResponse(data, nextPage));
+        return ApiResponse.success(new SessionListResponse(data, result.nextCursor()));
     }
 
     /**
@@ -100,7 +90,7 @@ public class AgentSessionController {
     public ApiResponse<SessionResponse> updateSession(@PathVariable String sessionId,
                                                       @Valid @RequestBody UpdateSessionRequest request) {
         AgentSession session = commandService.updateSession(sessionId, request.title(), toJson(request.metadata()));
-        return ApiResponse.success(responseMapper.toSessionResponse(session));
+        return ApiResponse.success(AgentRuntimeResponseConvert.INSTANCE.toSessionResponse(session));
     }
 
     /**
@@ -109,8 +99,19 @@ public class AgentSessionController {
      */
     @PostMapping("/{sessionId}/archive")
     public ApiResponse<SessionResponse> archiveSession(@PathVariable String sessionId) {
-        commandService.terminateSession(commandAssembler.toTerminateCommand(sessionId));
-        return ApiResponse.success(responseMapper.toSessionResponse(queryService.getSession(sessionId)));
+        commandService.terminateSession(AgentRuntimeCommandConvert.INSTANCE.toTerminateCommand(sessionId));
+        return ApiResponse.success(AgentRuntimeResponseConvert.INSTANCE.toSessionResponse(queryService.getSession(sessionId)));
+    }
+
+    /**
+     * 人工确认指令（{@code POST /sessions/{sessionId}/confirm}）：确认注入结果并恢复执行，或拒绝终止当前执行。
+     */
+    @PostMapping("/{sessionId}/confirm")
+    public ApiResponse<SessionResponse> resolveConfirmation(@PathVariable String sessionId,
+                                                            @Valid @RequestBody ResolveHumanConfirmationRequest request) {
+        commandService.resolveHumanConfirmation(
+                AgentRuntimeCommandConvert.INSTANCE.toResolveHumanConfirmationCommand(sessionId, request));
+        return ApiResponse.success(AgentRuntimeResponseConvert.INSTANCE.toSessionResponse(queryService.getSession(sessionId)));
     }
 
     /**
@@ -118,20 +119,8 @@ public class AgentSessionController {
      */
     @DeleteMapping("/{sessionId}")
     public ApiResponse<SessionDeletedResponse> deleteSession(@PathVariable String sessionId) {
-        commandService.terminateSession(commandAssembler.toTerminateCommand(sessionId));
+        commandService.terminateSession(AgentRuntimeCommandConvert.INSTANCE.toTerminateCommand(sessionId));
         return ApiResponse.success(new SessionDeletedResponse(sessionId, "session_deleted"));
-    }
-
-    /** 解析 offset 页码（cursor 化留待后续）。 */
-    private int parsePage(String page) {
-        if (page == null || page.isBlank()) {
-            return 1;
-        }
-        try {
-            return Math.max(Integer.parseInt(page.trim()), 1);
-        } catch (NumberFormatException ex) {
-            return 1;
-        }
     }
 
     /** 对象 → JSON 文本（metadata 对象序列化为领域 String）。 */

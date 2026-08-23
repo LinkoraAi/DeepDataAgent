@@ -1,9 +1,10 @@
 package com.linkroa.deepdataagent.runtime.application.service;
 
-import com.linkroa.deepdataagent.runtime.application.assembler.AgentRuntimeAssembler;
-import com.linkroa.deepdataagent.runtime.application.assembler.ChatEventPayloadAssembler;
-import com.linkroa.deepdataagent.runtime.application.assembler.ChatEventPayloadAssembler.AssembledEvent;
+import com.linkroa.deepdataagent.runtime.application.convert.ChatEventPayloadConvert;
+import com.linkroa.deepdataagent.runtime.application.convert.ChatEventPayloadConvert.AssembledEvent;
+import com.linkroa.deepdataagent.runtime.application.convert.AgentRuntimeConvert;
 import com.linkroa.deepdataagent.runtime.application.command.CreateSessionCommand;
+import com.linkroa.deepdataagent.runtime.application.command.ResolveHumanConfirmationCommand;
 import com.linkroa.deepdataagent.runtime.application.command.SendMessageCommand;
 import com.linkroa.deepdataagent.runtime.application.command.TerminateSessionCommand;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
@@ -31,6 +32,7 @@ import com.linkroa.deepdataagent.runtime.domain.repository.SessionRegistry;
 import com.linkroa.deepdataagent.runtime.infrastructure.util.PayloadSanitizer;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import jakarta.annotation.Resource;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -45,6 +47,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 
@@ -93,6 +96,7 @@ public class AgentRuntimeCommandService {
     private static final String DEEP_AGENT_SESSION_NOT_FOUND = "DEEP_AGENT_SESSION_NOT_FOUND";
     private static final String DEEP_AGENT_SESSION_BUSY = "DEEP_AGENT_SESSION_BUSY";
     private static final String DEEP_AGENT_RUN_ERROR = "DEEP_AGENT_RUN_ERROR";
+    private static final String DEEP_AGENT_NO_PENDING_CONFIRM = "DEEP_AGENT_NO_PENDING_CONFIRM";
     private static final String STOP_REASON_STOP = "stop";
     private static final String STOP_REASON_MAX_ITERATIONS = "max_iterations";
     private static final String STOP_REASON_ERROR = "error";
@@ -112,21 +116,26 @@ public class AgentRuntimeCommandService {
     @Resource
     private AgentRunExecutor agentRunExecutor;
     @Resource
-    private AgentRuntimeAssembler assembler;
-    @Resource
     private RuntimeAgentAssemblyResolver runtimeAgentAssemblyResolver;
     @Resource
     private SessionRegistry sessionRegistry;
     @Resource
     private TransactionTemplate transactionTemplate;
     @Resource
-    private ChatEventPayloadAssembler payloadAssembler;
+    private ChatEventPersister chatEventPersister;
     @Resource(name = "agentVirtualExecutor")
     private Executor virtualExecutor;
     @Resource(name = "agentBlockingScheduler")
     private Scheduler blockingScheduler;
     @Resource
     private ObjectMapper objectMapper;
+
+    /**
+     * 会话级「待人工确认」现场（HITL 暂停期间驻留，确认 / 拒绝后移除）。
+     * <p>虚拟线程在确认请求期间阻塞等待，agent 句柄保持存活；确认经 executor 端口
+     * 重新驱动流续跑同一轮，拒绝走中断终态。该现场属应用层编排状态，不进领域模型。</p>
+     */
+    private final Map<String, PendingConfirmation> pendingConfirmations = new ConcurrentHashMap<>();
 
     // ==================== 会话管理（写操作） ====================
 
@@ -136,9 +145,23 @@ public class AgentRuntimeCommandService {
      * Agent 不存在或已归档 → 404），不允许无全局回退。</p>
      */
     public AgentSession createSession(CreateSessionCommand command) {
-        // 运行时装配解析即校验链：发布号格式 / Agent 存在且未归档 / 版本存在 / profile 存在（免解密）
-        runtimeAgentAssemblyResolver.assertResolvable(command.agentId(), command.agentVersion());
-        return transactionTemplate.execute(status -> sessionRepository.save(assembler.toSession(command)));
+        // 省略版本时物化激活版本；显式版本时走轻量校验链（发布号格式 / Agent 存在未归档 / 版本 / profile）
+        String versionNumber = resolveVersion(command);
+        CreateSessionCommand resolved = new CreateSessionCommand(
+                command.userId(), command.agentId(), versionNumber, command.title(), command.metadata());
+        return transactionTemplate.execute(status -> sessionRepository.save(AgentRuntimeConvert.INSTANCE.toSession(resolved)));
+    }
+
+    /**
+     * 解析会话绑定版本号：显式非空 → {@code assertResolvable} 校验后原样物化；
+     * 省略（空白）→ 解析该 Agent 的激活版本（{@code active_version}）物化到会话。
+     */
+    private String resolveVersion(CreateSessionCommand command) {
+        if (StringUtils.isNotBlank(command.agentVersion())) {
+            runtimeAgentAssemblyResolver.assertResolvable(command.agentId(), command.agentVersion());
+            return command.agentVersion();
+        }
+        return runtimeAgentAssemblyResolver.activeVersionNumber(command.agentId());
     }
 
     /**
@@ -159,6 +182,11 @@ public class AgentRuntimeCommandService {
                 sessionRepository.updateStatus(command.sessionId(), AgentSessionStatus.TERMINATED));
         // 断连/终止语义：幂等取消在跑执行并标记中断（当前轮次经中断终态路径收尾）
         sessionRegistry.get(command.sessionId()).ifPresent(AgentSessionContext::cancel);
+        // HITL 等待期间的终止：SDK 流已收流，cancel 不再触发自然收尾，须显式终态化并释放阻塞虚拟线程
+        PendingConfirmation pending = pendingConfirmations.remove(command.sessionId());
+        if (pending != null) {
+            rejectConfirmation(pending);
+        }
         // 关闭全部订阅者：解绑连接触发旧句柄 close 完成全部 emitter 关闭（替代 eventBroadcaster.complete）
         sessionRegistry.get(command.sessionId()).ifPresent(ctx -> ctx.bindConnection(NoOpConnectionHandle.INSTANCE));
     }
@@ -171,6 +199,63 @@ public class AgentRuntimeCommandService {
         transactionTemplate.executeWithoutResult(status ->
                 sessionRepository.updateMeta(sessionId, title, metadataJson));
         return requireSession(sessionId);
+    }
+
+    // ==================== HITL：人工确认 / 拒绝 ====================
+
+    /**
+     * 处理人工确认指令（确认 / 拒绝）。
+     * <pre>{@code
+     *  resolveHumanConfirmation
+     *    ├─ requireSession + 取会话级聚合
+     *    ├─ 判定等待态并原子领取待确认现场（越界 / 重复 → 无副作用忽略）
+     *    ├─ confirmed → 经 executor 端口重新驱动流续跑本轮
+     *    └─ !confirmed → RUNNING → INTERRUPTED 中断终态（round FAILED + 会话回 IDLE）
+     * }</pre>
+     */
+    public void resolveHumanConfirmation(ResolveHumanConfirmationCommand command) {
+        requireSession(command.sessionId());
+        AgentSessionContext sessionContext = sessionRegistry.get(command.sessionId())
+                .orElseThrow(() -> new DeepDataAgentException(DEEP_AGENT_SESSION_NOT_FOUND + ": 会话不存在"));
+        // 原子领取：首个到达的确认指令取走现场，重复 / 越界指令因领取失败被忽略
+        PendingConfirmation pending = pendingConfirmations.remove(command.sessionId());
+        if (pending == null || !sessionContext.isWaitingConfirm()) {
+            throw new DeepDataAgentException(DEEP_AGENT_NO_PENDING_CONFIRM + ": 无待确认项或已处理");
+        }
+        if (command.confirmed()) {
+            virtualExecutor.execute(() -> resumeConfirmation(pending));
+        } else {
+            virtualExecutor.execute(() -> rejectConfirmation(pending));
+        }
+    }
+
+    /** 确认续流：经 executor 端口以确认结果元数据重新驱动流，续跑本轮直至终态。 */
+    private void resumeConfirmation(PendingConfirmation pending) {
+        ExecutionContext context = pending.context();
+        String sessionId = context.session().sessionId();
+        log.info("人工确认：恢复执行 sessionId={}, replyId={}", sessionId, pending.replyId());
+        agentRunExecutor.resumeWithConfirmation(pending.agent(), pending.replyId(),
+                        sessionId, context.session().userId())
+                .publishOn(blockingScheduler)
+                .doOnNext(signal -> handleSignal(signal, context, pending.completion(), pending.agent()))
+                .subscribe(
+                        ignored -> {},
+                        error -> onStreamError(context, error, pending.completion()),
+                        () -> onStreamComplete(context, pending.completion()));
+    }
+
+    /** 拒绝终态：置中断态 + 失败终态 + 完成阻塞等待（释放原虚拟线程并关闭 agent 句柄）。 */
+    private void rejectConfirmation(PendingConfirmation pending) {
+        ExecutionContext context = pending.context();
+        String sessionId = context.session().sessionId();
+        log.info("人工确认：拒绝执行 sessionId={}, replyId={}", sessionId, pending.replyId());
+        // 释放基础设施层暂存的 SDK ToolUseBlock，避免拒绝 / 终止路径不续流导致残留泄漏
+        agentRunExecutor.discardPendingToolCalls(pending.replyId());
+        context.sessionContext().leaveWaitingConfirm();
+        // RUNNING → INTERRUPTED（复用既有中断终态路径，round FAILED + 会话回 IDLE）
+        context.sessionContext().tryTransitionState(SessionState.INTERRUPTED);
+        finalizeFailedRound(context, true, "确认被拒绝");
+        pending.completion().complete(null);
     }
 
     // ==================== 消息发送（事务 + 事件流编排） ====================
@@ -253,6 +338,10 @@ public class AgentRuntimeCommandService {
 
         // 内存状态机：IDLE → RUNNING
         context.sessionContext().transitionState(SessionState.RUNNING);
+
+        // 用户消息回显：作为本轮首事件落库并推送（envelope role=user），保证回放 / 多端订阅可回放用户输入
+        persistAndBroadcast(context, roundId,
+                ChatEventPayloadConvert.INSTANCE.userMessage(command.message()), context.nextSequence());
 
         // run_start（应用层合成，含 round_id / run_id）
         persistAndBroadcast(context, roundId,
@@ -340,7 +429,7 @@ public class AgentRuntimeCommandService {
             throws InterruptedException, ExecutionException {
         agentRunExecutor.streamEvents(agent, userInput, context.session().sessionId(), context.session().userId())
                 .publishOn(blockingScheduler)
-                .doOnNext(signal -> handleSignal(signal, context, completion))
+                .doOnNext(signal -> handleSignal(signal, context, completion, agent))
                 .subscribe(
                         ignored -> {},
                         error -> onStreamError(context, error, completion),
@@ -353,7 +442,7 @@ public class AgentRuntimeCommandService {
      * AGENT_END 触发终态提前（EXCEED_MAX_ITERS 后 defer 到 onComplete）。
      */
     private void handleSignal(AgentStreamSignal signal, ExecutionContext context,
-                              CompletableFuture<Void> completion) {
+                              CompletableFuture<Void> completion, BuiltAgent agent) {
         AgentRunState runState = context.runState();
         String sessionId = context.session().sessionId();
         String roundId = context.round().roundId();
@@ -363,7 +452,7 @@ public class AgentRuntimeCommandService {
             case TEXT_DELTA -> {
                 runState.appendOutput(signal.text());
                 persistAndBroadcast(context, roundId,
-                        payloadAssembler.textDelta(signal.blockId(), signal.text()),
+                        ChatEventPayloadConvert.INSTANCE.textDelta(signal.blockId(), signal.text()),
                         context.nextSequence());
             }
             case AGENT_RESULT -> runState.setFinalResultText(signal.resultText());
@@ -382,7 +471,7 @@ public class AgentRuntimeCommandService {
             case TOOL_CALL_START -> {
                 runState.startToolCall(signal.toolCallId(), signal.toolName());
                 persistAndBroadcast(context, roundId,
-                        payloadAssembler.toolCallStart(signal.toolCallId(), signal.toolName()),
+                        ChatEventPayloadConvert.INSTANCE.toolCallStart(signal.toolCallId(), signal.toolName()),
                         context.nextSequence());
             }
             case TOOL_CALL_DELTA -> runState.appendToolArgs(signal.toolCallId(), signal.text());
@@ -390,7 +479,7 @@ public class AgentRuntimeCommandService {
                 // takeToolArgs 一次性完成「取出聚合入参 + 留存原始快照供 tool.call span」
                 String argsJson = runState.takeToolArgs(signal.toolCallId());
                 persistAndBroadcast(context, roundId,
-                        payloadAssembler.toolCallEnd(signal.toolCallId(), signal.toolName(), argsJson),
+                        ChatEventPayloadConvert.INSTANCE.toolCallEnd(signal.toolCallId(), signal.toolName(), argsJson),
                         context.nextSequence());
             }
             case TOOL_RESULT_TEXT_DELTA -> {
@@ -398,7 +487,7 @@ public class AgentRuntimeCommandService {
                 String head = runState.appendToolResult(signal.text());
                 if (!head.isEmpty()) {
                     persistAndBroadcast(context, roundId,
-                            payloadAssembler.toolResultDelta(signal.toolCallId(), signal.toolName(), head),
+                            ChatEventPayloadConvert.INSTANCE.toolResultDelta(signal.toolCallId(), signal.toolName(), head),
                             context.nextSequence());
                 }
             }
@@ -406,7 +495,7 @@ public class AgentRuntimeCommandService {
                 // head+tail 截断补发（含省略标记 + 截断通知），随后完成 tool.call span
                 String tail = runState.endToolResult();
                 persistAndBroadcast(context, roundId,
-                        payloadAssembler.toolResultEnd(signal.toolCallId(), signal.toolName(),
+                        ChatEventPayloadConvert.INSTANCE.toolResultEnd(signal.toolCallId(), signal.toolName(),
                                 tail != null ? tail : "", runState.toolResultTruncated()),
                         context.nextSequence());
                 // 与 MODEL_CALL_END 相同保护：异常信号序（缺 TOOL_CALL_START 起点）时不伪造时间，跳过 span
@@ -423,18 +512,41 @@ public class AgentRuntimeCommandService {
             }
             case AGENT_END -> {
                 // SDK 终态（end_turn）：除 EXCEED_MAX_ITERS 后的 defer 外提前完成终态序列；
-                // SDK 终态不落库不发布（终态事件由终态唯一出口合成）
-                if (!runState.exceededMaxIters()) {
+                // SDK 终态不落库不发布（终态事件由终态唯一出口合成）；
+                // HITL 等待态：SDK 遇 REQUIRE_* 后收流派发 AGENT_END，此处不终态，续跑由确认指令驱动
+                if (!runState.exceededMaxIters() && !context.sessionContext().isWaitingConfirm()) {
                     finalizeRoundAndComplete(context, completion);
                 }
             }
             case THINKING_DELTA -> persistAndBroadcast(context, roundId,
-                    payloadAssembler.thinkingDelta(signal.blockId(), signal.text()),
+                    ChatEventPayloadConvert.INSTANCE.thinkingDelta(signal.blockId(), signal.text()),
                     context.nextSequence());
             case THINKING_END -> persistAndBroadcast(context, roundId,
-                    payloadAssembler.thinkingEnd(signal.blockId()), context.nextSequence());
+                    ChatEventPayloadConvert.INSTANCE.thinkingEnd(signal.blockId()), context.nextSequence());
             case TEXT_END -> persistAndBroadcast(context, roundId,
-                    payloadAssembler.textEnd(signal.blockId()), context.nextSequence());
+                    ChatEventPayloadConvert.INSTANCE.textEnd(signal.blockId()), context.nextSequence());
+            case HUMAN_CONFIRM_REQUIRED -> {
+                // HITL 暂停：置等待确认态并暂存待确认现场（agent + 轮次 + 阻塞完成信号）；
+                // SDK 流遇 REQUIRE_* 后经 RequestStopEvent → AgentEndEvent → sink.complete 收流，
+                // 本步落状态 + 暂存现场 + 透传 human_confirm_required 事件，终态由 AGENT_END / onComplete 依等待态守卫跳过
+                context.sessionContext().enterWaitingConfirm();
+                pendingConfirmations.put(sessionId,
+                        new PendingConfirmation(context, agent, signal.replyId(), completion));
+                persistAndBroadcast(context, roundId,
+                        new AssembledEvent(ChatEventType.HUMAN_CONFIRM_REQUIRED,
+                                jsonOf(Map.of("reply_id", blankToDefault(signal.replyId(), "")))),
+                        context.nextSequence());
+                log.info("进入 HITL 等待确认态: sessionId={}, roundId={}, replyId={}",
+                        sessionId, roundId, signal.replyId());
+            }
+            case HUMAN_CONFIRM_RESULT -> {
+                // HITL 确认结果回执：确认结果已注入并恢复执行，透传 human_confirm_result 事件
+                context.sessionContext().leaveWaitingConfirm();
+                persistAndBroadcast(context, roundId,
+                        new AssembledEvent(ChatEventType.HUMAN_CONFIRM_RESULT,
+                                jsonOf(Map.of("reply_id", blankToDefault(signal.replyId(), "")))),
+                        context.nextSequence());
+            }
             // START 无业务语义，忽略
             default -> throw new IllegalArgumentException("Unexpected value: " + signal.type());
         }
@@ -452,6 +564,12 @@ public class AgentRuntimeCommandService {
             log.warn("断连/终止后 SDK 正常收流，执行置中断: sessionId={}, roundId={}", sessionId, roundId);
             finalizeFailedRound(context, true, "执行被中断");
             completion.complete(null);
+            return;
+        }
+        if (context.sessionContext().isWaitingConfirm()) {
+            // HITL：SDK 流因等待确认而收流（sink.complete），不终态、不完成阻塞，
+            // 由确认指令重新驱动流续跑本轮、或由拒绝指令走中断终态
+            log.info("HITL 等待确认中，SDK 流收流但不终态: sessionId={}, roundId={}", sessionId, roundId);
             return;
         }
         log.info("事件流正常收流完成: sessionId={}, roundId={}", sessionId, roundId);
@@ -573,26 +691,19 @@ public class AgentRuntimeCommandService {
     }
 
     /**
-     * 事件持久化与广播（流内事件与合成事件共用）：seq 统一由
-     * {@link AgentSessionContext#nextSequence()} 会话级计数器分配（DB 唯一索引兜底），
-     * 落库失败记录 ERROR 但不中断事件流；广播失败记录 WARN（事件已落库可回放兜底）。
+     * 事件推送与异步落库（流内事件与合成事件共用）：seq 统一由
+     * {@link AgentSessionContext#nextSequence()} 会话级计数器分配（DB 唯一索引兜底）。
+     * <p>顺序：先经连接层推送（SSE 不被落库 I/O 阻塞），再入异步批量队列落库；
+     * 落库失败由后台记录 ERROR（事件已推送，断线重连回放兜底）。</p>
      */
     private void persistAndBroadcast(ExecutionContext context, String roundId, AssembledEvent assembled, long sequenceNum) {
         String sessionId = context.session().sessionId();
-        pushQuietly(context.sessionContext(), saveQuietly(sessionId, roundId, assembled.type(), assembled.payloadJson(), sequenceNum));
+        ChatEvent event = ChatEvent.create(sessionId, roundId, assembled.type(), assembled.payloadJson(), sequenceNum);
+        pushQuietly(context.sessionContext(), event);
+        chatEventPersister.enqueue(event);
     }
 
-    /** 尝试落库：失败记录 ERROR 并返回 null（不中断调用方，由断线重连回放兜底）。 */
-    private ChatEvent saveQuietly(String sessionId, String roundId, ChatEventType type, String payload, long sequenceNum) {
-        try {
-            return chatEventRepository.save(ChatEvent.create(sessionId, roundId, type, payload, sequenceNum));
-        } catch (RuntimeException ex) {
-            log.error("聊天事件落库失败: sessionId={}, eventType={}", sessionId, type, ex);
-            return null;
-        }
-    }
-
-    /** 尝试向连接层推送：领域事件经连接句柄广播，协议转换在基础设施；失败记录 WARN（事件已落库可回放）。 */
+    /** 尝试向连接层推送：领域事件经连接句柄广播，协议转换在基础设施；失败记录 WARN（事件仍会异步入队落库，断线重连回放兜底）。 */
     private void pushQuietly(AgentSessionContext sessionContext, ChatEvent event) {
         if (event == null) {
             return;
@@ -686,5 +797,19 @@ public class AgentRuntimeCommandService {
         long nextSequence() {
             return sessionContext.nextSequence();
         }
+    }
+
+    /**
+     * HITL 待确认现场：确认 / 拒绝 / 终止期间所需的应用层编排状态。
+     * <p>虚拟线程在等待确认期间阻塞于 {@link #completion()}，agent 句柄保持存活；
+     * 确认经 executor 端口重新驱动流续跑同一轮，拒绝 / 终止走中断终态。</p>
+     *
+     * @param context    本轮执行现场（round / runState / sessionContext / trace 等）
+     * @param agent      已装配 agent 句柄（续流重新驱动用）
+     * @param replyId    待确认项关联的回复 ID（基础设施层据此定位暂存 toolCalls）
+     * @param completion 本轮执行阻塞等待的未来（终态路径 complete）
+     */
+    private record PendingConfirmation(ExecutionContext context, BuiltAgent agent, String replyId,
+                                       CompletableFuture<Void> completion) {
     }
 }

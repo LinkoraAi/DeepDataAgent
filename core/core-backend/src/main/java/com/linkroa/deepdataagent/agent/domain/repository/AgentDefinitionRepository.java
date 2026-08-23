@@ -51,6 +51,11 @@ public interface AgentDefinitionRepository {
     void updateArchived(String agentId, boolean archived);
 
     /**
+     * 更新激活版本号（部署激活 / 回滚，latest_version 不变）
+     */
+    void updateActiveVersion(String agentId, int versionNumber);
+
+    /**
      * 逻辑删除
      */
     void deleteByAgentId(String agentId);

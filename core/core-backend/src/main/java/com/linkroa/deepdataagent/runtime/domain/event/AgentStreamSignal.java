@@ -21,7 +21,8 @@ public record AgentStreamSignal(
         String resultText,
         Integer inputTokens,
         Integer outputTokens,
-        String modelName
+        String modelName,
+        String replyId
 ) {
 
     public AgentStreamSignal {
@@ -34,7 +35,7 @@ public record AgentStreamSignal(
      * 便捷构造：纯文本增量事件（thinking / message / 工具增量）。
      */
     public static AgentStreamSignal of(AgentStreamSignalType type, String text, String blockId) {
-        return new AgentStreamSignal(type, text, blockId, null, null, null, null, null, null, null);
+        return new AgentStreamSignal(type, text, blockId, null, null, null, null, null, null, null, null);
     }
 
     /**
@@ -42,7 +43,14 @@ public record AgentStreamSignal(
      */
     public static AgentStreamSignal tool(AgentStreamSignalType type, String toolCallId, String toolName,
                                          String text, String toolState) {
-        return new AgentStreamSignal(type, text, null, toolCallId, toolName, toolState, null, null, null, null);
+        return new AgentStreamSignal(type, text, null, toolCallId, toolName, toolState, null, null, null, null, null);
+    }
+
+    /**
+     * 便捷构造：HITL 人工介入事件（关联 reply_id）。
+     */
+    public static AgentStreamSignal hitl(AgentStreamSignalType type, String replyId) {
+        return new AgentStreamSignal(type, null, null, null, null, null, null, null, null, null, replyId);
     }
 
     /**
@@ -50,6 +58,6 @@ public record AgentStreamSignal(
      */
     public AgentStreamSignal withResultText(String resultText) {
         return new AgentStreamSignal(type, text, blockId, toolCallId, toolName, toolState, resultText,
-                inputTokens, outputTokens, modelName);
+                inputTokens, outputTokens, modelName, replyId);
     }
 }

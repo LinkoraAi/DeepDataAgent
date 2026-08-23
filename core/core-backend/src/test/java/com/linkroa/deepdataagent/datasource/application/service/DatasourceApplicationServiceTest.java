@@ -1,6 +1,5 @@
 package com.linkroa.deepdataagent.datasource.application.service;
 
-import com.linkroa.deepdataagent.datasource.application.assembler.DatasourceAssembler;
 import com.linkroa.deepdataagent.datasource.application.command.ApiFieldCommand;
 import com.linkroa.deepdataagent.datasource.application.command.ApiSchemaCommand;
 import com.linkroa.deepdataagent.datasource.application.command.CreateDatasourceCommand;
@@ -8,7 +7,6 @@ import com.linkroa.deepdataagent.datasource.application.command.JdbcConfigComman
 import com.linkroa.deepdataagent.datasource.application.command.TestConnectionCommand;
 import com.linkroa.deepdataagent.datasource.application.command.UpdateDatasourceCommand;
 import com.linkroa.deepdataagent.datasource.application.query.TableListQuery;
-import com.linkroa.deepdataagent.datasource.controller.response.DatasourceResponseMapper;
 import com.linkroa.deepdataagent.datasource.domain.model.*;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.*;
 import com.linkroa.deepdataagent.datasource.domain.repository.*;
@@ -23,7 +21,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mapstruct.factory.Mappers;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.OffsetDateTime;
@@ -60,9 +57,7 @@ class DatasourceApplicationServiceTest {
                 connectionRepository, strategyFactory, domainService,
                 transactionTemplate, databaseSchemaRepository, tableInfoRepository,
                 columnInfoRepository, apiSchemaRepository, apiFieldRepository,
-                apiResponseParser, apiPaginationHandler,
-                Mappers.getMapper(DatasourceResponseMapper.class),
-                Mappers.getMapper(DatasourceAssembler.class)
+                apiResponseParser, apiPaginationHandler
         );
     }
 

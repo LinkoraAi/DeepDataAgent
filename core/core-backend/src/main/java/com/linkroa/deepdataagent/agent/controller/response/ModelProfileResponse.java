@@ -14,6 +14,8 @@ public record ModelProfileResponse(
         String modelName,
         /** 是否已配置凭证（响应中不返回明文） */
         boolean credentialConfigured,
+        /** 凭证引用的密钥 ID（引用模式；响应中不返回明文，仅返回引用 ID） */
+        String secretId,
         String modelSeries,
         Integer contextWindowInput,
         Integer contextWindowOutput,

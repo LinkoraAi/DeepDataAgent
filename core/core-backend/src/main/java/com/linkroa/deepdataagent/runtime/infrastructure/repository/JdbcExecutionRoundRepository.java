@@ -2,7 +2,7 @@ package com.linkroa.deepdataagent.runtime.infrastructure.repository;
 
 import com.linkroa.deepdataagent.runtime.domain.model.ExecutionRound;
 import com.linkroa.deepdataagent.runtime.domain.repository.ExecutionRoundRepository;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.RuntimePersistenceMapper;
+import com.linkroa.deepdataagent.runtime.infrastructure.convert.RuntimePersistenceConvert;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.entity.ExecutionRoundEntity;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.mapper.ExecutionRoundMapper;
 import jakarta.annotation.Resource;
@@ -20,12 +20,10 @@ public class JdbcExecutionRoundRepository implements ExecutionRoundRepository {
 
     @Resource
     private ExecutionRoundMapper mapper;
-    @Resource
-    private RuntimePersistenceMapper persistenceMapper;
 
     @Override
     public ExecutionRound save(ExecutionRound round) {
-        ExecutionRoundEntity entity = persistenceMapper.toEntity(round);
+        ExecutionRoundEntity entity = RuntimePersistenceConvert.INSTANCE.toEntity(round);
         if (entity.getId() == null) {
             entity.setId(null);
             mapper.insert(entity);
@@ -37,14 +35,14 @@ public class JdbcExecutionRoundRepository implements ExecutionRoundRepository {
 
     @Override
     public Optional<ExecutionRound> findByRoundId(String roundId) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.findByRoundId(roundId)));
+        return Optional.ofNullable(RuntimePersistenceConvert.INSTANCE.toDomain(mapper.findByRoundId(roundId)));
     }
 
     @Override
     public List<ExecutionRound> findBySessionId(String sessionId) {
         return mapper.findBySessionId(sessionId)
                 .stream()
-                .map(persistenceMapper::toDomain)
+                .map(RuntimePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 

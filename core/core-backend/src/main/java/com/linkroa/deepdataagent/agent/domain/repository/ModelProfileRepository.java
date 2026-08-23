@@ -52,6 +52,11 @@ public interface ModelProfileRepository {
     void updateStatus(String profileId, ModelProfileStatus status);
 
     /**
+     * 统计仍引用指定密钥（secret_id）的未删除模型配置数（删除冲突校验）
+     */
+    long countBySecretId(String secretId);
+
+    /**
      * 逻辑删除
      */
     void deleteByProfileId(String profileId);

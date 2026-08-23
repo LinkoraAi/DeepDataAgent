@@ -16,6 +16,8 @@ import java.util.regex.Pattern;
  * @param archived      是否归档
  * @param archivedAt    归档时间
  * @param latestVersion 最新发布号
+ * @param activeVersion 当前生效版本号（默认随发布同步 latestVersion，可回滚）
+ * @param workspaceId   工作空间归属（本期占位，不做边界校验）
  * @param createdAt     创建时间
  * @param updatedAt     更新时间
  * @param createdBy     创建人
@@ -29,6 +31,8 @@ public record AgentDefinition(
         boolean archived,
         OffsetDateTime archivedAt,
         int latestVersion,
+        int activeVersion,
+        String workspaceId,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         String createdBy,
@@ -56,6 +60,9 @@ public record AgentDefinition(
         if (latestVersion < 0) {
             throw new IllegalArgumentException("最新版本号不能为负数");
         }
+        if (activeVersion < 0) {
+            throw new IllegalArgumentException("激活版本号不能为负数");
+        }
     }
 
     /**
@@ -63,7 +70,7 @@ public record AgentDefinition(
      */
     public static AgentDefinition create(String agentId, String name, String description) {
         return new AgentDefinition(
-                null, agentId, name, description, false, null, 0,
+                null, agentId, name, description, false, null, 0, 0, null,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 null, null
@@ -81,13 +88,15 @@ public record AgentDefinition(
             boolean archived,
             OffsetDateTime archivedAt,
             int latestVersion,
+            int activeVersion,
+            String workspaceId,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
             String createdBy,
             String updatedBy
     ) {
         return new AgentDefinition(
-                id, agentId, name, description, archived, archivedAt, latestVersion,
+                id, agentId, name, description, archived, archivedAt, latestVersion, activeVersion, workspaceId,
                 createdAt, updatedAt, createdBy, updatedBy
         );
     }

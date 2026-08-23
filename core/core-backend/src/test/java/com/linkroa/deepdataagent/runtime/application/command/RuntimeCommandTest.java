@@ -41,10 +41,12 @@ class RuntimeCommandTest {
     }
 
     @Test
-    void should_throw_when_construct_given_blankAgentVersion() {
-        // when & then
-        assertThrows(IllegalArgumentException.class,
-                () -> new CreateSessionCommand("u-1", "agent-a", null, null, null));
+    void should_allowNullVersion_when_construct_given_blankAgentVersion() {
+        // when（agentVersion 可空：省略时由服务端解析激活版本物化到会话）
+        CreateSessionCommand command = new CreateSessionCommand("u-1", "agent-a", null, null, null);
+
+        // then
+        assertNull(command.agentVersion());
     }
 
     @Test
@@ -106,5 +108,24 @@ class RuntimeCommandTest {
         // when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new TerminateSessionCommand(null));
+    }
+
+    // ===== ResolveHumanConfirmationCommand =====
+
+    @Test
+    void should_buildCommand_when_constructConfirmCommand_given_sessionIdAndConfirmed() {
+        // when
+        ResolveHumanConfirmationCommand command = new ResolveHumanConfirmationCommand("s-1", true);
+
+        // then
+        assertEquals("s-1", command.sessionId());
+        assertEquals(true, command.confirmed());
+    }
+
+    @Test
+    void should_throwForConfirmCommand_when_construct_given_blankSessionId() {
+        // when & then
+        assertThrows(IllegalArgumentException.class,
+                () -> new ResolveHumanConfirmationCommand(" ", false));
     }
 }

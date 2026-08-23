@@ -27,8 +27,12 @@ public record CreateModelProfileRequest(
         @Size(max = 128, message = "模型名称不能超过128个字符")
         String modelName,
 
-        /** 凭证明文（可选，空串表示无鉴权） */
+        /** 凭证明文（可选，空串表示无鉴权；与 secretId 互斥） */
         String credential,
+
+        /** 凭证引用的密钥 ID（可选，与 credential 互斥） */
+        @Size(max = 64, message = "密钥引用ID不能超过64个字符")
+        String secretId,
 
         @Size(max = 64, message = "模型系列不能超过64个字符")
         String modelSeries,

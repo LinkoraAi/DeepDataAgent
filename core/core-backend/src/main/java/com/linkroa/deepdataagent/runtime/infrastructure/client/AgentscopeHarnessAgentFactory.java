@@ -3,8 +3,9 @@ package com.linkroa.deepdataagent.runtime.infrastructure.client;
 import com.linkroa.deepdataagent.runtime.domain.factory.AgentFactoryPort;
 import com.linkroa.deepdataagent.runtime.domain.factory.BuiltAgent;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec;
+import com.linkroa.deepdataagent.runtime.domain.model.MemoryStoreRef;
 import com.linkroa.deepdataagent.runtime.infrastructure.config.AgentRuntimeProperties;
-import com.linkroa.deepdataagent.datasource.application.port.DatasourceQueryPort;
+import com.linkroa.deepdataagent.datasource.api.DatasourceApi;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.model.ModelCreationContext;
 import io.agentscope.core.model.ModelRegistry;
@@ -44,7 +45,7 @@ public class AgentscopeHarnessAgentFactory implements AgentFactoryPort {
     @Resource
     private PostgresSnapshotSpec snapshotSpec;
     @Resource
-    private DatasourceQueryPort datasourceQueryPort;
+    private DatasourceApi datasourceApi;
 
     @Override
     public BuiltAgent build(AgentAssemblySpec spec) {
@@ -52,7 +53,7 @@ public class AgentscopeHarnessAgentFactory implements AgentFactoryPort {
     }
 
     private HarnessAgent buildNew(AgentAssemblySpec spec) {
-        Toolkit toolkit = buildToolkit(spec.dataSourceIds());
+        Toolkit toolkit = buildToolkit(spec.dataSourceIds(), spec.memoryStoreRefs());
 
         SandboxFilesystemSpec filesystem = new DockerFilesystemSpec()
                 .image(spec.sandbox().image())
@@ -98,17 +99,22 @@ public class AgentscopeHarnessAgentFactory implements AgentFactoryPort {
     /**
      * 构建工具集：按 AgentScope 官方推荐方式经 {@link Toolkit#registerTool(Object)}
      * 注册工具。基座注册内置 {@link TodoTools}，并在 Agent 版本配置了数据源引用时自动装配
-     * 数据源查询工具 {@link DatasourceQueryTool}（查询类工具随数据源引用自动启用，无需用户勾选）。
+     * 数据源查询工具 {@link DatasourceQueryTool}（查询类工具随数据源引用自动启用，无需用户勾选）；
+     * 配置了记忆库引用时自动装配记忆检索占位工具 {@link MemoryStoreListTool}（未引用不装配，
+     * 本期仅提供只读清单，记忆内容读写待 {@code MemoryStoreProvider} 端口补全）。
      * <p>官方内置文件 / Shell 工具（{@code FilesystemTool} / {@code ShellExecuteTool}）不在此
      * 手动注册——{@link HarnessAgent.Builder#build()} 在已设置 {@code filesystem(...)} 且未调用
      * {@code disableFilesystemTools()/disableShellTool()} 时自动注入（{@code javap} 已复核）。
      * 用户技能经 {@code skillRepository} 挂载（见类 javadoc）。</p>
      */
-    private Toolkit buildToolkit(List<Long> dataSourceIds) {
+    private Toolkit buildToolkit(List<Long> dataSourceIds, List<MemoryStoreRef> memoryStoreRefs) {
         Toolkit toolkit = new Toolkit();
         toolkit.registerTool(new TodoTools());
         if (!dataSourceIds.isEmpty()) {
-            toolkit.registerTool(new DatasourceQueryTool(datasourceQueryPort, dataSourceIds));
+            toolkit.registerTool(new DatasourceQueryTool(datasourceApi, dataSourceIds));
+        }
+        if (!memoryStoreRefs.isEmpty()) {
+            toolkit.registerTool(new MemoryStoreListTool(memoryStoreRefs));
         }
         return toolkit;
     }

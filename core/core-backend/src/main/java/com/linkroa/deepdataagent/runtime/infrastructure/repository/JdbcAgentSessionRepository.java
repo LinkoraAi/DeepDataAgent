@@ -1,14 +1,17 @@
 package com.linkroa.deepdataagent.runtime.infrastructure.repository;
 
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
+import com.linkroa.deepdataagent.runtime.domain.model.SessionCursor;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.AgentSessionStatus;
 import com.linkroa.deepdataagent.runtime.domain.repository.AgentSessionRepository;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.RuntimePersistenceMapper;
+import com.linkroa.deepdataagent.runtime.infrastructure.convert.RuntimePersistenceConvert;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.entity.AgentSessionEntity;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.mapper.AgentSessionMapper;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -22,12 +25,10 @@ public class JdbcAgentSessionRepository implements AgentSessionRepository {
 
     @Resource
     private AgentSessionMapper mapper;
-    @Resource
-    private RuntimePersistenceMapper persistenceMapper;
 
     @Override
     public AgentSession save(AgentSession session) {
-        AgentSessionEntity entity = persistenceMapper.toEntity(session);
+        AgentSessionEntity entity = RuntimePersistenceConvert.INSTANCE.toEntity(session);
         if (entity.getId() == null) {
             entity.setId(null);
             mapper.insert(entity);
@@ -39,20 +40,23 @@ public class JdbcAgentSessionRepository implements AgentSessionRepository {
 
     @Override
     public Optional<AgentSession> findBySessionId(String sessionId) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.findBySessionId(sessionId)));
+        return Optional.ofNullable(RuntimePersistenceConvert.INSTANCE.toDomain(mapper.findBySessionId(sessionId)));
     }
 
     @Override
-    public List<AgentSession> findByUserId(String userId, int page, int size) {
-        return mapper.findByUserId(userId, page, size)
+    public List<AgentSession> findByFilters(String userId, String agentId,
+                                            List<AgentSessionStatus> statuses, SessionCursor cursor, int limit) {
+        OffsetDateTime cursorCreatedAt = cursor == null
+                ? null
+                : OffsetDateTime.ofInstant(cursor.createdAt(), ZoneId.of("Asia/Shanghai"));
+        List<String> statusNames = statuses == null || statuses.isEmpty()
+                ? List.of()
+                : statuses.stream().map(Enum::name).toList();
+        return mapper.findByFilters(userId, agentId, statusNames, cursorCreatedAt,
+                        cursor == null ? null : cursor.id(), limit)
                 .stream()
-                .map(persistenceMapper::toDomain)
+                .map(RuntimePersistenceConvert.INSTANCE::toDomain)
                 .toList();
-    }
-
-    @Override
-    public long countByUserId(String userId) {
-        return mapper.countByUserId(userId);
     }
 
     @Override

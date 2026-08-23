@@ -20,5 +20,4 @@ public enum JdbcType {
         this.defaultPort = defaultPort;
         this.displayName = displayName;
     }
-
 }

@@ -48,6 +48,11 @@ public interface ModelProfileMapper extends BaseMapper<ModelProfileEntity> {
         return selectCount(buildCondition(keyword, status));
     }
 
+    default Long countBySecretId(String secretId) {
+        return selectCount(Wrappers.<ModelProfileEntity>lambdaQuery()
+                .eq(e -> e.getSecretId(), secretId));
+    }
+
     default int updateStatus(String profileId, String status) {
         return update(null, Wrappers.<ModelProfileEntity>lambdaUpdate()
                 .set(e -> e.getStatus(), status)

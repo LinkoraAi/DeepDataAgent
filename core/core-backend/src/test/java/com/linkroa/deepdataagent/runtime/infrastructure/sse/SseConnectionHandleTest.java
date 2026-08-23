@@ -1,13 +1,10 @@
 package com.linkroa.deepdataagent.runtime.infrastructure.sse;
 
-import com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.ChatEventType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.util.Set;
@@ -27,14 +24,11 @@ import static org.mockito.Mockito.verify;
  */
 class SseConnectionHandleTest {
 
-    private SseEventEnvelopeAssembler envelopeAssembler;
     private SseConnectionHandle handle;
 
     @BeforeEach
     void setUp() {
-        envelopeAssembler = new SseEventEnvelopeAssembler();
-        ReflectionTestUtils.setField(envelopeAssembler, "objectMapper", new ObjectMapper());
-        handle = new SseConnectionHandle(envelopeAssembler);
+        handle = new SseConnectionHandle();
     }
 
     @Test

@@ -2,7 +2,7 @@ package com.linkroa.deepdataagent.datasource.infrastructure.repository;
 
 import com.linkroa.deepdataagent.datasource.domain.model.DatabaseSchema;
 import com.linkroa.deepdataagent.datasource.domain.repository.DatabaseSchemaRepository;
-import com.linkroa.deepdataagent.datasource.infrastructure.persistence.DatasourcePersistenceMapper;
+import com.linkroa.deepdataagent.datasource.infrastructure.convert.DatasourcePersistenceConvert;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.DatabaseSchemaEntity;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.mapper.DatabaseSchemaMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -15,17 +15,14 @@ import java.util.Optional;
 public class JdbcDatabaseSchemaRepository implements DatabaseSchemaRepository {
 
     private final DatabaseSchemaMapper mapper;
-    private final DatasourcePersistenceMapper persistenceMapper;
 
-    public JdbcDatabaseSchemaRepository(DatabaseSchemaMapper mapper,
-                                        DatasourcePersistenceMapper persistenceMapper) {
+    public JdbcDatabaseSchemaRepository(DatabaseSchemaMapper mapper) {
         this.mapper = mapper;
-        this.persistenceMapper = persistenceMapper;
     }
 
     @Override
     public DatabaseSchema save(DatabaseSchema schema) {
-        DatabaseSchemaEntity entity = persistenceMapper.toEntity(schema);
+        DatabaseSchemaEntity entity = DatasourcePersistenceConvert.INSTANCE.toEntity(schema);
         entity.setId(null);
         // 基础字段由 MybatisPlusMetaObjectHandler 自动填充
         mapper.insert(entity);
@@ -34,7 +31,7 @@ public class JdbcDatabaseSchemaRepository implements DatabaseSchemaRepository {
 
     @Override
     public DatabaseSchema update(DatabaseSchema schema) {
-        DatabaseSchemaEntity entity = persistenceMapper.toEntity(schema);
+        DatabaseSchemaEntity entity = DatasourcePersistenceConvert.INSTANCE.toEntity(schema);
         // updated_at/updated_by 由 MybatisPlusMetaObjectHandler 自动填充
         mapper.updateById(entity);
         return findById(schema.id()).orElse(schema);
@@ -42,20 +39,20 @@ public class JdbcDatabaseSchemaRepository implements DatabaseSchemaRepository {
 
     @Override
     public Optional<DatabaseSchema> findById(Long id) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectById(id)));
+        return Optional.ofNullable(DatasourcePersistenceConvert.INSTANCE.toDomain(mapper.selectById(id)));
     }
 
     @Override
     public List<DatabaseSchema> findByConnectionId(Long connectionId) {
         return mapper.selectByConnectionId(connectionId)
                 .stream()
-                .map(persistenceMapper::toDomain)
+                .map(DatasourcePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 
     @Override
     public Optional<DatabaseSchema> findByConnectionIdAndSchemaName(Long connectionId, String schemaName) {
-        return Optional.ofNullable(persistenceMapper.toDomain(
+        return Optional.ofNullable(DatasourcePersistenceConvert.INSTANCE.toDomain(
                 mapper.selectByConnectionIdAndSchemaName(connectionId, schemaName)
         ));
     }

@@ -31,6 +31,8 @@ public class SkillResourceEntity extends BaseEntity {
     private String contentSha256;
     /** 内容大小（字节） */
     private Long contentSize;
+    /** 结构化资源清单（JSONB：references / scripts） */
+    private String resourceManifest;
     /** 状态（ACTIVE / 预留 CHECKING/REJECTED） */
     private String status;
 }

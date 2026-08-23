@@ -19,6 +19,7 @@ public class AgentSessionEntity extends BaseEntity {
 
     private String sessionId;
     private String userId;
+    private String workspaceId;
     private String agentId;
     private String agentVersion;
     private String status;

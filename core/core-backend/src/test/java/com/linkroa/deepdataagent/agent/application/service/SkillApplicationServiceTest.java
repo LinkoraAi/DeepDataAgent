@@ -4,6 +4,7 @@ import com.linkroa.deepdataagent.agent.application.command.CreateSkillCommand;
 import com.linkroa.deepdataagent.agent.application.command.PublishSkillVersionCommand;
 import com.linkroa.deepdataagent.agent.application.query.ListSkillQuery;
 import com.linkroa.deepdataagent.agent.domain.model.SkillResource;
+import com.linkroa.deepdataagent.agent.domain.model.SkillResourceManifest;
 import com.linkroa.deepdataagent.agent.domain.model.enums.SkillStatus;
 import com.linkroa.deepdataagent.agent.domain.model.enums.SkillStorageType;
 import com.linkroa.deepdataagent.agent.domain.model.enums.SkillType;
@@ -11,6 +12,7 @@ import com.linkroa.deepdataagent.agent.domain.repository.SkillContentStore;
 import com.linkroa.deepdataagent.agent.domain.repository.SkillRepository;
 import com.linkroa.deepdataagent.agent.infrastructure.config.SkillStorageProperties;
 import com.linkroa.deepdataagent.agent.infrastructure.util.Sha256Util;
+import com.linkroa.deepdataagent.agent.infrastructure.util.SkillPackageInspector;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,6 +54,7 @@ class SkillApplicationServiceTest {
 
     @Mock private SkillRepository skillRepository;
     @Mock private SkillContentStore skillContentStore;
+    @Mock private SkillPackageInspector skillPackageInspector;
     @Mock private TransactionTemplate transactionTemplate;
 
     private SkillStorageProperties storageProperties;
@@ -66,7 +69,9 @@ class SkillApplicationServiceTest {
         ReflectionTestUtils.setField(service, "skillRepository", skillRepository);
         ReflectionTestUtils.setField(service, "skillContentStore", skillContentStore);
         ReflectionTestUtils.setField(service, "storageProperties", storageProperties);
+        ReflectionTestUtils.setField(service, "skillPackageInspector", skillPackageInspector);
         ReflectionTestUtils.setField(service, "transactionTemplate", transactionTemplate);
+        lenient().when(skillPackageInspector.inspect(any())).thenReturn(SkillResourceManifest.empty());
         lenient().doAnswer(invocation -> {
             TransactionCallback<Object> callback = invocation.getArgument(0);
             return callback.doInTransaction(mock(TransactionStatus.class));
@@ -86,7 +91,7 @@ class SkillApplicationServiceTest {
         return SkillResource.restore(
                 1L, skillId, versionNumber, name, "描述-" + versionNumber, SkillType.CUSTOM,
                 SkillStorageType.LOCAL_FILE, skillId + "/" + versionNumber + "/" + skillId + "-" + versionNumber + ".zip",
-                Sha256Util.hex(content), content.length, SkillStatus.ACTIVE,
+                Sha256Util.hex(content), content.length, SkillResourceManifest.empty(), SkillStatus.ACTIVE,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
     }

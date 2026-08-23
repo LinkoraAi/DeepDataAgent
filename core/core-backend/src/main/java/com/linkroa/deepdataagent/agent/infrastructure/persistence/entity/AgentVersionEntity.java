@@ -38,4 +38,11 @@ public class AgentVersionEntity extends BaseEntity {
     /** 数据源引用（JSONB） */
     @TableField(typeHandler = PostgresJsonbTypeHandler.class)
     private String dataSourceIds;
+    /** 运行环境引用环境ID（可空） */
+    private String environmentId;
+    /** 记忆库引用（JSONB） */
+    @TableField(typeHandler = PostgresJsonbTypeHandler.class)
+    private String memoryStoreIds;
+    /** 工作空间ID（占位） */
+    private String workspaceId;
 }

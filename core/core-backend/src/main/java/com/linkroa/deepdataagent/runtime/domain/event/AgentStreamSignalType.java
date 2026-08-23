@@ -37,5 +37,9 @@ public enum AgentStreamSignalType {
     /** SDK 终态：轮次正常结束（end_turn） */
     AGENT_END,
     /** SDK 终态：迭代上限触发（stop_reason=max_iterations） */
-    EXCEED_MAX_ITERS
+    EXCEED_MAX_ITERS,
+    /** SDK HITL：需要人工确认（携带 reply_id 关联确认结果） */
+    HUMAN_CONFIRM_REQUIRED,
+    /** SDK HITL：人工确认结果（携带 reply_id 关联待确认项） */
+    HUMAN_CONFIRM_RESULT
 }

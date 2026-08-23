@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.agent.domain.model.ModelProfile;
 import com.linkroa.deepdataagent.agent.domain.model.enums.ModelProfileStatus;
 import com.linkroa.deepdataagent.agent.domain.repository.ModelProfileRepository;
-import com.linkroa.deepdataagent.agent.infrastructure.persistence.ModelProfilePersistenceMapper;
+import com.linkroa.deepdataagent.agent.infrastructure.convert.ModelProfilePersistenceConvert;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.ModelProfileEntity;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper.ModelProfileMapper;
 import org.springframework.stereotype.Repository;
@@ -19,16 +19,14 @@ import java.util.Optional;
 public class JdbcModelProfileRepository implements ModelProfileRepository {
 
     private final ModelProfileMapper mapper;
-    private final ModelProfilePersistenceMapper persistenceMapper;
 
-    public JdbcModelProfileRepository(ModelProfileMapper mapper, ModelProfilePersistenceMapper persistenceMapper) {
+    public JdbcModelProfileRepository(ModelProfileMapper mapper) {
         this.mapper = mapper;
-        this.persistenceMapper = persistenceMapper;
     }
 
     @Override
     public ModelProfile save(ModelProfile profile) {
-        ModelProfileEntity entity = persistenceMapper.toEntity(profile);
+        ModelProfileEntity entity = ModelProfilePersistenceConvert.INSTANCE.toEntity(profile);
         entity.setId(null);
         // 基础字段由 MybatisPlusMetaObjectHandler 自动填充
         mapper.insert(entity);
@@ -37,7 +35,7 @@ public class JdbcModelProfileRepository implements ModelProfileRepository {
 
     @Override
     public ModelProfile update(ModelProfile profile) {
-        ModelProfileEntity entity = persistenceMapper.toEntity(profile);
+        ModelProfileEntity entity = ModelProfilePersistenceConvert.INSTANCE.toEntity(profile);
         mapper.update(entity, Wrappers.<ModelProfileEntity>lambdaUpdate()
                 .eq(e -> e.getProfileId(), profile.profileId()));
         return findByProfileId(profile.profileId()).orElse(profile);
@@ -45,17 +43,17 @@ public class JdbcModelProfileRepository implements ModelProfileRepository {
 
     @Override
     public Optional<ModelProfile> findByProfileId(String profileId) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectByProfileId(profileId)));
+        return Optional.ofNullable(ModelProfilePersistenceConvert.INSTANCE.toDomain(mapper.selectByProfileId(profileId)));
     }
 
     @Override
     public Optional<ModelProfile> findByProfileIdForUpdate(String profileId) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectByProfileIdForUpdate(profileId)));
+        return Optional.ofNullable(ModelProfilePersistenceConvert.INSTANCE.toDomain(mapper.selectByProfileIdForUpdate(profileId)));
     }
 
     @Override
     public Optional<ModelProfile> findByDisplayName(String displayName) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectByDisplayName(displayName)));
+        return Optional.ofNullable(ModelProfilePersistenceConvert.INSTANCE.toDomain(mapper.selectByDisplayName(displayName)));
     }
 
     @Override
@@ -66,13 +64,19 @@ public class JdbcModelProfileRepository implements ModelProfileRepository {
                         (long) Math.max(0, page - 1) * size,
                         size)
                 .stream()
-                .map(persistenceMapper::toDomain)
+                .map(ModelProfilePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 
     @Override
     public long countByCondition(String keyword, ModelProfileStatus status) {
         return mapper.countByCondition(keyword, status != null ? status.name() : null);
+    }
+
+    @Override
+    public long countBySecretId(String secretId) {
+        Long count = mapper.countBySecretId(secretId);
+        return count != null ? count : 0;
     }
 
     @Override

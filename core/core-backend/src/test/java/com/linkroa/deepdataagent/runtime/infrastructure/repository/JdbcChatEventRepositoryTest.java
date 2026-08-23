@@ -2,8 +2,7 @@ package com.linkroa.deepdataagent.runtime.infrastructure.repository;
 
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.ChatEventType;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.RuntimePersistenceMapper;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.RuntimePersistenceMapperImpl;
+import com.linkroa.deepdataagent.runtime.infrastructure.convert.RuntimePersistenceConvert;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.entity.ChatEventEntity;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.mapper.ChatEventMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,15 +27,12 @@ class JdbcChatEventRepositoryTest {
     @Mock
     private ChatEventMapper mapper;
 
-    private RuntimePersistenceMapper persistenceMapper;
     private JdbcChatEventRepository repository;
 
     @BeforeEach
     void setUp() {
-        persistenceMapper = new RuntimePersistenceMapperImpl();
         repository = new JdbcChatEventRepository();
         ReflectionTestUtils.setField(repository, "mapper", mapper);
-        ReflectionTestUtils.setField(repository, "persistenceMapper", persistenceMapper);
     }
 
     @Test
@@ -95,7 +91,7 @@ class JdbcChatEventRepositoryTest {
         ChatEvent e1 = ChatEvent.create("s-1", "r-1", ChatEventType.MESSAGE, "{\"delta\":\"a\"}", 2L);
         ChatEvent e2 = ChatEvent.create("s-1", "r-1", ChatEventType.MESSAGE, "{\"delta\":\"b\"}", 3L);
         when(mapper.findBySessionAfter("s-1", 1L)).thenReturn(List.of(
-                persistenceMapper.toEntity(e1), persistenceMapper.toEntity(e2)));
+                RuntimePersistenceConvert.INSTANCE.toEntity(e1), RuntimePersistenceConvert.INSTANCE.toEntity(e2)));
 
         // when
         List<ChatEvent> events = repository.findBySessionAfter("s-1", 1L);
@@ -110,7 +106,7 @@ class JdbcChatEventRepositoryTest {
     void should_findByRound_when_findByRound_given_roundId() {
         // given
         ChatEvent e1 = ChatEvent.create("s-1", "r-1", ChatEventType.THINKING, "{\"delta\":\"x\"}", 1L);
-        when(mapper.findByRound("r-1")).thenReturn(List.of(persistenceMapper.toEntity(e1)));
+        when(mapper.findByRound("r-1")).thenReturn(List.of(RuntimePersistenceConvert.INSTANCE.toEntity(e1)));
 
         // when
         List<ChatEvent> events = repository.findByRound("r-1");

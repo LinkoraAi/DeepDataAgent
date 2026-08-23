@@ -2,7 +2,7 @@ package com.linkroa.deepdataagent.datasource.infrastructure.repository;
 
 import com.linkroa.deepdataagent.datasource.domain.model.ColumnInfo;
 import com.linkroa.deepdataagent.datasource.domain.repository.ColumnInfoRepository;
-import com.linkroa.deepdataagent.datasource.infrastructure.persistence.DatasourcePersistenceMapper;
+import com.linkroa.deepdataagent.datasource.infrastructure.convert.DatasourcePersistenceConvert;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.ColumnInfoEntity;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.mapper.ColumnInfoMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -14,17 +14,14 @@ import java.util.List;
 public class JdbcColumnInfoRepository implements ColumnInfoRepository {
 
     private final ColumnInfoMapper mapper;
-    private final DatasourcePersistenceMapper persistenceMapper;
 
-    public JdbcColumnInfoRepository(ColumnInfoMapper mapper,
-                                    DatasourcePersistenceMapper persistenceMapper) {
+    public JdbcColumnInfoRepository(ColumnInfoMapper mapper) {
         this.mapper = mapper;
-        this.persistenceMapper = persistenceMapper;
     }
 
     @Override
     public ColumnInfo save(ColumnInfo columnInfo) {
-        ColumnInfoEntity entity = persistenceMapper.toEntity(columnInfo);
+        ColumnInfoEntity entity = DatasourcePersistenceConvert.INSTANCE.toEntity(columnInfo);
         entity.setId(null);
         // 基础字段由 MybatisPlusMetaObjectHandler 自动填充
         mapper.insert(entity);
@@ -36,7 +33,7 @@ public class JdbcColumnInfoRepository implements ColumnInfoRepository {
 
     @Override
     public ColumnInfo update(ColumnInfo columnInfo) {
-        ColumnInfoEntity entity = persistenceMapper.toEntity(columnInfo);
+        ColumnInfoEntity entity = DatasourcePersistenceConvert.INSTANCE.toEntity(columnInfo);
         // updated_at/updated_by 由 MybatisPlusMetaObjectHandler 自动填充
         mapper.updateById(entity);
         return findByTableId(columnInfo.tableId()).stream()
@@ -49,7 +46,7 @@ public class JdbcColumnInfoRepository implements ColumnInfoRepository {
     public List<ColumnInfo> findByTableId(Long tableId) {
         return mapper.selectByTableId(tableId)
                 .stream()
-                .map(persistenceMapper::toDomain)
+                .map(DatasourcePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 

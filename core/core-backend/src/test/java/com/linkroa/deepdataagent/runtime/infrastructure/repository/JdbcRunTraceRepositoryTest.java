@@ -2,8 +2,7 @@ package com.linkroa.deepdataagent.runtime.infrastructure.repository;
 
 import com.linkroa.deepdataagent.runtime.domain.model.RunTrace;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.SpanKind;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.RuntimePersistenceMapper;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.RuntimePersistenceMapperImpl;
+import com.linkroa.deepdataagent.runtime.infrastructure.convert.RuntimePersistenceConvert;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.entity.RunTraceEntity;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.mapper.RunTraceMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,15 +28,12 @@ class JdbcRunTraceRepositoryTest {
     @Mock
     private RunTraceMapper mapper;
 
-    private RuntimePersistenceMapper persistenceMapper;
     private JdbcRunTraceRepository repository;
 
     @BeforeEach
     void setUp() {
-        persistenceMapper = new RuntimePersistenceMapperImpl();
         repository = new JdbcRunTraceRepository();
         ReflectionTestUtils.setField(repository, "mapper", mapper);
-        ReflectionTestUtils.setField(repository, "persistenceMapper", persistenceMapper);
     }
 
     @Test
@@ -82,7 +78,7 @@ class JdbcRunTraceRepositoryTest {
         RunTrace child = RunTrace.createChild("trace-1", root.spanId(), "r-1", "tool.call", "query_datasource",
                 root.startTime());
         when(mapper.findByRound("r-1")).thenReturn(List.of(
-                persistenceMapper.toEntity(root), persistenceMapper.toEntity(child)));
+                RuntimePersistenceConvert.INSTANCE.toEntity(root), RuntimePersistenceConvert.INSTANCE.toEntity(child)));
 
         // when
         List<RunTrace> spans = repository.findByRound("r-1");

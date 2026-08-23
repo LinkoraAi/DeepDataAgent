@@ -1,6 +1,6 @@
 package com.linkroa.deepdataagent.runtime.infrastructure.sse;
 
-import com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler;
+import com.linkroa.deepdataagent.runtime.application.convert.SseEventEnvelopeConvert;
 import com.linkroa.deepdataagent.runtime.application.contract.SseEventEnvelope;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.domain.model.ConnectionHandle;
@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * SSE 连接句柄 —— 领域端口 {@link ConnectionHandle} 的进程内 SSE 适配实现。
  * <p>表达「一个会话对应一组连接」的多订阅者 fan-out 语义：内部持有该会话的
- * {@link SseEmitter} 连接组，{@link #push} 将领域事件经 {@link SseEventEnvelopeAssembler}
+ * {@link SseEmitter} 连接组，{@link #push} 将领域事件经 {@link SseEventEnvelopeConvert}
  * 转换为 {@code SseEventEnvelope} 后广播；协议细节（信封 → SSE 帧）完全不泄漏到领域层。</p>
  * <ul>
  *   <li>{@link #removeConnection} 检测到最后一个连接断开时触发 {@link #onDisconnect} 注册的回调；</li>
@@ -30,21 +30,10 @@ public class SseConnectionHandle implements ConnectionHandle {
 
     /** 会话连接组（fan-out 目标集合）。 */
     private final Set<SseEmitter> emitters = ConcurrentHashMap.newKeySet();
-    /** 领域 → 信封协议转换装配器（复用既有实现）。 */
-    private final SseEventEnvelopeAssembler envelopeAssembler;
     /** 全部连接断开时触发的一次性回调。 */
     private final AtomicReference<Runnable> disconnectHandler = new AtomicReference<>();
     /** 句柄是否已关闭（关闭后拒绝新增连接、push 为空操作）。 */
     private final AtomicBoolean closed = new AtomicBoolean(false);
-
-    /**
-     * 构造 SSE 连接句柄。
-     *
-     * @param envelopeAssembler 领域事件 → 对外信封的装配器
-     */
-    public SseConnectionHandle(SseEventEnvelopeAssembler envelopeAssembler) {
-        this.envelopeAssembler = envelopeAssembler;
-    }
 
     @Override
     public void push(ChatEvent event) {
@@ -56,7 +45,7 @@ public class SseConnectionHandle implements ConnectionHandle {
         if (closed.get() || emitters.isEmpty()) {
             return;
         }
-        SseEventEnvelope envelope = envelopeAssembler.toEnvelope(event);
+        SseEventEnvelope envelope = SseEventEnvelopeConvert.INSTANCE.toEnvelope(event);
         for (SseEmitter emitter : emitters) {
             if (excludedConnections.contains(emitter)) {
                 continue;

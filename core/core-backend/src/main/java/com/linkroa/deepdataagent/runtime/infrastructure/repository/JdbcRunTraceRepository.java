@@ -2,7 +2,7 @@ package com.linkroa.deepdataagent.runtime.infrastructure.repository;
 
 import com.linkroa.deepdataagent.runtime.domain.model.RunTrace;
 import com.linkroa.deepdataagent.runtime.domain.repository.RunTraceRepository;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.RuntimePersistenceMapper;
+import com.linkroa.deepdataagent.runtime.infrastructure.convert.RuntimePersistenceConvert;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.entity.RunTraceEntity;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.mapper.RunTraceMapper;
 import jakarta.annotation.Resource;
@@ -20,12 +20,10 @@ public class JdbcRunTraceRepository implements RunTraceRepository {
 
     @Resource
     private RunTraceMapper mapper;
-    @Resource
-    private RuntimePersistenceMapper persistenceMapper;
 
     @Override
     public RunTrace save(RunTrace trace) {
-        RunTraceEntity entity = persistenceMapper.toEntity(trace);
+        RunTraceEntity entity = RuntimePersistenceConvert.INSTANCE.toEntity(trace);
         if (entity.getId() == null) {
             entity.setId(null);
             mapper.insert(entity);
@@ -39,11 +37,11 @@ public class JdbcRunTraceRepository implements RunTraceRepository {
     public List<RunTrace> findByRound(String roundId) {
         return mapper.findByRound(roundId)
                 .stream()
-                .map(persistenceMapper::toDomain)
+                .map(RuntimePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 
     private Optional<RunTrace> findById(Long id) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectById(id)));
+        return Optional.ofNullable(RuntimePersistenceConvert.INSTANCE.toDomain(mapper.selectById(id)));
     }
 }

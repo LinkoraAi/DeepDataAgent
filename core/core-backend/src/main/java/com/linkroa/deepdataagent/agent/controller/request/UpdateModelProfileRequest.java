@@ -29,6 +29,10 @@ public record UpdateModelProfileRequest(
         /** 凭证：null 表示保留原值，空串表示清空，其他表示更新 */
         String credential,
 
+        /** 凭证引用密钥 ID：null 表示保留原值，空串表示清空，其他表示新引用（与 credential 互斥） */
+        @Size(max = 64, message = "密钥引用ID不能超过64个字符")
+        String secretId,
+
         @Size(max = 64, message = "模型系列不能超过64个字符")
         String modelSeries,
 

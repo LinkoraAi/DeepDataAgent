@@ -7,7 +7,11 @@ import com.linkroa.deepdataagent.runtime.domain.factory.BuiltAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.event.AgentResultEvent;
+import io.agentscope.core.event.ConfirmResult;
 import io.agentscope.core.event.ModelCallEndEvent;
+import io.agentscope.core.event.ModelCallStartEvent;
+import io.agentscope.core.event.RequireExternalExecutionEvent;
+import io.agentscope.core.event.RequireUserConfirmEvent;
 import io.agentscope.core.event.TextBlockDeltaEvent;
 import io.agentscope.core.event.TextBlockEndEvent;
 import io.agentscope.core.event.ThinkingBlockDeltaEvent;
@@ -17,11 +21,17 @@ import io.agentscope.core.event.ToolCallEndEvent;
 import io.agentscope.core.event.ToolCallStartEvent;
 import io.agentscope.core.event.ToolResultEndEvent;
 import io.agentscope.core.event.ToolResultTextDeltaEvent;
+import io.agentscope.core.event.UserConfirmResultEvent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
+import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.harness.agent.HarnessAgent;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * AgentScope v2 执行器（{@link AgentRunExecutor} 实现，纯事件映射）。
@@ -41,6 +51,13 @@ import reactor.core.publisher.Flux;
 @Component
 public class HarnessAgentRunExecutor implements AgentRunExecutor {
 
+    /**
+     * 按 replyId 暂存的待确认工具调用（{@code REQUIRE_*} 事件携带的 SDK {@code ToolUseBlock}）。
+     * <p>依据 HITL 续流机制，SDK 类型不得进入领域 / 应用层，故由基础设施层持有；
+     * 确认续流时按 replyId 取回并构造确认结果，取回后即移除。</p>
+     */
+    private final Map<String, List<ToolUseBlock>> pendingToolCalls = new ConcurrentHashMap<>();
+
     @Override
     public Flux<AgentStreamSignal> streamEvents(BuiltAgent agent,
                                                 String userInput,
@@ -58,6 +75,39 @@ public class HarnessAgentRunExecutor implements AgentRunExecutor {
                         sink.next(signal);
                     }
                 });
+    }
+
+    @Override
+    public Flux<AgentStreamSignal> resumeWithConfirmation(BuiltAgent agent,
+                                                          String replyId,
+                                                          String sessionId,
+                                                          String userId) {
+        HarnessAgent harness = unwrap(agent);
+        List<ToolUseBlock> toolCalls = pendingToolCalls.remove(replyId);
+        if (toolCalls == null || toolCalls.isEmpty()) {
+            return Flux.error(new IllegalStateException("未找到待确认的工具调用: replyId=" + replyId));
+        }
+        List<ConfirmResult> results = toolCalls.stream()
+                .map(toolCall -> new ConfirmResult(true, toolCall))
+                .toList();
+        Msg input = Msg.builder()
+                .role(MsgRole.USER)
+                .metadata(Map.of(Msg.METADATA_CONFIRM_RESULTS, results))
+                .build();
+        RuntimeContext context = RuntimeContext.builder().sessionId(sessionId).userId(userId).build();
+        String modelName = resolveModelName(harness);
+        return harness.streamEvents(input, context)
+                .handle((event, sink) -> {
+                    AgentStreamSignal signal = toSignal(event, modelName);
+                    if (signal != null) {
+                        sink.next(signal);
+                    }
+                });
+    }
+
+    @Override
+    public void discardPendingToolCalls(String replyId) {
+        pendingToolCalls.remove(replyId);
     }
 
     /** 解包领域句柄为 SDK 句柄；不支持的实现类型视为装配错误直接抛出。 */
@@ -122,9 +172,21 @@ public class HarnessAgentRunExecutor implements AgentRunExecutor {
             case MODEL_CALL_START -> AgentStreamSignal.of(AgentStreamSignalType.MODEL_CALL_START, null, null);
             case MODEL_CALL_END -> new AgentStreamSignal(AgentStreamSignalType.MODEL_CALL_END, null, null,
                     null, null, null, null,
-                    inputTokens((ModelCallEndEvent) event), outputTokens((ModelCallEndEvent) event), modelName);
+                    inputTokens((ModelCallEndEvent) event), outputTokens((ModelCallEndEvent) event), modelName, null);
             case EXCEED_MAX_ITERS -> AgentStreamSignal.of(AgentStreamSignalType.EXCEED_MAX_ITERS, null, null);
-            // TEXT/THINKING/DATA 块 Start、REQUIRE_*/USER_CONFIRM_RESULT/REQUEST_STOP/CUSTOM 等
+            case REQUIRE_USER_CONFIRM -> {
+                RequireUserConfirmEvent require = (RequireUserConfirmEvent) event;
+                pendingToolCalls.put(require.getReplyId(), require.getToolCalls());
+                yield AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, require.getReplyId());
+            }
+            case REQUIRE_EXTERNAL_EXECUTION -> {
+                RequireExternalExecutionEvent require = (RequireExternalExecutionEvent) event;
+                pendingToolCalls.put(require.getReplyId(), require.getToolCalls());
+                yield AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, require.getReplyId());
+            }
+            case USER_CONFIRM_RESULT -> AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_RESULT,
+                    ((UserConfirmResultEvent) event).getReplyId());
+            // TEXT/THINKING/DATA 块 Start、EXTERNAL_EXECUTION_RESULT/REQUEST_STOP/CUSTOM 等
             // 不属于 chat 事件流语义：直接丢弃（filter 过滤）
             default -> null;
         };

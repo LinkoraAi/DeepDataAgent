@@ -2,7 +2,7 @@ package com.linkroa.deepdataagent.datasource.infrastructure.repository;
 
 import com.linkroa.deepdataagent.datasource.domain.model.ApiSchema;
 import com.linkroa.deepdataagent.datasource.domain.repository.ApiSchemaRepository;
-import com.linkroa.deepdataagent.datasource.infrastructure.persistence.DatasourcePersistenceMapper;
+import com.linkroa.deepdataagent.datasource.infrastructure.convert.DatasourcePersistenceConvert;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.ApiSchemaEntity;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.mapper.ApiSchemaMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -16,20 +16,17 @@ import java.util.Optional;
 public class JdbcApiSchemaRepository implements ApiSchemaRepository {
 
     private final ApiSchemaMapper mapper;
-    private final DatasourcePersistenceMapper persistenceMapper;
     private final PasswordEncryptionUtil encryptionUtil;
 
     public JdbcApiSchemaRepository(ApiSchemaMapper mapper,
-                                   DatasourcePersistenceMapper persistenceMapper,
                                    PasswordEncryptionUtil encryptionUtil) {
         this.mapper = mapper;
-        this.persistenceMapper = persistenceMapper;
         this.encryptionUtil = encryptionUtil;
     }
 
     @Override
     public ApiSchema save(ApiSchema apiSchema) {
-        ApiSchemaEntity entity = persistenceMapper.toEntity(apiSchema, encryptionUtil);
+        ApiSchemaEntity entity = DatasourcePersistenceConvert.INSTANCE.toEntity(apiSchema, encryptionUtil);
         entity.setId(null);
         // 基础字段由 MybatisPlusMetaObjectHandler 自动填充
         mapper.insert(entity);
@@ -38,7 +35,7 @@ public class JdbcApiSchemaRepository implements ApiSchemaRepository {
 
     @Override
     public ApiSchema update(ApiSchema apiSchema) {
-        ApiSchemaEntity entity = persistenceMapper.toEntity(apiSchema, encryptionUtil);
+        ApiSchemaEntity entity = DatasourcePersistenceConvert.INSTANCE.toEntity(apiSchema, encryptionUtil);
         // updated_at/updated_by 由 MybatisPlusMetaObjectHandler 自动填充
         mapper.updateById(entity);
         return findById(apiSchema.id()).orElse(apiSchema);
@@ -46,12 +43,12 @@ public class JdbcApiSchemaRepository implements ApiSchemaRepository {
 
     @Override
     public Optional<ApiSchema> findById(Long id) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectById(id), encryptionUtil));
+        return Optional.ofNullable(DatasourcePersistenceConvert.INSTANCE.toDomain(mapper.selectById(id), encryptionUtil));
     }
 
     @Override
     public Optional<ApiSchema> findByConnectionIdAndName(Long connectionId, String name) {
-        return Optional.ofNullable(persistenceMapper.toDomain(
+        return Optional.ofNullable(DatasourcePersistenceConvert.INSTANCE.toDomain(
             mapper.selectByConnectionIdAndName(connectionId, name), encryptionUtil));
     }
 
@@ -59,7 +56,7 @@ public class JdbcApiSchemaRepository implements ApiSchemaRepository {
     public List<ApiSchema> findByConnectionId(Long connectionId) {
         return mapper.selectByConnectionId(connectionId)
                 .stream()
-                .map(e -> persistenceMapper.toDomain(e, encryptionUtil))
+                .map(e -> DatasourcePersistenceConvert.INSTANCE.toDomain(e, encryptionUtil))
                 .toList();
     }
 

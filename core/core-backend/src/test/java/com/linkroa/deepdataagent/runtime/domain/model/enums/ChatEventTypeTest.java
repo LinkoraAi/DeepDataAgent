@@ -49,6 +49,26 @@ class ChatEventTypeTest {
     }
 
     @Test
+    void should_parseHumanConfirmEvents_when_fromValue_given_hitlNames() {
+        // when
+        ChatEventType required = ChatEventType.fromValue("human_confirm_required");
+        ChatEventType result = ChatEventType.fromValue("human_confirm_result");
+
+        // then
+        assertEquals(ChatEventType.HUMAN_CONFIRM_REQUIRED, required);
+        assertEquals(ChatEventType.HUMAN_CONFIRM_RESULT, result);
+    }
+
+    @Test
+    void should_parseUserMessage_when_fromValue_given_userMessageName() {
+        // when
+        ChatEventType type = ChatEventType.fromValue("user_message");
+
+        // then
+        assertEquals(ChatEventType.USER_MESSAGE, type);
+    }
+
+    @Test
     void should_throw_when_fromValue_given_null() {
         // when & then
         assertThrows(IllegalArgumentException.class, () -> ChatEventType.fromValue(null));

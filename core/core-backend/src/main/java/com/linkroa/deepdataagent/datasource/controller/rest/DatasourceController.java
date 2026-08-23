@@ -1,15 +1,16 @@
 package com.linkroa.deepdataagent.datasource.controller.rest;
 
-import com.linkroa.deepdataagent.datasource.application.assembler.DatasourceCommandAssembler;
 import com.linkroa.deepdataagent.datasource.application.command.ApiSchemaCommand;
 import com.linkroa.deepdataagent.datasource.application.command.CreateDatasourceCommand;
 import com.linkroa.deepdataagent.datasource.application.command.ParseApiResponseCommand;
 import com.linkroa.deepdataagent.datasource.application.command.TestConnectionCommand;
 import com.linkroa.deepdataagent.datasource.application.command.UpdateDatasourceCommand;
+import com.linkroa.deepdataagent.datasource.application.convert.DatasourceCommandConvert;
 import com.linkroa.deepdataagent.datasource.application.query.ListDatasourceQuery;
 import com.linkroa.deepdataagent.datasource.application.query.TableListQuery;
 import com.linkroa.deepdataagent.datasource.application.service.DatasourceApplicationService;
 import com.linkroa.deepdataagent.datasource.application.validation.DatasourceValidator;
+import com.linkroa.deepdataagent.datasource.controller.convert.DatasourceResponseConvert;
 import com.linkroa.deepdataagent.datasource.controller.request.*;
 import com.linkroa.deepdataagent.datasource.controller.response.*;
 import com.linkroa.deepdataagent.datasource.domain.model.*;
@@ -39,13 +40,9 @@ import java.util.Map;
 public class DatasourceController {
 
     private final DatasourceApplicationService applicationService;
-    private final DatasourceResponseMapper responseMapper;
-    private final DatasourceCommandAssembler commandAssembler;
 
-    public DatasourceController(DatasourceApplicationService applicationService, DatasourceResponseMapper responseMapper, DatasourceCommandAssembler commandAssembler) {
+    public DatasourceController(DatasourceApplicationService applicationService) {
         this.applicationService = applicationService;
-        this.responseMapper = responseMapper;
-        this.commandAssembler = commandAssembler;
     }
 
     /**
@@ -59,7 +56,7 @@ public class DatasourceController {
 
     @PostMapping("/test-connection")
     public ApiResponse<String> testConnection(@Valid @RequestBody TestConnectionRequest request) {
-        TestConnectionCommand command = commandAssembler.toTestCommand(request);
+        TestConnectionCommand command = DatasourceCommandConvert.INSTANCE.toTestCommand(request);
         DatasourceConnectionStrategy.ConnectionTestResult result = applicationService.testConnection(command);
         if (!result.success()) {
             throw new DeepDataAgentException(result.message());
@@ -69,14 +66,14 @@ public class DatasourceController {
 
     @PostMapping("/create")
     public ApiResponse<String> create(@Valid @RequestBody CreateDatasourceRequest request) {
-        CreateDatasourceCommand command = commandAssembler.toCreateCommand(request);
+        CreateDatasourceCommand command = DatasourceCommandConvert.INSTANCE.toCreateCommand(request);
         applicationService.createDatasource(command);
         return ApiResponse.success("新增数据源成功");
     }
 
     @PostMapping("/update")
     public ApiResponse<String> update(@Valid @RequestBody UpdateDatasourceRequest request) {
-        UpdateDatasourceCommand command = commandAssembler.toUpdateCommand(request);
+        UpdateDatasourceCommand command = DatasourceCommandConvert.INSTANCE.toUpdateCommand(request);
         applicationService.updateDatasource(command);
         return ApiResponse.success("更新数据源成功");
     }
@@ -106,7 +103,7 @@ public class DatasourceController {
      */
     @PostMapping("/api/parse-response")
     public ApiResponse<ParseApiResponseResult> parseResponse(@Valid @RequestBody ParseApiResponseRequest request) {
-        ParseApiResponseCommand command = commandAssembler.toParseCommand(request);
+        ParseApiResponseCommand command = DatasourceCommandConvert.INSTANCE.toParseCommand(request);
         ParseApiResponseResult result = applicationService.parseApiResponse(command);
         return ApiResponse.success(result);
     }
@@ -119,10 +116,10 @@ public class DatasourceController {
 
     @PostMapping("/list")
     public ApiResponse<PaginatedResponse<DatasourceConnectionResponse>> list(@Valid @RequestBody ListDatasourceRequest request) {
-        ListDatasourceQuery query = commandAssembler.toListQuery(request);
+        ListDatasourceQuery query = DatasourceCommandConvert.INSTANCE.toListQuery(request);
         DatasourceApplicationService.PaginatedResult<DatasourceConnection> result = applicationService.listDatasources(query);
         List<DatasourceConnectionResponse> responses = result.data().stream()
-                .map(responseMapper::toConnectionResponse)
+                .map(DatasourceResponseConvert.INSTANCE::toConnectionResponse)
                 .toList();
         return ApiResponse.success(new PaginatedResponse<>(responses, result.total(), result.page(), result.size()));
     }
@@ -134,14 +131,14 @@ public class DatasourceController {
         if (type == DatasourceType.API) {
             List<ApiSchema> schemas = applicationService.listApiSchemas(request.connectionId());
             List<TableResponse> responses = schemas.stream()
-                .map(responseMapper::tableResponseFromApiSchema)
+                .map(DatasourceResponseConvert.INSTANCE::tableResponseFromApiSchema)
                 .toList();
             return ApiResponse.success(new PaginatedResponse<>(responses, responses.size(), 1, responses.size()));
         } else {
-            TableListQuery query = commandAssembler.toTableListQuery(request);
+            TableListQuery query = DatasourceCommandConvert.INSTANCE.toTableListQuery(request);
             DatasourceApplicationService.PaginatedResult<TableInfo> result = applicationService.listTables(query);
             List<TableResponse> responses = result.data().stream()
-                .map(responseMapper::tableResponseFromTableInfo)
+                .map(DatasourceResponseConvert.INSTANCE::tableResponseFromTableInfo)
                 .toList();
             return ApiResponse.success(new PaginatedResponse<>(responses, result.total(), result.page(), result.size()));
         }
@@ -153,13 +150,13 @@ public class DatasourceController {
         if (type == DatasourceType.API) {
             List<ApiField> fields = applicationService.listApiFields(request.schemaId());
             List<ColumnInfoResponse> responses = fields.stream()
-                    .map(responseMapper::columnInfoResponseFromApiField)
+                    .map(DatasourceResponseConvert.INSTANCE::columnInfoResponseFromApiField)
                     .toList();
             return ApiResponse.success(responses);
         } else {
             List<ColumnInfo> columns = applicationService.listColumns(request.tableId());
             List<ColumnInfoResponse> responses = columns.stream()
-                    .map(responseMapper::toColumnInfoResponse)
+                    .map(DatasourceResponseConvert.INSTANCE::toColumnInfoResponse)
                     .toList();
             return ApiResponse.success(responses);
         }
@@ -179,7 +176,7 @@ public class DatasourceController {
 
     @PostMapping("/api-schema/create")
     public ApiResponse<String> createApiSchema(@Valid @RequestBody CreateApiSchemaRequest request) {
-        ApiSchemaCommand schemaCommand = commandAssembler.toApiSchemaCommandFromCreate(request);
+        ApiSchemaCommand schemaCommand = DatasourceCommandConvert.INSTANCE.toApiSchemaCommandFromCreate(request);
         applicationService.createApiSchema(request.connectionId(), schemaCommand);
         return ApiResponse.success("创建API表成功");
     }

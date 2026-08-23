@@ -1,6 +1,5 @@
 package com.linkroa.deepdataagent.runtime.infrastructure.sse;
 
-import com.linkroa.deepdataagent.runtime.application.assembler.SseEventEnvelopeAssembler;
 import com.linkroa.deepdataagent.runtime.infrastructure.config.AgentRuntimeProperties;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -39,8 +38,6 @@ public class SseEmitterRegistry {
     private final Map<String, SseConnectionHandle> handles = new ConcurrentHashMap<>();
     @Resource
     private AgentRuntimeProperties properties;
-    @Resource
-    private SseEventEnvelopeAssembler envelopeAssembler;
     private final AtomicBoolean started = new AtomicBoolean(false);
     private ScheduledExecutorService heartbeatExecutor;
 
@@ -84,7 +81,7 @@ public class SseEmitterRegistry {
     public SseConnectionHandle getOrCreate(String sessionId) {
         return handles.compute(sessionId, (k, existing) ->
                 existing == null || existing.isClosed()
-                        ? new SseConnectionHandle(envelopeAssembler)
+                        ? new SseConnectionHandle()
                         : existing);
     }
 

@@ -1,15 +1,15 @@
 package com.linkroa.deepdataagent.agent.controller.rest;
 
-import com.linkroa.deepdataagent.agent.application.assembler.ModelProfileCommandAssembler;
+import com.linkroa.deepdataagent.agent.application.convert.ModelProfileCommandConvert;
 import com.linkroa.deepdataagent.agent.application.command.CreateModelProfileCommand;
 import com.linkroa.deepdataagent.agent.application.command.UpdateModelProfileCommand;
 import com.linkroa.deepdataagent.agent.application.query.ListModelProfileQuery;
 import com.linkroa.deepdataagent.agent.application.service.ModelProfileApplicationService;
+import com.linkroa.deepdataagent.agent.controller.convert.ModelProfileResponseConvert;
 import com.linkroa.deepdataagent.agent.controller.request.CreateModelProfileRequest;
 import com.linkroa.deepdataagent.agent.controller.request.ListModelProfileRequest;
 import com.linkroa.deepdataagent.agent.controller.request.UpdateModelProfileRequest;
 import com.linkroa.deepdataagent.agent.controller.response.ModelProfileResponse;
-import com.linkroa.deepdataagent.agent.controller.response.ModelProfileResponseMapper;
 import com.linkroa.deepdataagent.agent.domain.model.ModelProfile;
 import com.linkroa.deepdataagent.agent.domain.model.enums.ModelProfileStatus;
 import com.linkroa.deepdataagent.shared.constant.api.ApiVersionConstants;
@@ -38,15 +38,11 @@ public class ModelProfileController {
 
     @Resource
     private ModelProfileApplicationService applicationService;
-    @Resource
-    private ModelProfileResponseMapper responseMapper;
-    @Resource
-    private ModelProfileCommandAssembler commandAssembler;
 
     @PostMapping
     public ApiResponse<ModelProfileResponse> create(@Valid @RequestBody CreateModelProfileRequest request) {
-        CreateModelProfileCommand command = commandAssembler.toCreateCommand(request);
-        return ApiResponse.success(responseMapper.toResponse(applicationService.createProfile(command)));
+        CreateModelProfileCommand command = ModelProfileCommandConvert.INSTANCE.toCreateCommand(request);
+        return ApiResponse.success(ModelProfileResponseConvert.INSTANCE.toResponse(applicationService.createProfile(command)));
     }
 
     @GetMapping
@@ -60,14 +56,14 @@ public class ModelProfileController {
         List<ModelProfile> profiles = applicationService.listProfiles(query);
         long total = applicationService.countProfiles(query);
         List<ModelProfileResponse> responses = profiles.stream()
-                .map(responseMapper::toResponse)
+                .map(ModelProfileResponseConvert.INSTANCE::toResponse)
                 .toList();
         return ApiResponse.success(new PaginatedResponse<>(responses, total, query.page(), query.size()));
     }
 
     @GetMapping("/{profileId}")
     public ApiResponse<ModelProfileResponse> detail(@PathVariable String profileId) {
-        return ApiResponse.success(responseMapper.toResponse(applicationService.getProfile(profileId)));
+        return ApiResponse.success(ModelProfileResponseConvert.INSTANCE.toResponse(applicationService.getProfile(profileId)));
     }
 
     @PostMapping("/{profileId}")
@@ -75,8 +71,8 @@ public class ModelProfileController {
             @PathVariable String profileId,
             @Valid @RequestBody UpdateModelProfileRequest request
     ) {
-        UpdateModelProfileCommand command = commandAssembler.toUpdateCommand(profileId, request);
-        return ApiResponse.success(responseMapper.toResponse(applicationService.updateProfile(command)));
+        UpdateModelProfileCommand command = ModelProfileCommandConvert.INSTANCE.toUpdateCommand(profileId, request);
+        return ApiResponse.success(ModelProfileResponseConvert.INSTANCE.toResponse(applicationService.updateProfile(command)));
     }
 
     @PostMapping("/{profileId}/disable")

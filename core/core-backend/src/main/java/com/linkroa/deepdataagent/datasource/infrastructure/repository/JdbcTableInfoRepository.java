@@ -2,7 +2,7 @@ package com.linkroa.deepdataagent.datasource.infrastructure.repository;
 
 import com.linkroa.deepdataagent.datasource.domain.model.TableInfo;
 import com.linkroa.deepdataagent.datasource.domain.repository.TableInfoRepository;
-import com.linkroa.deepdataagent.datasource.infrastructure.persistence.DatasourcePersistenceMapper;
+import com.linkroa.deepdataagent.datasource.infrastructure.convert.DatasourcePersistenceConvert;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.TableInfoEntity;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.mapper.TableInfoMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -15,17 +15,14 @@ import java.util.Optional;
 public class JdbcTableInfoRepository implements TableInfoRepository {
 
     private final TableInfoMapper mapper;
-    private final DatasourcePersistenceMapper persistenceMapper;
 
-    public JdbcTableInfoRepository(TableInfoMapper mapper,
-                                   DatasourcePersistenceMapper persistenceMapper) {
+    public JdbcTableInfoRepository(TableInfoMapper mapper) {
         this.mapper = mapper;
-        this.persistenceMapper = persistenceMapper;
     }
 
     @Override
     public TableInfo save(TableInfo tableInfo) {
-        TableInfoEntity entity = persistenceMapper.toEntity(tableInfo);
+        TableInfoEntity entity = DatasourcePersistenceConvert.INSTANCE.toEntity(tableInfo);
         entity.setId(null);
         // 基础字段由 MybatisPlusMetaObjectHandler 自动填充
         mapper.insert(entity);
@@ -34,7 +31,7 @@ public class JdbcTableInfoRepository implements TableInfoRepository {
 
     @Override
     public TableInfo update(TableInfo tableInfo) {
-        TableInfoEntity entity = persistenceMapper.toEntity(tableInfo);
+        TableInfoEntity entity = DatasourcePersistenceConvert.INSTANCE.toEntity(tableInfo);
         // updated_at/updated_by 由 MybatisPlusMetaObjectHandler 自动填充
         mapper.updateById(entity);
         return findById(tableInfo.id()).orElse(tableInfo);
@@ -42,14 +39,14 @@ public class JdbcTableInfoRepository implements TableInfoRepository {
 
     @Override
     public Optional<TableInfo> findById(Long id) {
-        return Optional.ofNullable(persistenceMapper.toDomain(mapper.selectById(id)));
+        return Optional.ofNullable(DatasourcePersistenceConvert.INSTANCE.toDomain(mapper.selectById(id)));
     }
 
     @Override
     public List<TableInfo> findByDatabaseSchemaId(Long databaseSchemaId) {
         return mapper.selectByDatabaseSchemaId(databaseSchemaId)
                 .stream()
-                .map(persistenceMapper::toDomain)
+                .map(DatasourcePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 
@@ -57,7 +54,7 @@ public class JdbcTableInfoRepository implements TableInfoRepository {
     public List<TableInfo> findByDatabaseSchemaIdAndKeyword(Long databaseSchemaId, String keyword, int page, int size) {
         return mapper.selectByDatabaseSchemaIdAndKeyword(databaseSchemaId, keyword, (long) Math.max(0, page - 1) * size, size)
                 .stream()
-                .map(persistenceMapper::toDomain)
+                .map(DatasourcePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 

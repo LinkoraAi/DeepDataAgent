@@ -1,19 +1,24 @@
 package com.linkroa.deepdataagent.agent.infrastructure.assembly;
 
+import com.linkroa.deepdataagent.agent.application.contract.EnvironmentReferenceDTO;
 import com.linkroa.deepdataagent.agent.application.contract.ResolvedAgentAssemblyDTO;
 import com.linkroa.deepdataagent.agent.application.contract.ResolvedSkillDTO;
 import com.linkroa.deepdataagent.agent.application.port.AgentVersionAssemblyPort;
 import com.linkroa.deepdataagent.agent.domain.model.AgentDefinition;
 import com.linkroa.deepdataagent.agent.domain.model.AgentVersion;
+import com.linkroa.deepdataagent.agent.domain.model.Environment;
 import com.linkroa.deepdataagent.agent.domain.model.ModelIndicator;
 import com.linkroa.deepdataagent.agent.domain.model.ModelProfile;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentDefinitionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentVersionRepository;
+import com.linkroa.deepdataagent.agent.domain.repository.EnvironmentRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.ModelProfileRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.SkillContentStore;
 import com.linkroa.deepdataagent.agent.domain.repository.SkillRepository;
 import com.linkroa.deepdataagent.agent.infrastructure.util.ModelCredentialEncryptionUtil;
+import com.linkroa.deepdataagent.memory.api.MemoryStoreApi;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.vault.application.port.SecretResolutionPort;
 import jakarta.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -45,6 +50,12 @@ public class DefaultAgentVersionAssemblyPort implements AgentVersionAssemblyPort
     private SkillContentStore skillContentStore;
     @Resource
     private ModelCredentialEncryptionUtil credentialEncryptionUtil;
+    @Resource
+    private EnvironmentRepository environmentRepository;
+    @Resource
+    private MemoryStoreApi memoryStoreApi;
+    @Resource
+    private SecretResolutionPort secretResolutionPort;
 
     @Override
     public ResolvedAgentAssemblyDTO resolve(String agentId, String versionNumber) {
@@ -52,7 +63,7 @@ public class DefaultAgentVersionAssemblyPort implements AgentVersionAssemblyPort
         VersionAndProfile validated = validateResolvable(agentId, versionNumber);
 
         // 解密在基础设施层完成，明文凭证仅注入运行时工厂装配配置，不参与任何响应序列化
-        String credential = credentialEncryptionUtil.decrypt(validated.profile().encryptedCredential());
+        String credential = resolveCredential(validated.profile());
         return new ResolvedAgentAssemblyDTO(
                 agentId,
                 validated.versionRow().versionNumber(),
@@ -62,8 +73,44 @@ public class DefaultAgentVersionAssemblyPort implements AgentVersionAssemblyPort
                 validated.profile().toolCallRounds(),
                 credential,
                 validated.profile().apiEndpointUrl(),
-                validated.versionRow().parseDatasourceIds(),
-                resolveSkills(validated.versionRow())
+                AgentVersion.parseDatasourceIds(validated.versionRow().dataSourceIds()),
+                resolveSkills(validated.versionRow()),
+                resolveEnvironment(validated.versionRow()),
+                memoryStoreApi.resolveByIds(AgentVersion.parseMemoryStoreIds(validated.versionRow().memoryStoreIds()))
+        );
+    }
+
+    /**
+     * 解析凭证明文：引用密钥时经 vault 端口解析为内存明文，否则解密内嵌密文。
+     * 明文仅在本方法内存中持有，不落库、不进响应。
+     */
+    private String resolveCredential(ModelProfile profile) {
+        if (StringUtils.isNotBlank(profile.secretId())) {
+            return secretResolutionPort.resolve(profile.secretId()).value();
+        }
+        return credentialEncryptionUtil.decrypt(profile.encryptedCredential());
+    }
+
+    /**
+     * 解析版本引用的运行环境为格式化引用：未引用返回空（运行时回退默认规格）；
+     * 引用不存在视为装配失败（发布时已做引用完整性校验，此处为防御性校验）。
+     */
+    private EnvironmentReferenceDTO resolveEnvironment(AgentVersion versionRow) {
+        String environmentId = versionRow.environmentId();
+        if (StringUtils.isBlank(environmentId)) {
+            return null;
+        }
+        Environment environment = environmentRepository.findByEnvironmentId(environmentId)
+                .orElseThrow(() -> new ResourceNotFoundException("运行环境不存在"));
+        return new EnvironmentReferenceDTO(
+                environment.environmentId(),
+                environment.name(),
+                environment.type().name(),
+                environment.sandboxSpec().image(),
+                environment.sandboxSpec().memoryMb(),
+                environment.sandboxSpec().cpu(),
+                environment.sandboxSpec().workspaceMode(),
+                environment.sandboxSpec().timeoutSeconds()
         );
     }
 
@@ -73,7 +120,7 @@ public class DefaultAgentVersionAssemblyPort implements AgentVersionAssemblyPort
      */
     private List<ResolvedSkillDTO> resolveSkills(AgentVersion versionRow) {
         List<ResolvedSkillDTO> skills = new ArrayList<>();
-        for (AgentVersion.SkillRef ref : versionRow.parseSkillRefs()) {
+        for (AgentVersion.SkillRef ref : AgentVersion.parseSkillRefs(versionRow.skillIds())) {
             if (StringUtils.isBlank(ref.skillId()) || ref.version() == null) {
                 log.warn("技能挂载引用非法，跳过物化: {}", ref);
                 continue;
@@ -117,6 +164,19 @@ public class DefaultAgentVersionAssemblyPort implements AgentVersionAssemblyPort
             throw new ResourceNotFoundException("Agent尚未发布版本");
         }
         return String.valueOf(definition.latestVersion());
+    }
+
+    @Override
+    public String activeVersionNumber(String agentId) {
+        AgentDefinition definition = agentDefinitionRepository.findByAgentId(agentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Agent不存在"));
+        if (definition.archived()) {
+            throw new ResourceNotFoundException("Agent已归档，不可创建新会话");
+        }
+        if (definition.activeVersion() < 1) {
+            throw new ResourceNotFoundException("Agent无激活版本");
+        }
+        return String.valueOf(definition.activeVersion());
     }
 
     /**
