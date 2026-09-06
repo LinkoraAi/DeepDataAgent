@@ -28,10 +28,11 @@ public class ApiVersioningConfig implements WebMvcConfigurer {
     /** 版本化路径前缀：{@code version} 以 URI 变量形式声明，供版本段解析与路径匹配共用。 */
     private static final String VERSIONED_PATH_PREFIX = "/api/{version}";
 
-    /** 启用版本化的控制器包前缀（运行时 + Agent 管理）。 */
+    /** 启用版本化的控制器包前缀（运行时 + Agent 管理 + 对象存储）。 */
     private static final String[] VERSIONED_CONTROLLER_PACKAGES = {
             "com.linkroa.deepdataagent.runtime.controller",
-            "com.linkroa.deepdataagent.agent.controller"
+            "com.linkroa.deepdataagent.agent.controller",
+            "com.linkroa.deepdataagent.storage.controller"
     };
 
     /**

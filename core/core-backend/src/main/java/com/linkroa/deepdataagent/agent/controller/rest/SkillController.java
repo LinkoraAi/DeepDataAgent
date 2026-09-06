@@ -88,15 +88,15 @@ public class SkillController {
         return ApiResponse.success(new SkillDetailResponse(skillId, versions));
     }
 
-    @GetMapping("/{skillId}/versions/{version}/content")
+    @GetMapping("/{skillId}/versions/{skillVersion}/content")
     public ResponseEntity<byte[]> downloadContent(
             @PathVariable String skillId,
-            @PathVariable int version
+            @PathVariable int skillVersion
     ) {
-        byte[] content = applicationService.downloadContent(skillId, version);
+        byte[] content = applicationService.downloadContent(skillId, skillVersion);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"" + skillId + "-" + version + ".zip\"")
+                        "attachment; filename=\"" + skillId + "-" + skillVersion + ".zip\"")
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .body(content);
     }

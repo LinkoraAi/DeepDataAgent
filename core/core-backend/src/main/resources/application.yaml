@@ -31,6 +31,11 @@ spring:
       host: ${REDIS_HOST:host.docker.internal}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:redis}
+  servlet:
+    multipart:
+      # 单文件与请求总大小
+      max-file-size: ${APP_STORAGE_MAX_FILE_SIZE:100MB}
+      max-request-size: ${APP_STORAGE_MAX_REQUEST_SIZE:100MB}
 
 # ---------- OpenSandbox：代码解释器沙箱接入 ----------
 # 默认面向 Docker 部署：服务间经宿主机网关 host.docker.internal 互访；
@@ -72,6 +77,19 @@ app:
       storage-type: ${APP_AGENT_SKILLS_STORAGE_TYPE:LOCAL_FILE}
       # 单个技能包上传大小上限（字节，默认 50MB）
       max-size: ${APP_AGENT_SKILLS_MAX_SIZE:52428800}
+  # 对象存储：基于 S3 兼容协议（RustFS）的通用文件对象能力
+  storage:
+    # 存储 Provider 类型（本期仅支持 rustfs，minio/oss 预留）
+    type: ${APP_STORAGE_TYPE:rustfs}
+    # endpoint 必须带协议头（force-path-style 寻址 endpoint/bucket/key）
+    endpoint: ${APP_STORAGE_ENDPOINT:http://192.168.204.128:9010}
+    access-key: ${APP_STORAGE_ACCESS_KEY:rustfs}
+    secret-key: ${APP_STORAGE_SECRET_KEY:rustfs}
+    # RustFS 不校验区域，占位即可
+    region: ${APP_STORAGE_REGION:us-east-1}
+    # 路径寻址模式：RustFS 仅支持 path-style
+    path-style: ${APP_STORAGE_PATH_STYLE:true}
+
 
 datasource:
   encryption:
@@ -81,7 +99,7 @@ datasource:
 # 无默认值：生产部署必须通过环境变量 APP_MODEL_ENCRYPTION_KEY 显式配置，未配置时启动即失败
 model:
   encryption:
-    key: ${APP_MODEL_ENCRYPTION_KEY}
+    key: ${APP_MODEL_ENCRYPTION_KEY:}
 
 # 凭证库（vault BC）：密钥（Secret）独立加密密钥（AES/GCM），与 datasource / model 密钥完全隔离
 vault:

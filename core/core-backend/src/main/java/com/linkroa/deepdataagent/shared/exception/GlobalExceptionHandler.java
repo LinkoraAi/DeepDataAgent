@@ -1,5 +1,8 @@
 package com.linkroa.deepdataagent.shared.exception;
 
+import com.linkroa.deepdataagent.storage.domain.exception.BucketConflictException;
+import com.linkroa.deepdataagent.storage.domain.exception.BucketNotFoundException;
+import com.linkroa.deepdataagent.storage.domain.exception.FileKeyConflictException;
 import com.linkroa.deepdataagent.shared.result.ApiResponse;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
@@ -16,6 +19,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 /**
  * 全局异常处理器
@@ -179,6 +183,66 @@ public class GlobalExceptionHandler {
     public ApiResponse<Void> handleDuplicateKeyException(DuplicateKeyException e) {
         log.warn("唯一键冲突: {}", e.getMostSpecificCause().getMessage());
         return ApiResponse.error("409", "资源已存在或已被并发占用，请刷新后重试");
+    }
+
+    /**
+     * 处理文件对象键冲突异常（HTTP 409）
+     * <p>对象存储上传时 objectKey 已存在且未显式声明覆盖（含并发条件写入失败）抛出，
+     * 防止同名对象被静默覆盖。</p>
+     *
+     * @param e 对象键冲突异常
+     * @return 包含错误信息的ApiResponse
+     */
+    @ExceptionHandler(FileKeyConflictException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ApiResponse<Void> handleFileKeyConflictException(FileKeyConflictException e) {
+        log.warn("对象键冲突: {}", e.getMessage());
+        return ApiResponse.error("409", e.getMessage());
+    }
+
+    /**
+     * 处理桶不存在异常（HTTP 404）
+     * <p>对象操作目标桶不存在、或删除不存在的桶时抛出，明示「桶不存在」引导先建桶；
+     * 与对象删除的幂等语义（对象缺失=成功）刻意区分。</p>
+     *
+     * @param e 桶不存在异常
+     * @return 包含错误信息的ApiResponse
+     */
+    @ExceptionHandler(BucketNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ApiResponse<Void> handleBucketNotFoundException(BucketNotFoundException e) {
+        log.warn("桶不存在: {}", e.getMessage());
+        return ApiResponse.error("404", e.getMessage());
+    }
+
+    /**
+     * 处理桶操作冲突异常（HTTP 409）
+     * <p>创建已存在的桶（重名）或删除非空桶时抛出：冲突必须对调用方可见，
+     * 防止误认桶归属或误删数据。</p>
+     *
+     * @param e 桶操作冲突异常
+     * @return 包含错误信息的ApiResponse
+     */
+    @ExceptionHandler(BucketConflictException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ApiResponse<Void> handleBucketConflictException(BucketConflictException e) {
+        log.warn("桶操作冲突: {}", e.getMessage());
+        return ApiResponse.error("409", e.getMessage());
+    }
+
+    /**
+     * 处理上传文件超过大小上限异常（HTTP 413）
+     * <p>Spring multipart 校验 {@code spring.servlet.multipart.max-file-size /
+     * max-request-size} 失败时抛出，统一转译为 413 而非兜底 500。</p>
+     *
+     * @param e 上传大小超限异常
+     * @return 包含错误信息的ApiResponse
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    @ResponseStatus(HttpStatus.CONTENT_TOO_LARGE)
+    public ApiResponse<Void> handleMaxUploadSizeExceededException(MaxUploadSizeExceededException e) {
+        log.warn("上传文件超过大小上限: {}", e.getMessage());
+        return ApiResponse.error("413", "上传文件超过系统大小限制，请压缩后重试");
     }
 
     /**

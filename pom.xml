@@ -53,6 +53,7 @@
         <org.apache.commons-lang3.version>3.20.0</org.apache.commons-lang3.version>
         <mapstruct.version>1.6.3</mapstruct.version>
         <clickhouse-jdbc.version>0.9.8</clickhouse-jdbc.version>
+        <software.amazon.awssdk>2.53.2</software.amazon.awssdk>
     </properties>
 
     <build>

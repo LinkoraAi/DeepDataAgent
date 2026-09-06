@@ -68,13 +68,13 @@ public class SkillStorageProperties {
      */
     public SkillStorageType resolveStorageType() {
         if (StringUtils.isBlank(storageType)) {
-            throw new IllegalStateException("未配置技能存储类型(app.agent.skills.storage-type)");
+            throw new IllegalStateException("未配置技能存储类型(app.agent.skills.provider-type)");
         }
         try {
             SkillStorageType type = SkillStorageType.valueOf(storageType.trim().toUpperCase());
             if (type != SkillStorageType.LOCAL_FILE) {
                 throw new IllegalStateException("技能存储类型「" + storageType
-                        + "」尚未实现（当前仅支持 LOCAL_FILE），请检查 app.agent.skills.storage-type 配置");
+                        + "」尚未实现（当前仅支持 LOCAL_FILE），请检查 app.agent.skills.provider-type 配置");
             }
             return type;
         } catch (IllegalArgumentException e) {

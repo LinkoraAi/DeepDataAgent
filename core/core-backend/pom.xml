@@ -138,6 +138,11 @@
             <version>${mapstruct.version}</version>
         </dependency>
 
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <version>${software.amazon.awssdk}</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -202,6 +207,10 @@
                                 <exclude>**/com/linkroa/deepdataagent/agent/**/infrastructure/persistence/**</exclude>
                                 <exclude>**/com/linkroa/deepdataagent/agent/**/infrastructure/repository/**</exclude>
                                 <exclude>**/com/linkroa/deepdataagent/datasource/**/infrastructure/repository/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/knowledgebase/**/infrastructure/persistence/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/knowledgebase/**/infrastructure/repository/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/rag/**/infrastructure/persistence/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/rag/**/infrastructure/repository/**</exclude>
                             </excludes>
                         </configuration>
                     </execution>
@@ -259,6 +268,10 @@
                                 <exclude>**/com/linkroa/deepdataagent/agent/**/infrastructure/persistence/**</exclude>
                                 <exclude>**/com/linkroa/deepdataagent/agent/**/infrastructure/repository/**</exclude>
                                 <exclude>**/com/linkroa/deepdataagent/datasource/**/infrastructure/repository/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/knowledgebase/**/infrastructure/persistence/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/knowledgebase/**/infrastructure/repository/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/rag/**/infrastructure/persistence/**</exclude>
+                                <exclude>**/com/linkroa/deepdataagent/rag/**/infrastructure/repository/**</exclude>
                             </excludes>
                         </configuration>
                     </execution>
