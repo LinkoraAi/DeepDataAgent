@@ -243,6 +243,29 @@ class DatasourceApplicationServiceTest {
     }
 
     @Test
+    void should_keepCommittedConnectionRow_when_createDatasource_given_metadataSyncFails() {
+        // given（连接行落库后，事务外元数据同步远程抽取失败）
+        CreateDatasourceCommand command = new CreateDatasourceCommand(
+                "new-jdbc", DatasourceType.JDBC, JdbcType.MYSQL, null,
+                new JdbcConfigCommand("localhost", 3306, "db", "u", "p", null), null);
+        DatasourceConnection savedConnection = new DatasourceConnection(1L, "new-jdbc", DatasourceType.JDBC, JdbcType.MYSQL,
+                DatasourceStatus.ENABLED, new JdbcConnectionConfig("localhost", 3306, "db", "u", "p", null),
+                null, null, null, null, null);
+        when(connectionRepository.findByName("new-jdbc")).thenReturn(Optional.empty());
+        when(connectionRepository.save(any())).thenReturn(savedConnection);
+        doAnswer(invocation -> {
+            var callback = invocation.<org.springframework.transaction.support.TransactionCallback<DatasourceConnection>>getArgument(0);
+            return callback.doInTransaction(null);
+        }).when(transactionTemplate).execute(any());
+        when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
+        when(strategy.extractSchemas(any())).thenThrow(new RuntimeException("远程数据库不可达"));
+
+        // when / then（同步异常向上抛出，但连接行已在事务内提交、不随同步失败回滚）
+        assertThrows(RuntimeException.class, () -> service.createDatasource(command));
+        verify(connectionRepository).save(any());
+    }
+
+    @Test
     void should_throwException_when_createDatasource_given_invalidPgSchema() {
         // given
         CreateDatasourceCommand command = new CreateDatasourceCommand(
@@ -380,22 +403,21 @@ class DatasourceApplicationServiceTest {
     }
 
     @Test
-    void should_syncMetadata_when_connectionExists() {
+    void should_syncMetadataWithoutTransaction_when_syncMetadata_given_connectionExists() {
+        // given（手动同步为可重入增量对账：不包整体事务，逐条落库）
         DatasourceConnection connection = createJdbcConnection(1L);
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanSync(connection);
-        doAnswer(invocation -> {
-            var callback = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
-            callback.accept(null);
-            return null;
-        }).when(transactionTemplate).executeWithoutResult(any());
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(strategy.extractSchemas(connection)).thenReturn(List.of());
         when(databaseSchemaRepository.findByConnectionId(1L)).thenReturn(List.of());
 
+        // when
         service.syncMetadata(1L);
 
-        verify(transactionTemplate).executeWithoutResult(any());
+        // then（同步直接执行，未开启事务）
+        verify(strategy).extractSchemas(connection);
+        verify(transactionTemplate, never()).executeWithoutResult(any());
     }
 
     @Test
@@ -596,8 +618,8 @@ class DatasourceApplicationServiceTest {
         var result = service.getSupportedTypes();
         assertNotNull(result);
         assertFalse(result.isEmpty());
-        assertTrue(result.stream().anyMatch(r -> r.type().equals("JDBC")));
-        assertTrue(result.stream().anyMatch(r -> r.type().equals("API")));
+        assertTrue(result.stream().anyMatch(r -> "JDBC".equals(r.getType())));
+        assertTrue(result.stream().anyMatch(r -> "API".equals(r.getType())));
     }
 
     @Test
@@ -731,7 +753,7 @@ class DatasourceApplicationServiceTest {
         var result = service.getApiSchemaDetail(1L);
 
         assertNotNull(result);
-        assertEquals("test-api", result.name());
+        assertEquals("test-api", result.schema().name());
         assertEquals(1, result.fields().size());
     }
 
@@ -750,11 +772,6 @@ class DatasourceApplicationServiceTest {
 
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanSync(connection);
-        doAnswer(invocation -> {
-            var callback = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
-            callback.accept(null);
-            return null;
-        }).when(transactionTemplate).executeWithoutResult(any());
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(strategy.extractSchemas(connection)).thenReturn(List.of(remoteSchema));
         when(databaseSchemaRepository.findByConnectionId(1L)).thenReturn(List.of());
@@ -786,11 +803,6 @@ class DatasourceApplicationServiceTest {
 
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanSync(connection);
-        doAnswer(invocation -> {
-            var callback = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
-            callback.accept(null);
-            return null;
-        }).when(transactionTemplate).executeWithoutResult(any());
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(strategy.extractSchemas(connection)).thenReturn(List.of(remoteSchema));
         when(databaseSchemaRepository.findByConnectionId(1L)).thenReturn(List.of(existingSchema));

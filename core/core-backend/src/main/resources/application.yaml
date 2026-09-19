@@ -37,25 +37,43 @@ spring:
       max-file-size: ${APP_STORAGE_MAX_FILE_SIZE:100MB}
       max-request-size: ${APP_STORAGE_MAX_REQUEST_SIZE:100MB}
 
-# ---------- OpenSandbox：代码解释器沙箱接入 ----------
-# 默认面向 Docker 部署：服务间经宿主机网关 host.docker.internal 互访；
-# 本地原生启动或远程主机部署时，用同名环境变量（APP_OPENSANDBOX_*）覆盖即可
 # ---------- Agent 运行时（AgentScope Harness 装配参数） ----------
 # 模型字符串 ID（dashscope:qwen-plus / openai:... 等，经 AgentScope ModelRegistry 解析）；
 # Docker 沙箱由 backend 调用宿主机 Docker daemon（compose 需挂载 /var/run/docker.sock 或 DIND）
 app:
-  opensandbox:
-    protocol: ${APP_OPENSANDBOX_PROTOCOL:http}
-    # OpenSandbox 服务端地址（host:port），对应 compose 的 8090:8080 端口映射
-    domain: ${APP_OPENSANDBOX_DOMAIN:host.docker.internal:8090}
-    # 须与 deploy/opensandbox/opensandbox.toml 的 [server] api_key 保持一致
-    api-key: ${APP_OPENSANDBOX_API_KEY:deepdataagent-internal-key}
-    # 经服务端中转发起请求（沙箱端口无需再单独暴露给后端）
-    use-server-proxy: ${APP_OPENSANDBOX_USE_SERVER_PROXY:true}
-    # 沙箱默认执行镜像（对齐 OpenSandbox 官方示例验证过的版本）
-    default-image: ${APP_OPENSANDBOX_DEFAULT_IMAGE:opensandbox/code-interpreter:v1.1.0}
-    # 单次沙箱执行超时上限（秒）
-    default-timeout-seconds: ${APP_OPENSANDBOX_DEFAULT_TIMEOUT_SECONDS:1800}
+  coordination:
+    # 协调租约唯一存储为 Redis（move-coordination-leases-to-redis PR-C4：PG 实现与
+    # lease-store 二选一开关已下线，回滚只能整版本回退）；此处仅保留续约承载形态开关
+    # （D5③ 容量预案）：
+    # scheduler=平台线程定时池（默认，4 线程 scheduleAtFixedRate）；
+    # virtual-thread=每轮一个 daemon 虚拟线程 sleep 循环（并发轮次上量、续约池排队逼近 TTL 时切换）
+    lease-renewal: ${APP_COORDINATION_LEASE_RENEWAL:scheduler}
+  # 出网信任边界（shared 技术能力，design D8）：凭证校验探测、OAuth 刷新调用与 MCP 建连
+  # 共用同一份目标地址判定
+  egress:
+    # 内网自建 MCP / 数据源场景的显式白名单：默认 false = 拒绝回环、本机通配、链路本地
+    # （含云元数据 169.254.169.254）、组播与 RFC1918 私网目标
+    allow-private-network: ${APP_EGRESS_ALLOW_PRIVATE_NETWORK:false}
+    # 重定向最大跳数（逐跳重新校验信任边界，超出即失败）
+    max-redirects: ${APP_EGRESS_MAX_REDIRECTS:5}
+  # 对象存储（shared 技术能力）：file 内容与 skill 资产统一承载；local 为本地磁盘布局
+  # （默认，仅单机 / 开发，多实例部署必须改用 S3 系共享后端）
+  storage:
+    # 后端类型：local（本地磁盘）| rustfs | minio | oss（S3 兼容协议）
+    type: ${APP_STORAGE_TYPE:local}
+    # 固定配置桶（S3 系使用；启动时自动确保存在）
+    bucket: ${APP_STORAGE_BUCKET:deepdataagent}
+    local:
+      # 本地布局根目录（内容按 key 相对路径落盘，仅单机 / 开发）
+      root: ${APP_STORAGE_LOCAL_ROOT:./data/objects}
+    # 以下仅 S3 系（type=rustfs/minio/oss）必填；local 模式留空即可
+    endpoint: ${APP_STORAGE_ENDPOINT:}
+    access-key: ${APP_STORAGE_ACCESS_KEY:}
+    secret-key: ${APP_STORAGE_SECRET_KEY:}
+    # 区域（部分实现不校验，占位即可）
+    region: ${APP_STORAGE_REGION:us-east-1}
+    # 路径寻址模式：RustFS 强制 path-style；MinIO / OSS 随部署形态
+    path-style: ${APP_STORAGE_PATH_STYLE:true}
   agent:
     # Docker 沙箱执行镜像（供沙箱装载工作区语义使用）
     sandbox-image: ${APP_AGENT_SANDBOX_IMAGE:ubuntu:22.04}
@@ -70,26 +88,9 @@ app:
     state-table: ${APP_AGENT_STATE_TABLE:agentscope_sessions}
     # 进程重启后将残留 RUNNING 会话恢复为 IDLE，对应轮次置 INTERRUPTED
     startup-recovery-enabled: ${APP_AGENT_STARTUP_RECOVERY_ENABLED:true}
-    skills:
-      # 技能包本地存储根目录（LOCAL_FILE 存储类型）
-      root: ${APP_AGENT_SKILLS_ROOT:./data/skills}
-      # 技能包存储类型（本期仅支持 LOCAL_FILE，OSS 预留）
-      storage-type: ${APP_AGENT_SKILLS_STORAGE_TYPE:LOCAL_FILE}
-      # 单个技能包上传大小上限（字节，默认 50MB）
-      max-size: ${APP_AGENT_SKILLS_MAX_SIZE:52428800}
-  # 对象存储：基于 S3 兼容协议（RustFS）的通用文件对象能力
-  storage:
-    # 存储 Provider 类型（本期仅支持 rustfs，minio/oss 预留）
-    type: ${APP_STORAGE_TYPE:rustfs}
-    # endpoint 必须带协议头（force-path-style 寻址 endpoint/bucket/key）
-    endpoint: ${APP_STORAGE_ENDPOINT:http://192.168.204.128:9010}
-    access-key: ${APP_STORAGE_ACCESS_KEY:rustfs}
-    secret-key: ${APP_STORAGE_SECRET_KEY:rustfs}
-    # RustFS 不校验区域，占位即可
-    region: ${APP_STORAGE_REGION:us-east-1}
-    # 路径寻址模式：RustFS 仅支持 path-style
-    path-style: ${APP_STORAGE_PATH_STYLE:true}
-
+    # AgentScope 工作区根（宿主侧）：按 agentId 建子目录并物化 AGENTS.md，
+    # 供 Harness 注入系统提示 + 沙箱 workspace projection 投影进容器
+    workspace-root: ${APP_AGENT_WORKSPACE_ROOT:./data/agentscope-workspaces}
 
 datasource:
   encryption:
@@ -101,10 +102,81 @@ model:
   encryption:
     key: ${APP_MODEL_ENCRYPTION_KEY:}
 
-# 凭证库（vault BC）：密钥（Secret）独立加密密钥（AES/GCM），与 datasource / model 密钥完全隔离
+# 模型目录（agent BC，design D7）：模型目录种子清单（只读，本期无管理面）+ 内部供应商映射。
+# provider-mappings 为「租户键（ownerId 或 "*"）→ 目录模型 id → model_profile_id」，
+# 解析结果仅运行时装配消费、不进入对外契约；部署时按实际供应商配置，例：
+#   provider-mappings:
+#     "*": {auto: mp-default, ultimate: mp-openai-strong}
+#     "42": {ultimate: mp-tenant42-openai}
+model-catalog:
+  items:
+    - id: auto
+      display-name: Auto（智能路由）
+      efforts: [low, medium, high, xhigh, max]
+      default-effort: high
+      is-vl: true
+      is-default: true
+      max-input-tokens: 180000
+      max-output-tokens: 32000
+      default-context-window: 200000
+      available-context-windows: [128000, 200000]
+    - id: ultimate
+      display-name: Ultimate（旗舰）
+      efforts: [high, xhigh, max]
+      default-effort: high
+      is-vl: true
+      is-default: false
+      max-input-tokens: 180000
+      max-output-tokens: 64000
+      default-context-window: 200000
+      available-context-windows: [200000]
+    - id: performance
+      display-name: Performance（均衡）
+      efforts: [low, medium, high]
+      default-effort: medium
+      is-vl: true
+      is-default: false
+      max-input-tokens: 180000
+      max-output-tokens: 32000
+      default-context-window: 200000
+      available-context-windows: [128000, 200000]
+    - id: efficient
+      display-name: Efficient（经济）
+      efforts: [low, medium]
+      default-effort: low
+      is-vl: true
+      is-default: false
+      max-input-tokens: 128000
+      max-output-tokens: 16000
+      default-context-window: 128000
+      available-context-windows: [128000]
+    - id: lite
+      display-name: Lite（轻量）
+      efforts: []
+      is-vl: false
+      is-default: false
+      max-input-tokens: 128000
+      max-output-tokens: 8000
+  provider-mappings: {}
+
+# 凭证库（vault BC）：凭证（VaultCredential）独立加密密钥（AES/GCM），与 datasource / model 密钥完全隔离
+# 无默认值：生产部署必须通过环境变量 APP_VAULT_ENCRYPTION_KEY 显式配置，未配置时启动即失败
 vault:
   encryption:
-    key: ${APP_VAULT_ENCRYPTION_KEY:deepdataagent-vault-key}
+    key: ${APP_VAULT_ENCRYPTION_KEY}
+  # MCP OAuth 流转（vault BC）：回调地址由服务端配置且请求不可覆盖（生产必须按实际对外地址覆盖）；
+  # state TTL 与刷新窗口契约未规定数值，取实现默认值（300s / 60s），可经环境变量调整
+  oauth:
+    callback-url: ${APP_VAULT_OAUTH_CALLBACK_URL:http://localhost:8080/api/v1/cloud/vaults/oauth/callback}
+    state-ttl-seconds: ${APP_VAULT_OAUTH_STATE_TTL_SECONDS:300}
+    refresh-window-seconds: ${APP_VAULT_OAUTH_REFRESH_WINDOW_SECONDS:60}
+    client-name: ${APP_VAULT_OAUTH_CLIENT_NAME:DeepDataAgent}
+
+# 认证（auth BC）：JWT HS256 签名密钥与有效期；无默认值，生产必须通过 AUTH_JWT_SECRET 显式配置（未配置时启动即失败）
+auth:
+  jwt:
+    secret: ${AUTH_JWT_SECRET}
+    expiration-days: ${AUTH_JWT_EXPIRATION_DAYS:7}
 
 mybatis-plus:
   configuration:
@@ -122,7 +194,8 @@ management:
     health:
       probes:
         enabled: true
-      show-details: always
+      # 健康详情不随匿名探针暴露（show-details: never），避免泄露 DB/Redis 等基础设施组件状态
+      show-details: never
   endpoints:
     web:
       exposure:

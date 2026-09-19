@@ -1,14 +1,19 @@
 package com.linkroa.deepdataagent.runtime.domain.model;
 
-import com.linkroa.deepdataagent.runtime.domain.model.enums.HitlState;
-import com.linkroa.deepdataagent.runtime.domain.model.enums.SessionState;
+import com.linkroa.deepdataagent.runtime.domain.model.runstate.TurnRunState;
+import com.linkroa.deepdataagent.runtime.domain.port.ConnectionHandle;
+import com.linkroa.deepdataagent.runtime.domain.port.NoOpConnectionHandle;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -17,7 +22,9 @@ import static org.mockito.Mockito.verify;
 
 /**
  * {@link AgentSessionContext} 会话级聚合（逻辑线程组）单测：
- * 身份层、事件序号层、状态层状态机、连接层绑定与执行层取消收口。
+ * 身份层、事件序号层、执行层（beginRound / 中断标记）与连接层绑定。
+ * <p>单轨七态状态机由 DB {@code agent_session.status} 承载，本聚合不再保留内存状态机副本；
+ * 轮次级瞬态状态机（SessionState / RoundStatus / HitlState）已随事件溯源重构移除。</p>
  */
 class AgentSessionContextTest {
 
@@ -72,11 +79,11 @@ class AgentSessionContextTest {
     @Test
     void should_replaceRunState_when_beginRound_given_existingState() {
         // given
-        AgentRunState first = context.beginRound(1);
+        TurnRunState first = context.beginRound(1);
         first.appendOutput("第一轮");
 
         // when
-        AgentRunState second = context.beginRound(10);
+        TurnRunState second = context.beginRound(10);
 
         // then（每轮独立状态：本轮输出不污染下一轮）
         assertNotSame(first, second);
@@ -84,103 +91,80 @@ class AgentSessionContextTest {
         assertEquals("", second.output());
     }
 
-    // ==================== 状态层 ====================
+    // ==================== 执行层 ====================
 
     @Test
-    void should_transitionToRunning_when_transitionState_given_idle() {
-        // when
-        context.transitionState(SessionState.RUNNING);
+    void should_markInterrupted_when_interruptCurrentRun_given_activeRun() {
+        // given（当前轮事件流累积态就绪）
+        context.beginRound(1);
 
-        // then
-        assertEquals(SessionState.RUNNING, context.state());
+        // when（user.interrupt：标记显式中断 + 触发执行取消）
+        context.interruptCurrentRun();
+
+        // then（终态路径据此发送 session.interrupted 而非 cancelled 终态）
+        assertTrue(context.runState().interrupted());
     }
 
     @Test
-    void should_throwOnIllegalTransition_when_transitionState_given_idleToDone() {
-        // when & then（非法迁移抛异常）
-        assertThrows(IllegalStateException.class, () -> context.transitionState(SessionState.DONE));
+    void should_beNoop_when_interruptCurrentRun_given_noActiveRun() {
+        // when（无在跑轮次时中断为空操作，不抛出）
+        context.interruptCurrentRun();
     }
 
     @Test
-    void should_fallBackToIdle_when_transitionState_given_terminal() {
-        // given（进入瞬态终态）
-        context.transitionState(SessionState.RUNNING);
-        context.transitionState(SessionState.DONE);
+    void should_triggerInterrupter_when_cancel_given_currentTurnActivated() {
+        // given（本轮控制面已置入并登记定向中断句柄）
+        TurnControl turn = new TurnControl();
+        AtomicBoolean interrupted = new AtomicBoolean(false);
+        turn.activate(() -> interrupted.set(true));
+        context.beginTurn(turn);
 
-        // when（一轮结束回落 IDLE）
-        context.transitionState(SessionState.IDLE);
-
-        // then
-        assertEquals(SessionState.IDLE, context.state());
-    }
-
-    @Test
-    void should_returnFalse_when_tryTransitionState_given_illegalTransition() {
-        // when & then（tryTransition 对非法迁移返回 false 而非抛异常）
-        assertFalse(context.tryTransitionState(SessionState.DONE));
-        assertEquals(SessionState.IDLE, context.state());
-    }
-
-    @Test
-    void should_markInterrupted_when_cancel_given_running() {
-        // given
-        context.transitionState(SessionState.RUNNING);
-
-        // when（断连 / 终止收口：执行取消 + 显式中断标记）
+        // when（cancel 指向 currentTurn 触发句柄）
         context.cancel();
 
-        // then
-        assertEquals(SessionState.INTERRUPTED, context.state());
-    }
-
-    // ==================== HITL 正交子态 ====================
-
-    @Test
-    void should_defaultNone_when_hitlState_given_newContext() {
-        // when & then（默认无待确认项）
-        assertEquals(HitlState.NONE, context.hitlState());
-        assertFalse(context.isWaitingConfirm());
+        // then（句柄被触发；控制面保持指向本轮直至 finally 条件清除——cancel 不再摘槽）
+        assertTrue(interrupted.get(), "cancel 须触发本轮已登记的中断句柄");
+        assertSame(turn, context.currentTurn());
     }
 
     @Test
-    void should_enterWaitingConfirm_when_enterWaitingConfirm_given_none() {
-        // when（HITL 暂停）
-        context.enterWaitingConfirm();
-
-        // then
-        assertEquals(HitlState.WAITING_CONFIRM, context.hitlState());
-        assertTrue(context.isWaitingConfirm());
+    void should_noop_when_cancel_given_noCurrentTurn() {
+        // when & then（空闲无控制面时取消为空操作，不抛出）
+        assertDoesNotThrow(() -> context.cancel());
     }
 
     @Test
-    void should_throwOnReenter_when_enterWaitingConfirm_given_alreadyWaiting() {
-        // given
-        context.enterWaitingConfirm();
+    void should_clearCurrentTurn_when_endTurn_given_matchingTurn() {
+        // given（开跑置入本轮控制面）
+        TurnControl turn = new TurnControl();
+        context.beginTurn(turn);
 
-        // when & then（重复暂停非法）
-        assertThrows(IllegalStateException.class, context::enterWaitingConfirm);
-    }
-
-    @Test
-    void should_leaveWaitingConfirm_when_leaveWaitingConfirm_given_waiting() {
-        // given
-        context.enterWaitingConfirm();
-
-        // when（HITL 恢复 / 拒绝）
-        context.leaveWaitingConfirm();
+        // when（终局清除：槽位仍指向本轮）
+        context.endTurn(turn);
 
         // then
-        assertEquals(HitlState.NONE, context.hitlState());
-        assertFalse(context.isWaitingConfirm());
+        assertNull(context.currentTurn(), "endTurn 命中本轮对象须置空槽位");
     }
 
     @Test
-    void should_beIdempotent_when_leaveWaitingConfirm_given_none() {
-        // when（对已结束等待的越界确认指令幂等，不产生副作用）
-        context.leaveWaitingConfirm();
+    void should_keepNewTurn_when_endTurn_given_staleTurnAfterReplacement() {
+        // given（毫秒窗内新一轮覆盖置位：旧轮仍持有上一轮的 staleTurn）
+        TurnControl staleTurn = new TurnControl();
+        context.beginTurn(staleTurn);
+        TurnControl newTurn = new TurnControl();
+        context.beginTurn(newTurn);
 
-        // then
-        assertEquals(HitlState.NONE, context.hitlState());
+        // when（旧轮 finally 清除：槽位已指向新轮，条件生效不得误清）
+        context.endTurn(staleTurn);
+
+        // then（防毫秒窗误清：新轮控制面仍在位）
+        assertSame(newTurn, context.currentTurn(), "旧轮 endTurn 不得误清新轮控制面");
+    }
+
+    @Test
+    void should_rejectNull_when_beginTurn_given_nullTurn() {
+        // when & then
+        assertThrows(IllegalArgumentException.class, () -> context.beginTurn(null));
     }
 
     // ==================== 连接层 ====================
@@ -189,7 +173,6 @@ class AgentSessionContextTest {
     void should_defaultNoOpConnection_when_connection_given_newContext() {
         // when & then（默认 NoOp 句柄，无连接不产生副作用）
         assertEquals(NoOpConnectionHandle.INSTANCE, context.connection());
-        assertFalse(context.connection().isActive());
     }
 
     @Test

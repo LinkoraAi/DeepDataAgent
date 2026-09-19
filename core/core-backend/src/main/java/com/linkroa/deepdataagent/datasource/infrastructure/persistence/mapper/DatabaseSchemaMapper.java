@@ -7,19 +7,27 @@ import org.apache.ibatis.annotations.Mapper;
 
 import java.util.List;
 
+/**
+ * 数据库 Schema Mapper
+ *
+ * <p>约束：LambdaQueryWrapper 的列引用一律使用方法引用
+ * （{@code DatabaseSchemaEntity::getX}），不得写成 lambda 表达式（{@code e -> e.getX()}）——
+ * 后者编译为合成方法 {@code lambda$N}，MyBatis-Plus 的 PropertyNamer 无法解析属性名，
+ * 真实库运行期抛 ReflectionException。</p>
+ */
 @Mapper
 public interface DatabaseSchemaMapper extends BaseMapper<DatabaseSchemaEntity> {
 
     default List<DatabaseSchemaEntity> selectByConnectionId(Long connectionId) {
         return selectList(Wrappers.<DatabaseSchemaEntity>lambdaQuery()
-                .eq(e -> e.getConnectionId(), connectionId)
-                .orderByAsc(e -> e.getSchemaName()));
+                .eq(DatabaseSchemaEntity::getConnectionId, connectionId)
+                .orderByAsc(DatabaseSchemaEntity::getSchemaName));
     }
 
     default DatabaseSchemaEntity selectByConnectionIdAndSchemaName(Long connectionId, String schemaName) {
         return selectOne(Wrappers.<DatabaseSchemaEntity>lambdaQuery()
-                .eq(e -> e.getConnectionId(), connectionId)
-                .eq(e -> e.getSchemaName(), schemaName)
+                .eq(DatabaseSchemaEntity::getConnectionId, connectionId)
+                .eq(DatabaseSchemaEntity::getSchemaName, schemaName)
                 .last("LIMIT 1"));
     }
 }

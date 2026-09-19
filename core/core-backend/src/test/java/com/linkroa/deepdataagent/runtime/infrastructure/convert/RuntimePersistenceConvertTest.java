@@ -2,32 +2,26 @@ package com.linkroa.deepdataagent.runtime.infrastructure.convert;
 
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
-import com.linkroa.deepdataagent.runtime.domain.model.ExecutionRound;
-import com.linkroa.deepdataagent.runtime.domain.model.RunTrace;
+import com.linkroa.deepdataagent.runtime.domain.model.SessionResource;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.AgentSessionStatus;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.ChatEventType;
-import com.linkroa.deepdataagent.runtime.domain.model.enums.RoundStatus;
-import com.linkroa.deepdataagent.runtime.domain.model.enums.SpanKind;
-import com.linkroa.deepdataagent.runtime.domain.model.enums.SpanStatus;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.entity.AgentSessionEntity;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.entity.ChatEventEntity;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.entity.ExecutionRoundEntity;
-import com.linkroa.deepdataagent.runtime.infrastructure.persistence.entity.RunTraceEntity;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
-import java.time.OffsetDateTime;
-import java.time.ZoneId;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link RuntimePersistenceConvert} 领域 ⇄ 实体映射单测。
+ * <p>事件溯源模型下仅剩 AgentSession 与 ChatEvent（payload 信封）两组映射；
+ * ExecutionRound / RunTrace 映射已随物化表删除。</p>
  */
 class RuntimePersistenceConvertTest {
-
-    private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
 
     private final RuntimePersistenceConvert mapper = RuntimePersistenceConvert.INSTANCE;
 
@@ -43,123 +37,112 @@ class RuntimePersistenceConvertTest {
         AgentSessionEntity entity = mapper.toEntity(running);
         AgentSession restored = mapper.toDomain(entity);
 
-        // then
+        // then（状态以规范小写字符串落库并回读）
         assertEquals(running.sessionId(), restored.sessionId());
         assertEquals(running.userId(), restored.userId());
         assertEquals(running.agentId(), restored.agentId());
         assertEquals(running.agentVersion(), restored.agentVersion());
         assertEquals(AgentSessionStatus.TERMINATED, restored.status());
+        assertEquals("terminated", entity.getStatus());
         assertEquals("{\"eu\":\"e1\"}", restored.metadata());
         assertEquals(running.title(), restored.title());
     }
 
-    // ===== ExecutionRound =====
-
     @Test
-    void should_mapToEntityAndBack_when_saveAndRestore_given_executionRound() {
-        // given
-        ExecutionRound round = ExecutionRound.create("s-1", "run-1", 1, "你好");
-        ExecutionRound completed = round.complete("最终输出", RoundStatus.COMPLETED);
+    void should_roundTripResources_when_saveAndRestore_given_mountedFiles() {
+        // given（会话挂载两个文件资源，其中第二个无挂载路径）
+        List<SessionResource> resources = List.of(
+                SessionResource.file("file_1", "mounts/a.txt"),
+                SessionResource.file("file_2", null));
 
         // when
-        ExecutionRoundEntity entity = mapper.toEntity(completed);
-        ExecutionRound restored = mapper.toDomain(entity);
+        String json = mapper.sessionResourcesToString(resources);
+        List<SessionResource> restored = mapper.stringToSessionResources(json);
 
-        // then
-        assertEquals(completed.roundId(), restored.roundId());
-        assertEquals(completed.sessionId(), restored.sessionId());
-        assertEquals(completed.runId(), restored.runId());
-        assertEquals(1, restored.roundNumber());
-        assertEquals("最终输出", restored.output());
-        assertEquals(RoundStatus.COMPLETED, restored.status());
+        // then（VO ⇄ jsonb 文本无损往返；空/null 收敛为空列表）
+        assertEquals(2, restored.size());
+        // sesr_ 资源 ID 随 jsonb 落库并在反查后保持稳定（不漂移）
+        assertEquals(resources.get(0).id(), restored.get(0).id());
+        assertEquals(resources.get(1).id(), restored.get(1).id());
+        assertEquals("file_1", restored.get(0).fileId());
+        assertEquals("mounts/a.txt", restored.get(0).mountPath());
+        assertEquals("file_2", restored.get(1).fileId());
+        assertEquals(List.of(), mapper.stringToSessionResources(null));
+        assertEquals(List.of(), mapper.stringToSessionResources(" "));
+        assertEquals("[]", mapper.sessionResourcesToString(List.of()));
     }
 
-    // ===== ChatEvent =====
+    @Test
+    void should_returnEmpty_when_stringToSessionResources_given_invalidJson() {
+        // when & then（脏 JSON 收敛为空列表，不阻断查询）
+        assertEquals(List.of(), mapper.stringToSessionResources("[not-json"));
+    }
+
+    // ===== ChatEvent（payload 信封） =====
 
     @Test
     void should_mapToEntityAndBack_when_saveAndRestore_given_chatEvent() {
-        // given
-        ChatEvent event = ChatEvent.create("s-1", "r-1", ChatEventType.MESSAGE, "{\"delta\":\"好\"}", 3L);
+        // given（权威工厂：sessionId + 源码事件类型 + payload + seq + eventId + 线程归属）
+        ChatEvent event = ChatEvent.create("s-1", ChatEventType.AGENT_MESSAGE, "{\"text\":\"好\"}", 3L,
+                null, "sthr_main");
+
+        // when
+        ChatEventEntity entity = mapper.toEntity(event);
+        ChatEvent restored = mapper.toDomain(entity);
+
+        // then（type 以源码事件名落库；seq 为会话内游标；事件 ID 保留 evt_ 前缀）
+        assertEquals(event.eventId(), restored.eventId());
+        assertTrue(restored.eventId().startsWith(ChatEvent.EVENT_ID_PREFIX));
+        assertEquals(event.sessionId(), restored.sessionId());
+        assertEquals("agent.message", entity.getType());
+        assertEquals(ChatEventType.AGENT_MESSAGE, restored.type());
+        assertEquals("{\"text\":\"好\"}", restored.payload());
+        assertEquals(3L, restored.seq());
+        assertEquals(event.processedAt(), restored.processedAt());
+        // 线程归属双向映射（防同名字段静默丢失回归）
+        assertEquals("sthr_main", entity.getSessionThreadId());
+        assertEquals("sthr_main", restored.sessionThreadId());
+    }
+
+    @Test
+    void should_mapNullThreadIdBothWays_when_saveAndRestore_given_noThreadOwnership() {
+        // given（旧签名：无线程归属，往返均应保持 null）
+        ChatEvent event = ChatEvent.create("s-1", ChatEventType.AGENT_MESSAGE, "{}", 4L);
 
         // when
         ChatEventEntity entity = mapper.toEntity(event);
         ChatEvent restored = mapper.toDomain(entity);
 
         // then
-        assertEquals(event.eventId(), restored.eventId());
-        assertEquals(event.sessionId(), restored.sessionId());
-        assertEquals("r-1", restored.roundId());
-        assertEquals(ChatEventType.MESSAGE, restored.eventType());
-        assertEquals("{\"delta\":\"好\"}", restored.payload());
-        assertEquals(3L, restored.sequenceNum());
+        assertNull(entity.getSessionThreadId());
+        assertNull(restored.sessionThreadId());
     }
 
-    // ===== RunTrace =====
+    // ===== 枚举 ⇄ 字符串（小写规范值 / 大小写不敏感反解） =====
 
     @Test
-    void should_mapToEntityAndBack_when_saveAndRestore_given_runTrace() {
-        // given
-        RunTrace root = RunTrace.createRoot("trace-1", "r-1", "agent.run");
-        RunTrace finished = root.finish(root.startTime().plusSeconds(3));
-
-        // when
-        RunTraceEntity entity = mapper.toEntity(finished);
-        RunTrace restored = mapper.toDomain(entity);
-
-        // then
-        assertEquals(finished.traceId(), restored.traceId());
-        assertEquals(finished.spanId(), restored.spanId());
-        assertEquals(finished.roundId(), restored.roundId());
-        assertEquals("agent.run", restored.spanName());
-        assertEquals(SpanKind.INTERNAL, restored.spanKind());
-        assertEquals(SpanStatus.OK, restored.status());
-        assertEquals(3000L, restored.durationMs());
-    }
-
-    // ===== 枚举反解（default 方法兜底） =====
-
-    @Test
-    void should_returnNullEnum_when_mapEnum_given_blankValue() {
+    void should_returnNullWhen_mapEnum_given_blankValue() {
         // when & then
-        assertNull(mapper.mapSessionStatus(null));
-        assertNull(mapper.mapSessionStatus(" "));
-        assertNull(mapper.mapRoundStatus(null));
-        assertNull(mapper.mapChatEventType(null));
-        assertNull(mapper.mapSpanKind(null));
-        assertNull(mapper.mapSpanStatus(null));
+        assertNull(mapper.sessionStatusToString(null));
+        assertNull(mapper.stringToSessionStatus(null));
+        assertNull(mapper.stringToSessionStatus(" "));
+        assertNull(mapper.chatEventTypeToString(null));
+        assertNull(mapper.stringToChatEventType(null));
+        assertNull(mapper.stringToChatEventType(""));
     }
 
     @Test
-    void should_resolveEnum_when_mapEnum_given_matchingName() {
+    void should_resolveEnum_when_mapEnum_given_matchingValue() {
         // when & then
-        assertEquals(AgentSessionStatus.IDLE, mapper.mapSessionStatus("IDLE"));
-        assertEquals(RoundStatus.RUNNING, mapper.mapRoundStatus("RUNNING"));
-        assertEquals(ChatEventType.TOOL_CALL, mapper.mapChatEventType("TOOL_CALL"));
-        assertEquals(SpanKind.CLIENT, mapper.mapSpanKind("CLIENT"));
-        assertEquals(SpanStatus.ERROR, mapper.mapSpanStatus("ERROR"));
+        assertEquals("idle", mapper.sessionStatusToString(AgentSessionStatus.IDLE));
+        assertEquals("agent.message", mapper.chatEventTypeToString(ChatEventType.AGENT_MESSAGE));
+        assertEquals(AgentSessionStatus.IDLE, mapper.stringToSessionStatus("IDLE"));
+        assertEquals(ChatEventType.AGENT_MESSAGE, mapper.stringToChatEventType("agent.message"));
     }
 
-    // ===== 兜底：实体扩展字段透传 =====
-
     @Test
-    void should_preserveCostAndTokens_when_createChildAndRestore_given_fullSpan() {
-        // given
-        OffsetDateTime start = OffsetDateTime.now(ZONE);
-        RunTrace child = RunTrace.createChild("trace-1", "root", "r-1", "llm.call", null, start);
-        RunTrace withMeta = RunTrace.restore(
-                null, child.traceId(), child.spanId(), child.parentSpanId(), child.roundId(), child.spanName(),
-                child.spanKind(), child.status(), child.startTime(), child.endTime(), child.durationMs(),
-                100, 50, "qwen-plus", new BigDecimal("0.012"),
-                child.toolName(), child.toolInput(), child.toolOutput(), child.attributes(),
-                child.createdAt(), child.updatedAt(), child.createdBy(), child.updatedBy());
-
-        // when
-        RunTrace restored = mapper.toDomain(mapper.toEntity(withMeta));
-
-        // then
-        assertEquals(100, restored.inputTokens());
-        assertEquals(50, restored.outputTokens());
-        assertEquals("qwen-plus", restored.modelName());
-        assertEquals(new BigDecimal("0.012"), restored.estimatedCost());
+    void should_throw_when_stringToChatEventType_given_unknownLegacyValue() {
+        // when & then（旧枚举名 / 未知类型是脏数据，直接抛参错而非兜底）
+        assertThrows(IllegalArgumentException.class, () -> mapper.stringToChatEventType("RUN_START"));
     }
 }

@@ -20,9 +20,9 @@ public interface ModelProfileResponseConvert {
     ModelProfileResponse toResponse(ModelProfile profile);
 
     /**
-     * 判断凭证是否已配置（内嵌密文或密钥引用任一存在即视为已配置；响应脱敏不返回明文）
+     * 判断凭证是否已配置（内嵌密文非空即视为已配置；响应脱敏不返回明文）
      */
     default boolean toCredentialConfigured(ModelProfile profile) {
-        return StringUtils.isNotBlank(profile.encryptedCredential()) || StringUtils.isNotBlank(profile.secretId());
+        return StringUtils.isNotBlank(profile.encryptedCredential());
     }
 }

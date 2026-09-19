@@ -11,7 +11,10 @@ import java.time.ZoneId;
 import java.util.regex.Pattern;
 
 /**
- * 模型配置领域模型（对应 model_profile 表）
+ * 模型配置领域模型（对应 model_profile 表）。
+ * <p>凭证收敛为内嵌加密单一模式：明文在应用层经独立密钥 AES-GCM 加密为
+ * {@link #encryptedCredential()} 落库，无 secret_id 引用链（secret 语义已由 vault BC
+ * 的 vaults + vault_credentials 两层模型取代）。</p>
  *
  * @param profileId           业务唯一ID
  * @param displayName         显示名称（≤32字符）
@@ -20,7 +23,6 @@ import java.util.regex.Pattern;
  * @param apiEndpointUrl      API端点URL
  * @param modelName           模型名称
  * @param encryptedCredential 加密后的凭证（AES/GCM，独立密钥；无鉴权时可空）
- * @param secretId            凭证引用的密钥 ID（引用模式：仅记录引用，明文不落库，可空）
  * @param modelSeries         模型系列
  * @param contextWindowInput  输入上下文窗口大小
  * @param contextWindowOutput 输出上下文窗口大小
@@ -28,6 +30,7 @@ import java.util.regex.Pattern;
  * @param modelType           模型类型（CHAT / EMBEDDING）
  * @param vectorDimension     向量维度（EMBEDDING 类型必填）
  * @param status              状态
+ * @param ownerId             归属用户 ID（数字）
  * @param createdAt           创建时间
  * @param updatedAt           更新时间
  * @param createdBy           创建人
@@ -41,7 +44,6 @@ public record ModelProfile(
         String apiEndpointUrl,
         String modelName,
         String encryptedCredential,
-        String secretId,
         String modelSeries,
         Integer contextWindowInput,
         Integer contextWindowOutput,
@@ -49,6 +51,7 @@ public record ModelProfile(
         ModelType modelType,
         Integer vectorDimension,
         ModelProfileStatus status,
+        Long ownerId,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         String createdBy,
@@ -104,18 +107,14 @@ public record ModelProfile(
         if (ObjectUtils.isNotEmpty(encryptedCredential) && encryptedCredential.length() > 4000) {
             throw new IllegalArgumentException("加密凭证内容过长");
         }
-        // 凭证双模式互斥：内嵌加密与密钥引用不可同时提供
-        if (StringUtils.isNotBlank(encryptedCredential) && StringUtils.isNotBlank(secretId)) {
-            throw new IllegalArgumentException("凭证仅能内嵌或引用密钥其一，不可同时提供");
-        }
-        if (ObjectUtils.isNotEmpty(secretId) && secretId.length() > 64) {
-            throw new IllegalArgumentException("密钥引用ID长度不能超过64个字符");
-        }
         if (ObjectUtils.isNotEmpty(contextWindowInput) && contextWindowInput < 0) {
             throw new IllegalArgumentException("输入上下文窗口大小不能为负数");
         }
         if (ObjectUtils.isNotEmpty(contextWindowOutput) && contextWindowOutput < 0) {
             throw new IllegalArgumentException("输出上下文窗口大小不能为负数");
+        }
+        if (ownerId == null) {
+            throw new IllegalArgumentException("模型配置归属用户不能为空");
         }
     }
 
@@ -130,13 +129,13 @@ public record ModelProfile(
             String apiEndpointUrl,
             String modelName,
             String encryptedCredential,
-            String secretId,
             String modelSeries,
             Integer contextWindowInput,
             Integer contextWindowOutput,
             Integer toolCallRounds,
             ModelType modelType,
-            Integer vectorDimension
+            Integer vectorDimension,
+            Long ownerId
     ) {
         return new ModelProfile(
                 profileId,
@@ -146,7 +145,6 @@ public record ModelProfile(
                 apiEndpointUrl,
                 modelName,
                 encryptedCredential,
-                secretId,
                 modelSeries,
                 contextWindowInput,
                 contextWindowOutput,
@@ -154,6 +152,7 @@ public record ModelProfile(
                 modelType,
                 vectorDimension,
                 ModelProfileStatus.ENABLED,
+                ownerId,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 null,
@@ -172,7 +171,6 @@ public record ModelProfile(
             String apiEndpointUrl,
             String modelName,
             String encryptedCredential,
-            String secretId,
             String modelSeries,
             Integer contextWindowInput,
             Integer contextWindowOutput,
@@ -180,6 +178,7 @@ public record ModelProfile(
             ModelType modelType,
             Integer vectorDimension,
             ModelProfileStatus status,
+            Long ownerId,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
             String createdBy,
@@ -187,8 +186,8 @@ public record ModelProfile(
     ) {
         return new ModelProfile(
                 profileId, displayName, description, apiFormat, apiEndpointUrl, modelName,
-                encryptedCredential, secretId, modelSeries, contextWindowInput, contextWindowOutput,
-                toolCallRounds, modelType, vectorDimension, status, createdAt, updatedAt, createdBy, updatedBy
+                encryptedCredential, modelSeries, contextWindowInput, contextWindowOutput,
+                toolCallRounds, modelType, vectorDimension, status, ownerId, createdAt, updatedAt, createdBy, updatedBy
         );
     }
 }

@@ -1,9 +1,10 @@
 package com.linkroa.deepdataagent.runtime.infrastructure.client;
 
-import com.linkroa.deepdataagent.runtime.application.service.AgentRunExecutor;
+import com.linkroa.deepdataagent.runtime.application.port.AgentRunExecutor;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignalType;
 import com.linkroa.deepdataagent.runtime.domain.factory.BuiltAgent;
+import com.linkroa.deepdataagent.runtime.domain.model.PendingToolCallSpec;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.event.AgentResultEvent;
@@ -40,7 +41,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <ul>
  *   <li><b>只做映射</b>：每个 SDK 事件输出一个语义等价、零框架依赖的信号；
  *       工具入参 delta / 工具结果 head+tail 截断 / 终态推导等状态累积<b>不在本层进行</b>，
- *       而是由应用层在 {@code doOnNext} 编排时借助领域模型 {@code AgentRunState} 完成；</li>
+ *       而是由应用层在 {@code doOnNext} 编排时借助领域模型 {@code TurnRunState} 完成；</li>
  *   <li><b>不阻塞</b>：本方法返回即返回冷流，绝不调用 {@code blockLast()}；消费线程由
  *       应用层经 {@code publishOn(虚拟线程调度器)} 托管，HTTP 请求线程永不等待 LLM 流；</li>
  *   <li><b>无持久化 / 无广播 / 无 span 决策</b>：订阅、逐事件短事务落库、SSE 广播、
@@ -50,12 +51,9 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class HarnessAgentRunExecutor implements AgentRunExecutor {
 
-    /**
-     * 按 replyId 暂存的待确认工具调用（{@code REQUIRE_*} 事件携带的 SDK {@code ToolUseBlock}）。
-     * <p>依据 HITL 续流机制，SDK 类型不得进入领域 / 应用层，故由基础设施层持有；
-     * 确认续流时按 replyId 取回并构造确认结果，取回后即移除。</p>
-     */
-    private final Map<String, List<ToolUseBlock>> pendingToolCalls = new ConcurrentHashMap<>();
+    /** 明细入参 JSON 解析（重建 ToolUseBlock 用；解析失败收敛为空参数，工具执行时由模型侧重发兜正）。 */
+    private static final com.fasterxml.jackson.databind.ObjectMapper INPUT_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
 
     @Override
     public Flux<AgentStreamSignal> streamEvents(BuiltAgent agent,
@@ -77,25 +75,31 @@ public class HarnessAgentRunExecutor implements AgentRunExecutor {
     }
 
     @Override
-    public Flux<AgentStreamSignal> resumeWithConfirmation(BuiltAgent agent,
-                                                          String replyId,
-                                                          String sessionId,
-                                                          String userId) {
+    public Flux<AgentStreamSignal> resumeConfirmation(BuiltAgent agent,
+                                                      List<PendingToolCallSpec> toolCalls,
+                                                      String sessionId,
+                                                      String userId,
+                                                      boolean allow,
+                                                      String denyMessage) {
         HarnessAgent harness = unwrap(agent);
-        List<ToolUseBlock> toolCalls = pendingToolCalls.remove(replyId);
         if (toolCalls == null || toolCalls.isEmpty()) {
-            return Flux.error(new IllegalStateException("未找到待确认的工具调用: replyId=" + replyId));
+            return Flux.error(new IllegalArgumentException("待确认工具调用批次明细不能为空"));
         }
+        // 由账本明细重建 SDK 工具调用块（id/name/input 三要素数据载体，无进程内暂存依赖）；
+        // allow=true 注入允许结果继续执行；allow=false 注入拒绝结果（工具不执行，按拒绝结果续跑）
         List<ConfirmResult> results = toolCalls.stream()
-                .map(toolCall -> new ConfirmResult(true, toolCall))
+                .map(spec -> new ConfirmResult(allow, toToolUseBlock(spec)))
                 .toList();
-        Msg input = Msg.builder()
+        Msg.Builder input = Msg.builder()
                 .role(MsgRole.USER)
-                .metadata(Map.of(Msg.METADATA_CONFIRM_RESULTS, results))
-                .build();
+                .metadata(Map.of(Msg.METADATA_CONFIRM_RESULTS, results));
+        // 拒绝说明随结果注入（deny 且有消息时以用户消息文本携带，模型据此调整后续行为）
+        if (!allow && denyMessage != null && !denyMessage.isBlank()) {
+            input.textContent(denyMessage);
+        }
         RuntimeContext context = RuntimeContext.builder().sessionId(sessionId).userId(userId).build();
         String modelName = resolveModelName(harness);
-        return harness.streamEvents(input, context)
+        return harness.streamEvents(input.build(), context)
                 .handle((event, sink) -> {
                     AgentStreamSignal signal = toSignal(event, modelName);
                     if (signal != null) {
@@ -104,9 +108,23 @@ public class HarnessAgentRunExecutor implements AgentRunExecutor {
                 });
     }
 
-    @Override
-    public void discardPendingToolCalls(String replyId) {
-        pendingToolCalls.remove(replyId);
+    /** 领域明细 → SDK 工具调用块重建。 */
+    private static ToolUseBlock toToolUseBlock(PendingToolCallSpec spec) {
+        return new ToolUseBlock(spec.toolCallId(), spec.toolName(), parseInput(spec.inputJson()));
+    }
+
+    /** 入参 JSON 解析（非法 / 空收敛为空 Map，不阻断续流）。 */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parseInput(String inputJson) {
+        if (inputJson == null || inputJson.isBlank()) {
+            return Map.of();
+        }
+        try {
+            Map<String, Object> parsed = INPUT_MAPPER.readValue(inputJson, Map.class);
+            return parsed == null ? Map.of() : parsed;
+        } catch (Exception ex) {
+            return Map.of();
+        }
     }
 
     /** 解包领域句柄为 SDK 句柄；不支持的实现类型视为装配错误直接抛出。 */
@@ -134,10 +152,13 @@ public class HarnessAgentRunExecutor implements AgentRunExecutor {
      * <p>每个 SDK 事件直接构造语义等价的信号（无间接层）；ToolResultState 以协议
      * 字符串透传（SUCCESS / ERROR / INTERRUPTED / DENIED / RUNNING），由应用层在
      * span 状态推导时判定。</p>
+     * <p><b>中断合成态口径（2.0.3）</b>：被中断轮次里框架 {@code handleInterrupt} 为悬空
+     * tool_use 合成的补录结果是 <b>ERROR</b> 态（{@code ToolResultState.INTERRUPTED}
+     * 枚举值存在但该路径不用）。平台终态判定读进程内中断标志与两源取消谓词、
+     * <b>不读</b> tool result state，故中断不会被误判为失败轮（D12）。</p>
      */
     private AgentStreamSignal toSignal(AgentEvent event, String modelName) {
         return switch (event.getType()) {
-            case AGENT_START -> AgentStreamSignal.of(AgentStreamSignalType.START, null, null);
             case AGENT_END -> AgentStreamSignal.of(AgentStreamSignalType.AGENT_END, null, null);
             case AGENT_RESULT -> AgentStreamSignal.of(AgentStreamSignalType.AGENT_RESULT, null, null)
                     .withResultText(resultText((AgentResultEvent) event));
@@ -171,17 +192,24 @@ public class HarnessAgentRunExecutor implements AgentRunExecutor {
             case MODEL_CALL_START -> AgentStreamSignal.of(AgentStreamSignalType.MODEL_CALL_START, null, null);
             case MODEL_CALL_END -> new AgentStreamSignal(AgentStreamSignalType.MODEL_CALL_END, null, null,
                     null, null, null, null,
-                    inputTokens((ModelCallEndEvent) event), outputTokens((ModelCallEndEvent) event), modelName, null);
+                    inputTokens((ModelCallEndEvent) event), outputTokens((ModelCallEndEvent) event), modelName,
+                    null, null);
             case EXCEED_MAX_ITERS -> AgentStreamSignal.of(AgentStreamSignalType.EXCEED_MAX_ITERS, null, null);
             case REQUIRE_USER_CONFIRM -> {
                 RequireUserConfirmEvent require = (RequireUserConfirmEvent) event;
-                pendingToolCalls.put(require.getReplyId(), require.getToolCalls());
-                yield AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, require.getReplyId());
+                // 批次工具调用 id 透传应用层（挂起明细的账本锚点由应用层建立，本层不再暂存现场）
+                yield AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, require.getReplyId(),
+                        require.getToolCalls().stream().map(ToolUseBlock::getId).toList());
             }
             case REQUIRE_EXTERNAL_EXECUTION -> {
+                // 保留分支：外部执行请求与权限 ASK 是两条不同续跑通道——本分支的续跑口径是
+                // 携带匹配 toolCallId 的 ToolResultBlock 的 Msg（框架严格校验 id 对应关系），
+                // 而权限 ASK 走 METADATA_CONFIRM_RESULTS 元数据通道（见 resumeConfirmation）。
+                // 平台不接入 registerExternalSchemas（不自建外部工具执行器），框架不会发出本事件，
+                // 该分支当前不可达；保留以维持事件面完备、防止将来接入时静默丢弃（9.1）
                 RequireExternalExecutionEvent require = (RequireExternalExecutionEvent) event;
-                pendingToolCalls.put(require.getReplyId(), require.getToolCalls());
-                yield AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, require.getReplyId());
+                yield AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, require.getReplyId(),
+                        require.getToolCalls().stream().map(ToolUseBlock::getId).toList());
             }
             case USER_CONFIRM_RESULT -> AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_RESULT,
                     ((UserConfirmResultEvent) event).getReplyId());

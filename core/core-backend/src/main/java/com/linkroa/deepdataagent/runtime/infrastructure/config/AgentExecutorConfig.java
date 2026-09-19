@@ -7,6 +7,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 
 /**
@@ -63,5 +64,22 @@ public class AgentExecutorConfig {
                 BLOCKING_SCHEDULER_QUEUE_CAP,
                 threadFactory,
                 BLOCKING_SCHEDULER_TTL_SECONDS);
+    }
+
+    /** turn 租约定时续约调度器线程数：任务体仅一次 Redis Lua 续约命令（毫秒级），小池即可。 */
+    private static final int LEASE_RENEWAL_POOL_SIZE = 4;
+
+    /**
+     * turn 租约定时续约调度器：轮次生命周期内按 {@code TTL/3} 周期续约，覆盖长静默工具
+     * 调用（无流式信号）越过 TTL 的窗口；平台守护线程（任务极短、毫秒级），线程名带
+     * {@code lease-renew-} 前缀；声明 {@code destroyMethod = "close"} 在容器关闭时释放。
+     * <p><b>bean 名 MUST NOT 叫 {@code leaseRenewalScheduler}</b>：续约调度端口
+     * {@code LeaseRenewalScheduler} 的注入点字段名即该词，{@code @Resource} 按名优先会把
+     * 本池（{@code ScheduledExecutorService}）按类型不符地注入进去（BeanNotOfRequiredType）。</p>
+     */
+    @Bean(name = "leaseRenewalExecutor", destroyMethod = "close")
+    public ScheduledExecutorService leaseRenewalExecutor() {
+        ThreadFactory threadFactory = Thread.ofPlatform().name("lease-renew-", 0).daemon(true).factory();
+        return Executors.newScheduledThreadPool(LEASE_RENEWAL_POOL_SIZE, threadFactory);
     }
 }

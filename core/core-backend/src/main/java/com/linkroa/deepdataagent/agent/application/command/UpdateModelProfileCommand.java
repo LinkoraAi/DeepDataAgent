@@ -13,7 +13,6 @@ import com.linkroa.deepdataagent.agent.domain.model.enums.ModelType;
  * @param apiEndpointUrl      API端点URL
  * @param modelName           模型名称
  * @param credential          凭证：null 表示保留原值，空串表示清空，其他表示新凭证
- * @param secretId            凭证引用密钥 ID：null 表示保留原值，空串表示清空，其他表示新引用
  * @param modelSeries         模型系列
  * @param contextWindowInput  输入上下文窗口大小
  * @param contextWindowOutput 输出上下文窗口大小
@@ -29,7 +28,6 @@ public record UpdateModelProfileCommand(
         String apiEndpointUrl,
         String modelName,
         String credential,
-        String secretId,
         String modelSeries,
         Integer contextWindowInput,
         Integer contextWindowOutput,

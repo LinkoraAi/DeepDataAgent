@@ -1,30 +1,32 @@
 package com.linkroa.deepdataagent.memory.domain.model;
 
-import com.linkroa.deepdataagent.memory.domain.model.enums.MemoryType;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MemoryStoreTest {
 
     @Test
     void should_createMemoryStore_when_create_given_validFields() {
         // given // when
-        MemoryStore store = MemoryStore.create("mem-1", "会话记忆", MemoryType.SHORT_TERM, "ws-default");
+        MemoryStore store = MemoryStore.create("ms-1", "会话记忆", "默认会话记忆", 1L);
 
         // then
-        assertEquals("mem-1", store.memoryId());
+        assertEquals("ms-1", store.storeId());
         assertEquals("会话记忆", store.name());
-        assertEquals(MemoryType.SHORT_TERM, store.type());
-        assertEquals("ws-default", store.workspaceId());
+        assertEquals("默认会话记忆", store.description());
+        assertFalse(store.archived());
     }
 
     @Test
     void should_throwException_when_create_given_blankName() {
         // given // when // then
         assertThrows(IllegalArgumentException.class,
-                () -> MemoryStore.create("mem-1", " ", MemoryType.SHORT_TERM, "ws-default"));
+                () -> MemoryStore.create("ms-1", " ", null, 1L));
     }
 
     @Test
@@ -34,20 +36,33 @@ class MemoryStoreTest {
 
         // when // then
         assertThrows(IllegalArgumentException.class,
-                () -> MemoryStore.create("mem-1", longName, MemoryType.SHORT_TERM, "ws-default"));
+                () -> MemoryStore.create("ms-1", longName, null, 1L));
     }
 
     @Test
     void should_throwException_when_create_given_invalidNamePattern() {
         // given // when // then
         assertThrows(IllegalArgumentException.class,
-                () -> MemoryStore.create("mem-1", "1abc!", MemoryType.SHORT_TERM, "ws-default"));
+                () -> MemoryStore.create("ms-1", "1abc!", null, 1L));
     }
 
     @Test
-    void should_throwException_when_create_given_nullType() {
+    void should_throwException_when_create_given_nullOwnerId() {
         // given // when // then
         assertThrows(IllegalArgumentException.class,
-                () -> MemoryStore.create("mem-1", "会话记忆", null, "ws-default"));
+                () -> MemoryStore.create("ms-1", "会话记忆", null, null));
+    }
+
+    @Test
+    void should_archive_when_archive_given_activeStore() {
+        // given
+        MemoryStore store = MemoryStore.create("ms-1", "会话记忆", null, 1L);
+
+        // when
+        MemoryStore archived = store.archive();
+
+        // then
+        assertTrue(archived.archived());
+        assertNotNull(archived.archivedAt());
     }
 }

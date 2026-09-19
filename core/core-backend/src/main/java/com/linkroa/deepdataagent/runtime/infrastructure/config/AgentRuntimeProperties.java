@@ -28,6 +28,15 @@ public class AgentRuntimeProperties {
     /** SSE 连接空闲超时（Spring WebMvc 7 超时固定，配合心跳探测死连接） */
     private Duration sseTimeout = Duration.ofMinutes(30);
 
+    /**
+     * MCP 单次请求（含工具调用）超时：装配期 discovery 为同步阻塞过程，
+     * 未显式下发会把「无响应服务器」从失败降级变成长期等待。
+     */
+    private Duration mcpRequestTimeout = Duration.ofSeconds(30);
+
+    /** MCP 客户端初始化（握手 {@code initialize} + 工具枚举 {@code tools/list}）超时。 */
+    private Duration mcpInitializationTimeout = Duration.ofSeconds(15);
+
     /** PG 状态存储 schema（AgentScope 扩展自动建 schema/表） */
     private String stateSchema = "agentscope";
 
@@ -36,6 +45,13 @@ public class AgentRuntimeProperties {
 
     /** 是否启用启动恢复（进程重启后清理残留 RUNNING 会话） */
     private boolean startupRecoveryEnabled = true;
+
+    /**
+     * AgentScope 工作区根目录（宿主侧）：每个 Agent 在其下拥有 {@code <agentId>} 子目录，
+     * 装配时物化 AGENTS.md，供 Harness 的 WorkspaceContextMiddleware 注入系统提示，
+     * 并经 sandbox workspace projection 投影进沙箱工作区根。
+     */
+    private String workspaceRoot = "./data/agentscope-workspaces";
 
     public String getSandboxImage() {
         return sandboxImage;
@@ -69,6 +85,22 @@ public class AgentRuntimeProperties {
         this.sseTimeout = sseTimeout;
     }
 
+    public Duration getMcpRequestTimeout() {
+        return mcpRequestTimeout;
+    }
+
+    public void setMcpRequestTimeout(Duration mcpRequestTimeout) {
+        this.mcpRequestTimeout = mcpRequestTimeout;
+    }
+
+    public Duration getMcpInitializationTimeout() {
+        return mcpInitializationTimeout;
+    }
+
+    public void setMcpInitializationTimeout(Duration mcpInitializationTimeout) {
+        this.mcpInitializationTimeout = mcpInitializationTimeout;
+    }
+
     public String getStateSchema() {
         return stateSchema;
     }
@@ -91,5 +123,13 @@ public class AgentRuntimeProperties {
 
     public void setStartupRecoveryEnabled(boolean startupRecoveryEnabled) {
         this.startupRecoveryEnabled = startupRecoveryEnabled;
+    }
+
+    public String getWorkspaceRoot() {
+        return workspaceRoot;
+    }
+
+    public void setWorkspaceRoot(String workspaceRoot) {
+        this.workspaceRoot = workspaceRoot;
     }
 }

@@ -9,9 +9,6 @@ import com.linkroa.deepdataagent.datasource.application.convert.DatasourceConver
 import com.linkroa.deepdataagent.datasource.application.query.ListDatasourceQuery;
 import com.linkroa.deepdataagent.datasource.application.query.TableListQuery;
 import com.linkroa.deepdataagent.datasource.application.validation.DatasourceValidator;
-import com.linkroa.deepdataagent.datasource.controller.convert.DatasourceResponseConvert;
-import com.linkroa.deepdataagent.datasource.controller.request.*;
-import com.linkroa.deepdataagent.datasource.controller.response.*;
 import com.linkroa.deepdataagent.datasource.domain.model.*;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.*;
 import com.linkroa.deepdataagent.datasource.domain.repository.*;
@@ -31,10 +28,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 数据源应用服务（用例编排：连接管理 / 元数据同步 / API 表配置 / 响应解析）。
+ * <p>7.4 起 datasource 收敛为<b>内部工具装配能力</b>：面向用户的独立
+ * REST API 面（{@code /api/datasource/*}）已移除，本服务不再经协议层暴露，
+ * 方法签名只使用命令 / 查询 / 领域模型与应用层读模型，凭证仍经加密存储、
+ * 不随任何对外契约泄露；未来由 runtime 自定义工具装配链路进程内消费。</p>
+ */
 @Service
 public class DatasourceApplicationService {
 
@@ -78,15 +81,11 @@ public class DatasourceApplicationService {
         this.apiPaginationHandler = apiPaginationHandler;
     }
 
-    public List<DatasourceTypeResponse> getSupportedTypes() {
-        List<DatasourceTypeResponse> types = new ArrayList<>();
-        for (DatasourceTypeEnum typeEnum : DatasourceTypeEnum.values()) {
-            types.add(new DatasourceTypeResponse(
-                    typeEnum.getType(), typeEnum.getSubType(),
-                    typeEnum.getName(), typeEnum.getCategory()
-            ));
-        }
-        return types;
+    /**
+     * 支持的数据源类型值（领域枚举全集；API 面收敛后作为内部能力输出，不再包装协议 DTO）。
+     */
+    public List<DatasourceTypeEnum> getSupportedTypes() {
+        return List.of(DatasourceTypeEnum.values());
     }
 
     public DatasourceConnection createDatasource(CreateDatasourceCommand command) {
@@ -97,17 +96,22 @@ public class DatasourceApplicationService {
             DatasourceValidator.validatePostgresqlSchema(command.subType(), command.jdbcConfig().schema());
         }
         DatasourceConnection connection = DatasourceConvert.INSTANCE.toDatasourceConnection(command);
-        return transactionTemplate.execute(status -> {
-            DatasourceConnection saved = connectionRepository.save(connection);
-            if (saved.type() == DatasourceType.API && ObjectUtils.isNotEmpty(command.apiSchemas())) {
+        DatasourceConnection saved = transactionTemplate.execute(status -> {
+            DatasourceConnection persisted = connectionRepository.save(connection);
+            if (persisted.type() == DatasourceType.API && ObjectUtils.isNotEmpty(command.apiSchemas())) {
                 for (var schemaCommand : command.apiSchemas()) {
-                    saveApiSchema(saved.id(), schemaCommand);
+                    saveApiSchema(persisted.id(), schemaCommand);
                 }
-            } else if (saved.type() == DatasourceType.JDBC) {
-                doSyncMetadata(saved);
             }
-            return saved;
+            return persisted;
         });
+        // JDBC 元数据同步置于事务外：连接行先提交，远程元数据抽取是可重入增量对账，
+        // 同步失败不回滚连接行（下次更新或手动 syncMetadata 补齐），与 updateDatasource 口径统一，
+        // 也避免远程 JDBC 调用长事务占用本地数据库连接
+        if (saved.type() == DatasourceType.JDBC) {
+            doSyncMetadata(saved);
+        }
+        return saved;
     }
 
     public DatasourceConnection updateDatasource(UpdateDatasourceCommand command) {
@@ -201,7 +205,9 @@ public class DatasourceApplicationService {
         DatasourceConnection connection = connectionRepository.findById(connectionId)
                 .orElseThrow(() -> new DeepDataAgentException("数据源不存在"));
         domainService.validateCanSync(connection);
-        transactionTemplate.executeWithoutResult(status -> doSyncMetadata(connection));
+        // 同步为可重入增量对账（schema/表/列逐条 upsert 与软删各自落库）：不包整体事务，
+        // 远程元数据抽取不占用本地数据库连接；中途失败时已对账部分保留，下次同步补齐
+        doSyncMetadata(connection);
     }
 
     public void doSyncMetadata(DatasourceConnection connection) {
@@ -436,52 +442,51 @@ public class DatasourceApplicationService {
         return savedSchema;
     }
 
-    public ApiSchema updateApiSchema(Long schemaId, UpdateApiSchemaRequest request) {
+    /**
+     * 更新 API 表配置（增量合并：命令字段 null=沿用现有）。
+     * <p>鉴权：{@code authType} 非空即整体替换（BASIC 携带凭证，其余回落无鉴权）；
+     * 分页：{@code paginationType} 非空即替换（空串=清除分页配置）；
+     * 字段列表：非空即全量重建。</p>
+     */
+    public ApiSchema updateApiSchema(Long schemaId, ApiSchemaCommand command) {
         ApiSchema existing = apiSchemaRepository.findById(schemaId)
                 .orElseThrow(() -> new DeepDataAgentException("API表不存在"));
 
         ApiRequestConfig existingConfig = existing.config() != null ? existing.config() : ApiRequestConfig.defaultConfig();
 
         ApiAuthConfig authConfig = existingConfig.authConfig();
-        if (request.authConfig() != null) {
-            ApiAuthType authType = parseAuthTypeFromRequest(request.authConfig().authType());
-            if (authType == ApiAuthType.BASIC_AUTH) {
+        if (command.authType() != null) {
+            if (command.authType() == ApiAuthType.BASIC_AUTH) {
                 authConfig = new ApiAuthConfig(ApiAuthType.BASIC_AUTH,
-                        request.authConfig().username(), request.authConfig().password());
+                        command.authUsername(), command.authPassword());
             } else {
                 authConfig = new ApiAuthConfig(ApiAuthType.NO_AUTH, null, null);
             }
         }
 
         ApiPaginationConfig paginationConfig = existingConfig.paginationConfig();
-        if (request.paginationConfig() != null) {
-            ApiPaginationType paginationType = request.paginationConfig().paginationType() != null
-                    ? ApiPaginationType.valueOf(request.paginationConfig().paginationType()) : null;
-            if (paginationType != null) {
-                paginationConfig = new ApiPaginationConfig(
-                        paginationType, request.paginationConfig().pageParamName(),
-                        request.paginationConfig().sizeParamName(),
-                        request.paginationConfig().totalCountJsonPath(),
-                        request.paginationConfig().pageSize(), request.paginationConfig().maxPages()
-                );
-            } else {
-                paginationConfig = null;
-            }
+        if (command.paginationType() != null) {
+            paginationConfig = command.paginationType().isBlank()
+                    ? null
+                    : new ApiPaginationConfig(
+                            ApiPaginationType.valueOf(command.paginationType()),
+                            command.pageNumberParamName(), command.pageSizeParamName(),
+                            command.totalCountJsonPath(), command.pageSize(), command.maxPages());
         }
 
-        List<PreOperationConfig> preOperationConfigs = request.preOperationConfigs() != null
-                ? request.preOperationConfigs().stream().map(this::fromPreOpRequest).toList()
+        List<PreOperationConfig> preOperationConfigs = command.preOperationConfigs() != null
+                ? command.preOperationConfigs()
                 : existingConfig.preOperationConfigs();
 
-        String jsonPathConfig = request.jsonPathConfig() != null ? request.jsonPathConfig() : existingConfig.jsonPathConfig();
-        Integer timeout = request.timeout() != null ? request.timeout() : existingConfig.timeout();
-        Integer retryCount = request.retryCount() != null ? request.retryCount() : existingConfig.retryCount();
+        String jsonPathConfig = command.jsonPathConfig() != null ? command.jsonPathConfig() : existingConfig.jsonPathConfig();
+        Integer timeout = command.timeout() != null ? command.timeout() : existingConfig.timeout();
+        Integer retryCount = command.retryCount() != null ? command.retryCount() : existingConfig.retryCount();
 
-        Map<String, String> headers = request.headers() != null ? request.headers() : existingConfig.headers();
-        Map<String, String> params = request.params() != null ? request.params() : existingConfig.params();
-        String body = request.body() != null ? request.body() : existingConfig.body();
-        BodyType bodyType = request.bodyType() != null && !request.bodyType().isBlank()
-                ? BodyType.valueOf(request.bodyType().toUpperCase())
+        Map<String, String> headers = command.headers() != null ? command.headers() : existingConfig.headers();
+        Map<String, String> params = command.params() != null ? command.params() : existingConfig.params();
+        String body = command.body() != null ? command.body() : existingConfig.body();
+        BodyType bodyType = command.bodyType() != null && !command.bodyType().isBlank()
+                ? BodyType.valueOf(command.bodyType().toUpperCase())
                 : existingConfig.bodyType();
 
         ApiRequestConfig updatedConfig = new ApiRequestConfig(
@@ -489,11 +494,9 @@ public class DatasourceApplicationService {
                 authConfig, paginationConfig, preOperationConfigs
         );
 
-        String name = request.name() != null ? request.name() : existing.name();
-        String url = request.url() != null ? request.url() : existing.url();
-        HttpMethod method = request.method() != null && !request.method().isBlank()
-                ? HttpMethod.valueOf(request.method().toUpperCase())
-                : existing.method();
+        String name = command.name() != null ? command.name() : existing.name();
+        String url = command.url() != null ? command.url() : existing.url();
+        HttpMethod method = command.method() != null ? command.method() : existing.method();
 
         ApiSchema updatedSchema = new ApiSchema(
                 existing.id(), existing.connectionId(), name, url,
@@ -503,9 +506,9 @@ public class DatasourceApplicationService {
 
         return transactionTemplate.execute(status -> {
             ApiSchema saved = apiSchemaRepository.update(updatedSchema);
-            if (request.fields() != null) {
+            if (command.fields() != null) {
                 apiFieldRepository.deleteByApiSchemaId(schemaId);
-                for (var f : request.fields()) {
+                for (var f : command.fields()) {
                     ApiField field = new ApiField(
                             null, schemaId, f.originalName(), f.displayName(),
                             f.jsonPath(), f.fieldType(), f.description(),
@@ -535,11 +538,14 @@ public class DatasourceApplicationService {
         apiSchemaRepository.deleteByConnectionId(connectionId);
     }
 
-    public ApiSchemaDetailResponse getApiSchemaDetail(Long schemaId) {
+    /**
+     * 读取 API 表详情（schema + 字段列表组合读模型；API 面收敛后不再包装协议 Response）。
+     */
+    public ApiSchemaDetail getApiSchemaDetail(Long schemaId) {
         ApiSchema schema = apiSchemaRepository.findById(schemaId)
                 .orElseThrow(() -> new DeepDataAgentException("API表不存在"));
         List<ApiField> fields = apiFieldRepository.findByApiSchemaId(schemaId);
-        return DatasourceResponseConvert.INSTANCE.toApiSchemaDetailResponse(schema, fields);
+        return new ApiSchemaDetail(schema, fields);
     }
 
     public List<ApiSchema> listApiSchemas(Long connectionId) {
@@ -550,14 +556,15 @@ public class DatasourceApplicationService {
         return apiFieldRepository.findByApiSchemaId(schemaId);
     }
 
-    public Map<String, Object> testPreOperation(TestPreOperationRequest request) {
-        PreOperationConfig preOpConfig = toPreOperationConfig(request);
+    /**
+     * 试跑前置操作（换 token 等）：以领域配置直发临时请求，返回原始响应供配置调试。
+     *
+     * @param preOpConfig 前置操作领域配置（enabled 须为 true，URL/方法不变量由值对象校验）
+     * @param authConfig  试跑携带的鉴权配置（null / 无鉴权类型则不带 Authorization 上下文）
+     */
+    public Map<String, Object> testPreOperation(PreOperationConfig preOpConfig, ApiAuthConfig authConfig) {
         Map<String, Object> context = new java.util.LinkedHashMap<>();
-        if (request.authConfig() != null && request.authConfig().authType() != null) {
-            ApiAuthConfig authConfig = new ApiAuthConfig(
-                    ApiAuthType.fromRequestString(request.authConfig().authType()),
-                    request.authConfig().username(), request.authConfig().password()
-            );
+        if (authConfig != null && authConfig.authType() != null) {
             applyAuthToContext(context, authConfig);
         }
 
@@ -575,19 +582,22 @@ public class DatasourceApplicationService {
         return result;
     }
 
-    public ParseApiResponseResult parseApiResponse(ParseApiResponseCommand command) {
+    /**
+     * 试解析 API 响应：返回字段树与扁平化样例行（各内部消费方共享的解析能力）。
+     */
+    public ParsedApiResponse parseApiResponse(ParseApiResponseCommand command) {
         ApiSchema apiSchema = buildApiSchemaForParse(command);
         Map<String, Object> context = Map.of();
 
         String rawResponse = apiPaginationHandler.fetchRawResponse(apiSchema, null, context);
 
         String rootPath = command.rootPath() != null ? command.rootPath() : "$";
-        List<ParsedFieldResponse> fieldTree = apiResponseParser.parseFieldsAsTree(rawResponse, rootPath);
+        List<ParsedField> fieldTree = apiResponseParser.parseFieldsAsTree(rawResponse, rootPath);
 
         PaginatedApiResult result = apiPaginationHandler.executeOnce(apiSchema, null, context);
         List<Map<String, Object>> rows = result.data().stream().limit(10).toList();
 
-        return new ParseApiResponseResult(fieldTree, rows);
+        return new ParsedApiResponse(fieldTree, rows);
     }
 
     // ==================== Helper Methods ====================
@@ -631,29 +641,6 @@ public class DatasourceApplicationService {
             String encodedCredentials = java.util.Base64.getEncoder().encodeToString(credentials.getBytes());
             context.put("Authorization", "Basic " + encodedCredentials);
         }
-    }
-
-    private PreOperationConfig fromPreOpRequest(PreOperationConfigRequest request) {
-        return new PreOperationConfig(
-                request.enabled() != null ? request.enabled() : false,
-                request.url(),
-                request.method() != null ? HttpMethod.valueOf(request.method().toUpperCase()) : HttpMethod.GET,
-                request.headers(), request.params(), request.body(),
-                request.bodyType() != null && !request.bodyType().isBlank() ? BodyType.valueOf(request.bodyType().toUpperCase()) : null,
-                request.paramMappings() != null ? request.paramMappings().stream()
-                        .map(m -> new ParamMapping(m.paramName(), m.paramLocation(), m.jsonPath()))
-                        .toList() : List.of()
-        );
-    }
-
-    private PreOperationConfig toPreOperationConfig(TestPreOperationRequest request) {
-        return new PreOperationConfig(
-                true, request.url(),
-                request.method() != null ? HttpMethod.valueOf(request.method().toUpperCase()) : HttpMethod.GET,
-                request.headers(), request.params(), request.body(),
-                request.bodyType() != null && !request.bodyType().isBlank() ? BodyType.valueOf(request.bodyType().toUpperCase()) : null,
-                List.of()
-        );
     }
 
     private ApiSchema buildApiSchemaForParse(ParseApiResponseCommand command) {
@@ -732,5 +719,17 @@ public class DatasourceApplicationService {
     }
 
     public record PaginatedResult<T>(List<T> data, long total, int page, int size) {
+    }
+
+    /**
+     * API 表详情读模型（schema 与字段列表组合；API 面收敛后的内部用例输出形状）。
+     */
+    public record ApiSchemaDetail(ApiSchema schema, List<ApiField> fields) {
+    }
+
+    /**
+     * API 响应试解析结果读模型（字段树 + 扁平化样例行）。
+     */
+    public record ParsedApiResponse(List<ParsedField> fieldTree, List<Map<String, Object>> rows) {
     }
 }

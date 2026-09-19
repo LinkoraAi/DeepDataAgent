@@ -16,10 +16,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class ApiVersioningConfigTest {
 
     @Test
-    @DisplayName("版本化路径 /api/v1/agent/sessions 应判定为版本化")
-    void should_returnTrue_when_isVersionedRequestPath_given_VersionedV1AgentPath() {
+    @DisplayName("版本化路径 /api/v1/cloud/sessions 应判定为版本化")
+    void should_returnTrue_when_isVersionedRequestPath_given_VersionedV1CloudPath() {
         // given
-        String path = "/api/v1/agent/sessions";
+        String path = "/api/v1/cloud/sessions";
 
         // when
         boolean versioned = ApiVersioningConfig.isVersionedRequestPath(path);
@@ -43,9 +43,9 @@ class ApiVersioningConfigTest {
 
     @ParameterizedTest(name = "路径 {0} 应判定为非版本化")
     @CsvSource({
-            "/api/agent/sessions",
+            "/api/cloud/sessions",
             "/api/datasource/list",
-            "/api/v1x/agent/sessions",
+            "/api/v1x/cloud/sessions",
             "/api/v",
     })
     void should_returnFalse_when_isVersionedRequestPath_given_UnversionedPath(String path) {

@@ -25,14 +25,38 @@ public record ApiResponse<T>(boolean success, String code, String message, T dat
         }
     }
 
+    /**
+     * 构造成功响应：{@code success=true}、code {@code 200}、message「操作成功」。
+     *
+     * @param data 响应数据（可为 null，如删除类接口）
+     * @param <T> 数据类型
+     * @return 成功响应
+     */
     public static <T> ApiResponse<T> success(T data) {
         return new ApiResponse<>(true, "200", "操作成功", data);
     }
 
+    /**
+     * 构造失败响应：{@code success=false}，不携带数据。
+     *
+     * @param code 错误码
+     * @param message 错误消息
+     * @param <T> 数据类型
+     * @return 失败响应
+     */
     public static <T> ApiResponse<T> error(String code, String message) {
         return new ApiResponse<>(false, code, message, null);
     }
 
+    /**
+     * 构造携带数据的失败响应（回传错误明细或部分结果）。
+     *
+     * @param code 错误码
+     * @param message 错误消息
+     * @param data 附加数据
+     * @param <T> 数据类型
+     * @return 失败响应
+     */
     public static <T> ApiResponse<T> error(String code, String message, T data) {
         return new ApiResponse<>(false, code, message, data);
     }

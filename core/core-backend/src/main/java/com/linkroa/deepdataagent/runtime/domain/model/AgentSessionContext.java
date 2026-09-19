@@ -1,28 +1,35 @@
 package com.linkroa.deepdataagent.runtime.domain.model;
 
-import com.linkroa.deepdataagent.runtime.domain.model.enums.HitlState;
-import com.linkroa.deepdataagent.runtime.domain.model.enums.SessionState;
+import com.linkroa.deepdataagent.runtime.domain.model.runstate.TurnRunState;
+import com.linkroa.deepdataagent.runtime.domain.port.ConnectionHandle;
+import com.linkroa.deepdataagent.runtime.domain.port.NoOpConnectionHandle;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 会话运行时聚合对象（进程内「逻辑线程组」，对齐操作系统 M:N 调度现场）。
  * <p>一个会话对应一个聚合实例，跨越查询接口与后续轮次常驻内存，显式聚合四层职责：</p>
  * <ul>
- *   <li><b>身份层</b>：{@link AgentSession}（提供 agentId / userId 等不变身份与 TERMINATED 判定）；</li>
- *   <li><b>执行层</b>：{@link AgentSessionExecution}（虚拟线程阻塞模型下的单执行串行守卫 + 中断入口）、
- *       {@link AgentRunState}（当前轮事件流累积态，每轮经 {@link #beginRound} 替换）、
- *       {@link AtomicLong}（事件序号，跨轮次单调递增，DB max 初始化、内存分配全覆盖）；</li>
+ *   <li><b>身份层</b>：{@link AgentSession}（提供 agentId / userId 等不变身份与可运行态判定，DB 为权威）；</li>
+ *   <li><b>执行层</b>：{@link TurnControl}（进程内「阻塞等待 + 中断传递」载体，每轮替换的执行控制面，
+ *       由原执行槽类拍平而来——互斥权威在 DB，不在此处）、
+ *       {@link TurnRunState}（当前 turn 事件流累积态，每轮经 {@link #beginRound} 替换）、
+ *       {@link AtomicLong}（事件 seq，跨 turn 单调递增，DB max 初始化、内存分配全覆盖）；</li>
  *   <li><b>连接层</b>：{@link ConnectionHandle}（一个会话对应一组连接，多订阅者 fan-out，
  *       领域事件经 {@link #connection()} 推送、协议转换在基础设施；默认
  *       {@link NoOpConnectionHandle}）；</li>
- *   <li><b>状态层</b>：{@link SessionState}（纯内存状态机，一轮执行的流转与结束原因唯一出口守卫，
- *       与会话级持久化 {@code AgentSessionStatus} 正交）。</li>
+ *   <li><b>状态层</b>：双列状态机由 DB 承载——对外 {@code status} 四态
+ *       （idle / running / rescheduling / terminated）与内部 {@code turn_phase} 四态
+ *       （idle / running / awaiting_confirmation / cancelling，经 {@code active()} 判定「存在活跃执行」，
+ *       相位 MUST NOT 出现在任何响应或状态事件中），本聚合不保留
+ *       内存状态机副本——HITL 挂起为 durable 事实（事件账本批次明细 + 会话状态），
+ *       轮内守卫经 {@link TurnRunState#confirmationPending()} 判定，进程内
+ *       无跨轮驻留现场。</li>
  * </ul>
- * <p>对同一会话的并发访问由应用服务经数据库状态机 CAS 串行化（同一会话同时只有一个执行），
- * 进程内在跑句柄仅为双保险。</p>
+ * <p>对同一会话的并发访问由应用服务经数据库状态机 CAS 串行化（跨进程 / 跨实例互斥权威在 DB），
+ * 进程内 {@link TurnControl} 仅承载阻塞与中断传递、不做执行拒止（对「清槽前」毫秒竞态窗口采 fail-open
+ * 显式取舍）。轮次级瞬态状态机（SessionState / RoundStatus / HitlState）已随事件溯源重构移除。</p>
  */
 @Slf4j
 public final class AgentSessionContext {
@@ -34,13 +41,13 @@ public final class AgentSessionContext {
 
     // ==================== 执行层 Execution ====================
 
-    /** 执行运行时：单执行串行守卫 + 中断入口 */
-    private final AgentSessionExecution execution = new AgentSessionExecution();
+    /** 当前轮执行控制面（null=空闲；开跑事务成功后经 {@link #beginTurn} 置入，轮终局 finally 经 {@link #endTurn} 条件清除） */
+    private volatile TurnControl currentTurn;
 
-    /** 当前轮事件流累积态（每轮经 {@link #beginRound} 替换） */
-    private volatile AgentRunState runState;
+    /** 当前 turn 事件流累积态（每轮经 {@link #beginRound} 替换） */
+    private volatile TurnRunState runState;
 
-    /** 事件序号：跨轮次单调递增（DB max 初始化，内存分配全覆盖） */
+    /** 事件 seq：跨 turn 单调递增（DB max 初始化，内存分配全覆盖） */
     private final AtomicLong seqCounter = new AtomicLong(0);
 
     // ==================== 连接层 Connection ====================
@@ -48,14 +55,11 @@ public final class AgentSessionContext {
     /** 连接句柄：默认空操作，SSE 场景经 {@link #bindConnection} 绑定/替换 */
     private volatile ConnectionHandle connection;
 
-    // ==================== 状态层 State ====================
-
-    /** 会话执行状态机（内存态，默认 IDLE） */
-    private final AtomicReference<SessionState> state = new AtomicReference<>(SessionState.IDLE);
-
-    /** HITL 正交子态（内存态，默认 NONE，与会话执行状态机正交） */
-    private final AtomicReference<HitlState> hitlState = new AtomicReference<>(HitlState.NONE);
-
+    /**
+     * 以会话身份创建进程内运行时聚合：执行槽位为空闲、连接句柄初始为 {@link NoOpConnectionHandle}。
+     *
+     * @param session 会话身份（DB 为权威，不可为 null）
+     */
     public AgentSessionContext(AgentSession session) {
         this.session = session;
         this.connection = NoOpConnectionHandle.INSTANCE;
@@ -84,7 +88,7 @@ public final class AgentSessionContext {
     // ==================== 执行层 ====================
 
     /**
-     * 分配下一会话级事件序列号（跨轮次单调递增，DB 唯一索引兜底）。
+     * 分配下一会话级事件序列号（跨 turn 单调递增，DB 唯一索引兜底）。
      *
      * @return 下一事件序列号
      */
@@ -93,47 +97,109 @@ public final class AgentSessionContext {
     }
 
     /**
-     * 开启新一轮：将事件序号基准抬升至 DB 最大序号（取 {@code max} 不回退），
-     * 并替换当前轮事件流累积态。
+     * 当前已分配的事件序列号（不消耗 seq）：流式增量帧起始游标基准——
+     * 进行中流的 {@code baseSeq} 即「start 前最后一条已落库事件」的 seq。
      *
-     * @param dbMaxSequence 本会话 DB 中当前最大事件序列号（短事务内查询）
+     * @return 当前序列号（未分配任何事件时为 0）
+     */
+    public long currentSequence() {
+        return seqCounter.get();
+    }
+
+    /**
+     * 开启新一轮执行：将事件 seq 基准抬升至 DB 最大序号（取 {@code max} 不回退），
+     * 并替换当前 turn 事件流累积态。
+     *
+     * @param dbMaxSequence 本会话 DB 中当前最大事件 seq（短事务内查询）
      * @return 本轮事件流累积态（调用方持有并贯穿本轮编排）
      */
-    public AgentRunState beginRound(long dbMaxSequence) {
+    public TurnRunState beginRound(long dbMaxSequence) {
         seqCounter.accumulateAndGet(dbMaxSequence, Math::max);
-        AgentRunState next = new AgentRunState();
+        TurnRunState next = new TurnRunState();
         this.runState = next;
         return next;
     }
 
     /**
-     * 当前轮事件流累积态（仅访问；变更一律经 {@link #beginRound} 替换）。
+     * 当前 turn 事件流累积态（仅访问；变更一律经 {@link #beginRound} 替换）。
      *
-     * @return 当前轮累积态
+     * @return 当前累积态
      */
-    public AgentRunState runState() {
+    public TurnRunState runState() {
         return runState;
     }
 
     /**
-     * 会话执行运行时（单执行串行守卫 + 中断入口）。
+     * 开启本轮控制面：置入 {@code currentTurn}。
+     * <p>置位时发现槽位非空<b>不拒止</b>（跨进程互斥权威在 DB {@code BEGIN_TURN} CAS），仅记结构化
+     * ERROR 告警后照常执行——撞「上轮 finally 清槽前」毫秒窗双跑，由 Redis turn 租约 owner-scoped Lua、
+     * 事件 {@code (session_id, seq)} 全序与终态 CAS 共同保证账本不错乱、终态不双写。</p>
      *
-     * @return 执行运行时
+     * @param turn 本轮执行控制面（不可为 null）
      */
-    public AgentSessionExecution execution() {
-        return execution;
+    public void beginTurn(TurnControl turn) {
+        if (turn == null) {
+            throw new IllegalArgumentException("TurnControl 不能为空");
+        }
+        if (this.currentTurn != null) {
+            log.error("执行槽非空仍开轮（进程内视图 fail-open，互斥权威在 DB CAS）: sessionId={}", sessionId());
+        }
+        this.currentTurn = turn;
     }
 
     /**
-     * 取消当前活跃执行并标记中断状态（幂等）。
-     * <p>先触发已注册的中断句柄（{@code agent.interrupt()}）令事件流自然结束，
-     * 再尝试将状态机由 {@link SessionState#RUNNING} 迁移到 {@link SessionState#INTERRUPTED}
-     * （仅 RUNNING 态为合法转换；空闲 / 已终态时 {@code tryTransitionState} 静默忽略）。
-     * 断连回调与终止会话共用此入口，保证「中断」在状态层有显式落点。</p>
+     * 清除本轮控制面：仅当槽位仍指向本轮对象时置空，防毫秒窗内误清新一轮控制面
+     * （新轮已 {@link #beginTurn} 覆盖时旧轮 finally 不得摘除新轮）。
+     *
+     * @param turn 本轮执行控制面（开跑时同一对象）
+     */
+    public void endTurn(TurnControl turn) {
+        if (this.currentTurn == turn) {
+            this.currentTurn = null;
+        }
+    }
+
+    /**
+     * 当前轮执行控制面（只读访问；null=空闲）。变更一律经 {@link #beginTurn} / {@link #endTurn}。
+     *
+     * @return 当前控制面
+     */
+    public TurnControl currentTurn() {
+        return currentTurn;
+    }
+
+    /**
+     * 取消当前活跃轮（幂等）：触发本轮已登记的定向中断句柄（{@code agent.interrupt(userId, sessionId)}，
+     * 槽位键与执行下发运行时的会话身份同源）令事件流自然结束。断连回调、终止与 {@code user.interrupt}
+     * 共用此入口；会话级状态回 idle / terminated 由应用服务按 DB 状态机编排。
+     * <p>空闲（{@code currentTurn} 为 null）时为空操作。</p>
      */
     public void cancel() {
-        execution.cancel();
-        tryTransitionState(SessionState.INTERRUPTED);
+        TurnControl turn = currentTurn;
+        if (turn != null) {
+            turn.cancel();
+        }
+    }
+
+    /**
+     * 中断当前活跃轮：先标记当前 turn 为「显式中断」（终态路径据此收场为
+     * {@code stop_reason.type=interrupted} 并回 idle，而非 cancelled 终态），再触发本轮控制面 cancel。
+     * <p>{@code user.interrupt} 入口；与 {@link #cancel()} 的区别在于中断语义
+     * 会被事件流感知，并经终态收场事件集表达为
+     * {@code session.thread_status_idle} → {@code session.status_idle}（共享 {@code stop_reason}）；
+     * 已废止的 {@code session.interrupted} / {@code session.status_canceling} MUST NOT 产出。
+     * 两段语义（{@link TurnRunState#markInterrupted()} 终态表达 / {@link TurnControl#cancel()} 句柄触发）
+     * 刻意保持分离，不得合并。</p>
+     */
+    public void interruptCurrentRun() {
+        TurnRunState state = runState;
+        if (state != null) {
+            state.markInterrupted();
+        }
+        TurnControl turn = currentTurn;
+        if (turn != null) {
+            turn.cancel();
+        }
     }
 
     // ==================== 连接层 ====================
@@ -160,110 +226,6 @@ public final class AgentSessionContext {
         this.connection = handle;
         if (old != null && old != NoOpConnectionHandle.INSTANCE && old != handle) {
             old.close();
-        }
-    }
-
-    // ==================== 状态层 ====================
-
-    /**
-     * 当前会话执行状态。
-     *
-     * @return 状态机当前状态
-     */
-    public SessionState state() {
-        return state.get();
-    }
-
-    /**
-     * 状态迁移（CAS 重试 + 合法性校验），非法转换抛 {@link IllegalStateException}。
-     *
-     * @param target 目标状态
-     */
-    public void transitionState(SessionState target) {
-        while (true) {
-            SessionState current = state.get();
-            current.validateTransition(target);
-            if (state.compareAndSet(current, target)) {
-                return;
-            }
-        }
-    }
-
-    /**
-     * 尝试状态迁移（CAS 重试）；非法转换返回 {@code false} 而非抛异常。
-     *
-     * @param target 目标状态
-     * @return true=迁移成功；false=非法转换
-     */
-    public boolean tryTransitionState(SessionState target) {
-        while (true) {
-            SessionState current = state.get();
-            if (!current.canTransitionTo(target)) {
-                return false;
-            }
-            if (state.compareAndSet(current, target)) {
-                return true;
-            }
-        }
-    }
-
-    // ==================== HITL 正交子态 ====================
-
-    /**
-     * 当前 HITL 正交子态。
-     *
-     * @return 子态当前状态
-     */
-    public HitlState hitlState() {
-        return hitlState.get();
-    }
-
-    /**
-     * 是否处于等待人工确认态。
-     *
-     * @return true=等待确认
-     */
-    public boolean isWaitingConfirm() {
-        return hitlState.get() == HitlState.WAITING_CONFIRM;
-    }
-
-    /**
-     * 进入等待确认态（HITL 暂停）：{@code NONE → WAITING_CONFIRM}，
-     * 非 {@code NONE} 时视为非法转换抛 {@link IllegalStateException}。
-     */
-    public void enterWaitingConfirm() {
-        transitionHitlState(HitlState.WAITING_CONFIRM);
-    }
-
-    /**
-     * 离开等待确认态（HITL 恢复 / 拒绝共用）：{@code WAITING_CONFIRM → NONE}，
-     * 已处于 {@code NONE} 时幂等返回（对已结束等待的越界确认指令不产生副作用）。
-     */
-    public void leaveWaitingConfirm() {
-        while (true) {
-            HitlState current = hitlState.get();
-            if (current == HitlState.NONE) {
-                return;
-            }
-            current.validateTransition(HitlState.NONE);
-            if (hitlState.compareAndSet(current, HitlState.NONE)) {
-                return;
-            }
-        }
-    }
-
-    /**
-     * HITL 子态迁移（CAS 重试 + 合法性校验），非法转换抛 {@link IllegalStateException}。
-     *
-     * @param target 目标子态
-     */
-    private void transitionHitlState(HitlState target) {
-        while (true) {
-            HitlState current = hitlState.get();
-            current.validateTransition(target);
-            if (hitlState.compareAndSet(current, target)) {
-                return;
-            }
         }
     }
 }

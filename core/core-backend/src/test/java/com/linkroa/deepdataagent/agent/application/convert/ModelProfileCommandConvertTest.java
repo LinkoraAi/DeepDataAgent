@@ -20,7 +20,7 @@ class ModelProfileCommandConvertTest {
     void should_parseEnumsAndKeepFields_when_toCreateCommand_given_fullRequest() {
         // given
         CreateModelProfileRequest request = new CreateModelProfileRequest(
-                "通义千问", "qwen 系列", "OPENAI", "https://api.example.com/v1", "gpt-4", "sk-1", null,
+                "通义千问", "qwen 系列", "OPENAI", "https://api.example.com/v1", "gpt-4", "sk-1",
                 "qwen", 8192, 4096, 5, 1, 1536);
 
         // when
@@ -40,7 +40,7 @@ class ModelProfileCommandConvertTest {
     void should_useMaximumToolCallRounds_when_toCreateCommand_given_nullToolCallRounds() {
         // given
         CreateModelProfileRequest request = new CreateModelProfileRequest(
-                "通义千问", null, "OPENAI", "https://api.example.com/v1", "gpt-4", null, null,
+                "通义千问", null, "OPENAI", "https://api.example.com/v1", "gpt-4", null,
                 null, null, null, null, 1, null);
 
         // when
@@ -54,7 +54,7 @@ class ModelProfileCommandConvertTest {
     void should_keepNullApiFormat_when_toCreateCommand_given_blankApiFormat() {
         // given
         CreateModelProfileRequest request = new CreateModelProfileRequest(
-                "通义千问", null, "  ", "https://api.example.com/v1", "gpt-4", null, null,
+                "通义千问", null, "  ", "https://api.example.com/v1", "gpt-4", null,
                 null, null, null, null, null, null);
 
         // when
@@ -69,7 +69,7 @@ class ModelProfileCommandConvertTest {
     void should_parseEmbeddingType_when_toUpdateCommand_given_typeCodeAndProfileId() {
         // given
         UpdateModelProfileRequest request = new UpdateModelProfileRequest(
-                "嵌入模型", null, "AGENTSCOPE", "https://api.example.com/v1", "text-embedding", "", null,
+                "嵌入模型", null, "AGENTSCOPE", "https://api.example.com/v1", "text-embedding", "",
                 null, null, null, null, 2, 256);
 
         // when

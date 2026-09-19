@@ -12,7 +12,6 @@ import com.linkroa.deepdataagent.agent.domain.model.enums.ModelType;
  * @param apiEndpointUrl       API端点URL
  * @param modelName            模型名称
  * @param credential           凭证明文（可选，空串/空值表示无鉴权）
- * @param secretId             凭证引用的密钥 ID（引用模式，与 credential 互斥）
  * @param modelSeries          模型系列
  * @param contextWindowInput   输入上下文窗口大小
  * @param contextWindowOutput  输出上下文窗口大小
@@ -27,7 +26,6 @@ public record CreateModelProfileCommand(
         String apiEndpointUrl,
         String modelName,
         String credential,
-        String secretId,
         String modelSeries,
         Integer contextWindowInput,
         Integer contextWindowOutput,

@@ -1,10 +1,17 @@
 # ===========================================================
 # DeepDataAgent - 基础建设汇总编排
-# 仅启动基础组件：postgresql / redis / opensandbox
+# 默认仅启动基础组件：postgresql / redis
 # 后端与前端可基于此编排分别独立启动。
 #
 # 用法（在项目根目录执行）：
 #   docker compose -f docker/docker-compose.infra.yaml up --build
+#
+# 可选：本地联调 S3 兼容对象存储（MinIO，默认不启动，按需显式开启 profile）
+#   docker compose -f docker/docker-compose.infra.yaml --profile minio up --build
+#   随后后端配置 APP_STORAGE_TYPE=minio
+#     APP_STORAGE_ENDPOINT=http://host.docker.internal:9000
+#     APP_STORAGE_ACCESS_KEY=minioadmin / APP_STORAGE_SECRET_KEY=minioadmin
+#     APP_STORAGE_PATH_STYLE=true，桶由后端首启自动创建
 # ===========================================================
 
 name: deepdataagent-infra
@@ -33,10 +40,13 @@ services:
       - "5432:5432"
     restart: unless-stopped
 
-  # Redis 8：Schema 缓存、限流与分布式锁
+  # Redis 8：Schema 缓存、限流与协调租约（move-coordination-leases-to-redis D4 部署红线）
+  #   appendonly yes + appendfsync everysec：租约持久化，进程重启不丢在跑锁；
+  #   maxmemory-policy noeviction：租约 key 只由 TTL 过期，禁止内存压力淘汰（否则随机 fail-closed）
   redis:
     image: redis:8.10.0-alpine
-    command: [ "redis-server", "--requirepass", "${REDIS_PASSWORD:-redis}", "--appendonly", "yes" ]
+    command: [ "redis-server", "--requirepass", "${REDIS_PASSWORD:-redis}", "--appendonly", "yes",
+      "--appendfsync", "everysec", "--maxmemory-policy", "noeviction" ]
     healthcheck:
       test: [ "CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:-redis} ping | grep -q PONG" ]
       interval: 10s
@@ -48,34 +58,27 @@ services:
       - "6379:6379"
     restart: unless-stopped
 
-  # OpenSandbox：代码解释器沙箱
-  opensandbox:
-    build:
-      context: ..
-      dockerfile: docker/opensandbox/Dockerfile
+  # ---------- MinIO（S3 兼容对象存储，可选 profile=minio，默认不启动） ----------
+  # 本地联调 S3 后端用；生产请使用受管的 RustFS / MinIO / OSS。
+  # 9000=S3 API（后端经 host.docker.internal:9000 访问），9001=管理控制台
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    profiles: ["minio"]
+    command: server /data --console-address ":9001"
     environment:
-      DOCKER_HOST: unix:///var/run/docker.sock
-    # 端口发布到宿主机，供后端经 host.docker.internal:8090 访问
-    ports:
-      - "8090:8080"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    healthcheck:
-      test: [ "CMD", "curl", "-fsS", "http://localhost:8080/health" ]
-      interval: 20s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
+      MINIO_ROOT_USER: ${APP_STORAGE_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${APP_STORAGE_SECRET_KEY:-minioadmin}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ../deploy/opensandbox/opensandbox.toml:/app/opensandbox.toml:ro
-      # 持久化 OpenSandbox 服务端元数据（~/.opensandbox/opensandbox.db）
-      - opensandboxdata:/root/.opensandbox
+      - miniodata:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    restart: unless-stopped
 
 volumes:
   pgdata:
     name: deepdataagent_pgdata
   redisdata:
     name: deepdataagent_redisdata
-  opensandboxdata:
-    name: deepdataagent_opensandboxdata
+  miniodata:
+    name: deepdataagent_miniodata

@@ -1,7 +1,9 @@
 package com.linkroa.deepdataagent.agent.domain.repository;
 
 import com.linkroa.deepdataagent.agent.domain.model.AgentDefinition;
+import com.linkroa.deepdataagent.agent.domain.model.AgentListFilter;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -31,24 +33,15 @@ public interface AgentDefinitionRepository {
     Optional<AgentDefinition> findByAgentIdForUpdate(String agentId);
 
     /**
-     * 按名称查询（唯一）
+     * 游标分页查询（创建时间降序 + 业务 ID 次键 keyset，按 owner 隔离；
+     * {@code limit} 由调用方完成 +1 探针放大，{@code reverse} 方向升序读取后由应用层翻转）。
      */
-    Optional<AgentDefinition> findByName(String name);
+    List<AgentDefinition> findByCursor(Long ownerId, AgentListFilter filter, int limit);
 
     /**
-     * 分页查询（默认不含已归档）
+     * 设置归档时间（{@code null} = 取消归档；归档仅以时间戳表达）
      */
-    List<AgentDefinition> findByCondition(String keyword, boolean includeArchived, int page, int size);
-
-    /**
-     * 分页统计
-     */
-    long countByCondition(String keyword, boolean includeArchived);
-
-    /**
-     * 归档 / 取消归档
-     */
-    void updateArchived(String agentId, boolean archived);
+    void updateArchivedAt(String agentId, OffsetDateTime archivedAt);
 
     /**
      * 更新激活版本号（部署激活 / 回滚，latest_version 不变）

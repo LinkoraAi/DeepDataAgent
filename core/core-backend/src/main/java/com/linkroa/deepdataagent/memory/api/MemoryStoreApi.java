@@ -1,6 +1,6 @@
 package com.linkroa.deepdataagent.memory.api;
 
-import com.linkroa.deepdataagent.memory.application.contract.MemoryStoreReferenceDTO;
+import com.linkroa.deepdataagent.memory.api.dto.MemoryStoreReferenceDTO;
 
 import java.util.List;
 
@@ -14,10 +14,12 @@ import java.util.List;
 public interface MemoryStoreApi {
 
     /**
-     * 批量按业务 ID 解析记忆库引用（只返回存在的记忆库，缺失的 id 不出现在结果中）。
+     * 批量按业务 ID 解析记忆库引用（只返回存在且归属该 owner 的记忆库，缺失 / 越权的 id
+     * 不出现在结果中；owner 不匹配按不存在处理，不泄露存在性）。
      *
+     * @param ownerId        所属用户 ID（调用方显式传入，跨 BC / 异步链路不得回退线程上下文）
      * @param memoryStoreIds 记忆库业务 ID 列表（可空 / 空）
      * @return 记忆库引用契约列表（输入为空时返回空列表）
      */
-    List<MemoryStoreReferenceDTO> resolveByIds(List<String> memoryStoreIds);
+    List<MemoryStoreReferenceDTO> resolveByIds(Long ownerId, List<String> memoryStoreIds);
 }

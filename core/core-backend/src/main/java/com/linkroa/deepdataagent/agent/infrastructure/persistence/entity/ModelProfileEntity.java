@@ -25,10 +25,8 @@ public class ModelProfileEntity extends BaseEntity {
     private String apiEndpointUrl;
     /** 模型名称 */
     private String modelName;
-    /** 加密后的凭证 */
+    /** 加密后的凭证（内嵌加密单一模式，明文不落库） */
     private String encryptedCredential;
-    /** 凭证引用的密钥ID（引用模式，明文不落库） */
-    private String secretId;
     /** 模型系列 */
     private String modelSeries;
     /** 输入上下文窗口大小 */
@@ -43,4 +41,6 @@ public class ModelProfileEntity extends BaseEntity {
     private Integer vectorDimension;
     /** 状态（ENABLED / DISABLED） */
     private String status;
+    /** 归属用户 ID */
+    private Long ownerId;
 }

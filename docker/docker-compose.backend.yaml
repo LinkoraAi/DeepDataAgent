@@ -1,10 +1,9 @@
 # ===========================================================
 # DeepDataAgent - 后端纯服务编排
-# 仅启动 Spring Boot 后端。PostgreSQL/Redis/OpenSandbox 通过
+# 仅启动 Spring Boot 后端。PostgreSQL/Redis 通过
 # 宿主机网关（默认 host.docker.internal）访问，不依赖任何共享 Docker 网络：
 #   - postgresql   已发布端口 5432
 #   - redis        已发布端口 6379
-#   - opensandbox  已发布端口 8090
 #
 # 用法（在项目根目录执行）：
 #   docker compose -f docker/docker-compose.backend.yaml up --build
@@ -12,8 +11,8 @@
 #
 # 说明：
 #   - 跨编排无法使用 depends_on，后端启动后若基础建设健康即可正常注册
-#   - 连接地址与 OpenSandbox 参数已下沉至后端 application.yaml；
-#     如需覆盖，启动前设置 SPRING_DATASOURCE_URL / REDIS_HOST / APP_OPENSANDBOX_* 等环境变量即可
+#   - 连接地址已下沉至后端 application.yaml；
+#     如需覆盖，启动前设置 SPRING_DATASOURCE_URL / REDIS_HOST 等环境变量即可
 # ===========================================================
 
 name: deepdataagent-backend
@@ -24,11 +23,27 @@ services:
       context: ..
       dockerfile: docker/backend/Dockerfile
     environment:
-      # 仅保留运行态开关；连接地址与 OpenSandbox 参数已下沉至后端 application.yaml，
-      # 如需覆盖可在启动前设置 SPRING_DATASOURCE_URL / REDIS_HOST / APP_OPENSANDBOX_* 等环境变量
+      # 仅保留运行态开关；连接地址已下沉至后端 application.yaml，
+      # 如需覆盖可在启动前设置 SPRING_DATASOURCE_URL / REDIS_HOST 等环境变量
       SPRING_PROFILES_ACTIVE: standalone
-      # 模型凭证加密密钥（yaml 层无默认值：缺省使用开发默认值，生产务必经宿主环境变量覆盖）
-      APP_MODEL_ENCRYPTION_KEY: ${APP_MODEL_ENCRYPTION_KEY:-deepdataagent-model-secret}
+      # 模型/凭证库/jwt 密钥：不提供内置默认值，必须由宿主环境变量显式给出（fail-fast），
+      # 启动前复制 docker/.env.example 为 docker/.env 并填入随机高熵密钥（≥32 字节）
+      APP_MODEL_ENCRYPTION_KEY: ${APP_MODEL_ENCRYPTION_KEY:?APP_MODEL_ENCRYPTION_KEY 未设置：请复制 docker/.env.example 为 docker/.env 并提供随机 32 字节以上密钥}
+      APP_VAULT_ENCRYPTION_KEY: ${APP_VAULT_ENCRYPTION_KEY:?APP_VAULT_ENCRYPTION_KEY 未设置：请复制 docker/.env.example 为 docker/.env 并提供随机 32 字节以上密钥}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET 未设置：请复制 docker/.env.example 为 docker/.env 并提供随机 32 字节以上密钥}
+      # turn 租约续约承载形态（D5③ 容量预案）：scheduler（默认平台池）/ virtual-thread（每轮虚拟线程）
+      # 协调租约唯一存储为 Redis（PR-C4 起原 db / redis 二选一开关随 PG 实现一并下线，回滚只能整版本回退）
+      APP_COORDINATION_LEASE_RENEWAL: ${APP_COORDINATION_LEASE_RENEWAL:-scheduler}
+      # 对象存储（file 内容 + skill 资产统一承载）：默认 local（单机 / 开发）；
+      # 多实例 / 生产设 APP_STORAGE_TYPE=rustfs|minio|oss 并补全下列 S3 连接参数
+      APP_STORAGE_TYPE: ${APP_STORAGE_TYPE:-local}
+      APP_STORAGE_BUCKET: ${APP_STORAGE_BUCKET:-deepdataagent}
+      APP_STORAGE_LOCAL_ROOT: ${APP_STORAGE_LOCAL_ROOT:-./data/objects}
+      APP_STORAGE_ENDPOINT: ${APP_STORAGE_ENDPOINT:-}
+      APP_STORAGE_ACCESS_KEY: ${APP_STORAGE_ACCESS_KEY:-}
+      APP_STORAGE_SECRET_KEY: ${APP_STORAGE_SECRET_KEY:-}
+      APP_STORAGE_REGION: ${APP_STORAGE_REGION:-us-east-1}
+      APP_STORAGE_PATH_STYLE: ${APP_STORAGE_PATH_STYLE:-true}
     extra_hosts:
       # Linux 下将 host.docker.internal 解析到宿主机网关；Docker Desktop 自带映射，冗余添加无副作用
       - "host.docker.internal:host-gateway"

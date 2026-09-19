@@ -25,24 +25,26 @@ public class AgentVersionEntity extends BaseEntity {
     private String name;
     /** 版本描述 */
     private String description;
-    /** 系统提示词 */
-    private String system;
+    /** 系统提示词（对外字段名 system；版本快照唯一指令载体） */
+    private String systemPrompt;
     /** 模型配置引用 */
     private String modelProfileId;
-    /** 挂载技能（JSONB） */
+    /** 模型引用（JSONB：目录模型 id 字符串简写或 {id, effort?, context_window?} 对象，可空） */
     @TableField(typeHandler = PostgresJsonbTypeHandler.class)
-    private String skillIds;
-    /** 预留知识库引用（JSONB） */
+    private String modelJson;
+    /** 内联工具配方（JSONB） */
     @TableField(typeHandler = PostgresJsonbTypeHandler.class)
-    private String knowledgeBaseIds;
-    /** 数据源引用（JSONB） */
+    private String toolsJson;
+    /** 内联外部 MCP 工具源配方（JSONB） */
     @TableField(typeHandler = PostgresJsonbTypeHandler.class)
-    private String dataSourceIds;
-    /** 运行环境引用环境ID（可空） */
-    private String environmentId;
-    /** 记忆库引用（JSONB） */
+    private String mcpServersJson;
+    /** 技能引用配方（JSONB） */
     @TableField(typeHandler = PostgresJsonbTypeHandler.class)
-    private String memoryStoreIds;
-    /** 工作空间ID（占位） */
-    private String workspaceId;
+    private String skillsJson;
+    /** 多智能体编排配置（JSONB） */
+    @TableField(typeHandler = PostgresJsonbTypeHandler.class)
+    private String multiagent;
+    /** 业务自定义元数据（JSONB 键值对象，可空） */
+    @TableField(typeHandler = PostgresJsonbTypeHandler.class)
+    private String metadataJson;
 }

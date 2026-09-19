@@ -32,7 +32,6 @@ public interface ModelProfilePersistenceConvert {
                 entity.getApiEndpointUrl(),
                 entity.getModelName(),
                 entity.getEncryptedCredential(),
-                entity.getSecretId(),
                 entity.getModelSeries(),
                 entity.getContextWindowInput(),
                 entity.getContextWindowOutput(),
@@ -41,6 +40,7 @@ public interface ModelProfilePersistenceConvert {
                 entity.getVectorDimension(),
                 entity.getStatus() != null && !entity.getStatus().isBlank()
                         ? ModelProfileStatus.valueOf(entity.getStatus()) : ModelProfileStatus.ENABLED,
+                entity.getOwnerId(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt(),
                 entity.getCreatedBy(),
@@ -60,7 +60,6 @@ public interface ModelProfilePersistenceConvert {
         entity.setApiEndpointUrl(profile.apiEndpointUrl());
         entity.setModelName(profile.modelName());
         entity.setEncryptedCredential(profile.encryptedCredential());
-        entity.setSecretId(profile.secretId());
         entity.setModelSeries(profile.modelSeries());
         entity.setContextWindowInput(profile.contextWindowInput());
         entity.setContextWindowOutput(profile.contextWindowOutput());
@@ -68,6 +67,7 @@ public interface ModelProfilePersistenceConvert {
         entity.setModelType(profile.modelType() != null ? profile.modelType().getCode() : null);
         entity.setVectorDimension(profile.vectorDimension());
         entity.setStatus(profile.status() != null ? profile.status().name() : null);
+        entity.setOwnerId(profile.ownerId());
         return entity;
     }
 }

@@ -5,9 +5,11 @@ import com.linkroa.deepdataagent.agent.domain.model.enums.ModelType;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+/**
+ * {@link ModelProfile} 凭证收敛后（内嵌加密单一模式，无 secret_id 引用链）的不变量单测。
+ */
 class ModelProfileTest {
 
     @Test
@@ -20,7 +22,7 @@ class ModelProfileTest {
                 () -> ModelProfile.create(
                         "p1", "embedding-profile", null, ApiFormat.OPENAI,
                         "https://example.com/v1", "text-embedding-3", null,
-                        null, null, null, null, 10, ModelType.EMBEDDING, null));
+                        null, null, null, 10, ModelType.EMBEDDING, null, 1L));
 
         assertEquals("向量嵌入模型必须配置向量维度(vectorDimension)", ex.getMessage());
     }
@@ -34,7 +36,7 @@ class ModelProfileTest {
         ModelProfile profile = ModelProfile.create(
                 "p1", "embedding-profile", null, ApiFormat.OPENAI,
                 "https://example.com/v1", "text-embedding-3", null,
-                null, null, null, null, 10, ModelType.EMBEDDING, 1536);
+                null, null, null, 10, ModelType.EMBEDDING, 1536, 1L);
 
         // then
         assertEquals("p1", profile.profileId());
@@ -51,7 +53,7 @@ class ModelProfileTest {
                 () -> ModelProfile.create(
                         "p1", "", null, ApiFormat.OPENAI,
                         "https://example.com/v1", "gpt-4", null,
-                        null, null, null, null, 10, ModelType.CHAT, null));
+                        null, null, null, 10, ModelType.CHAT, null, 1L));
     }
 
     @Test
@@ -64,7 +66,7 @@ class ModelProfileTest {
                 () -> ModelProfile.create(
                         "p1", longName, null, ApiFormat.OPENAI,
                         "https://example.com/v1", "gpt-4", null,
-                        null, null, null, null, 10, ModelType.CHAT, null));
+                        null, null, null, 10, ModelType.CHAT, null, 1L));
     }
 
     @Test
@@ -77,7 +79,7 @@ class ModelProfileTest {
                 () -> ModelProfile.create(
                         "p1", "chat-profile", null, null,
                         "https://example.com/v1", "gpt-4", null,
-                        null, null, null, null, 10, ModelType.CHAT, null));
+                        null, null, null, 10, ModelType.CHAT, null, 1L));
     }
 
     @Test
@@ -90,7 +92,7 @@ class ModelProfileTest {
                 () -> ModelProfile.create(
                         "p1", "chat-profile", null, ApiFormat.OPENAI,
                         "", "gpt-4", null,
-                        null, null, null, null, 10, ModelType.CHAT, null));
+                        null, null, null, 10, ModelType.CHAT, null, 1L));
     }
 
     @Test
@@ -103,7 +105,7 @@ class ModelProfileTest {
                 () -> ModelProfile.create(
                         "p1", "chat-profile", null, ApiFormat.OPENAI,
                         "https://example.com/v1", "", null,
-                        null, null, null, null, 10, ModelType.CHAT, null));
+                        null, null, null, 10, ModelType.CHAT, null, 1L));
     }
 
     @Test
@@ -115,41 +117,10 @@ class ModelProfileTest {
         ModelProfile profile = ModelProfile.create(
                 "p1", "chat-profile", "desc", ApiFormat.OPENAI,
                 "https://example.com/v1", "gpt-4", null,
-                null, "gpt", 8192, 2048, 10, ModelType.CHAT, null);
+                "gpt", 8192, 2048, 10, ModelType.CHAT, null, 1L);
 
         // then
         assertEquals("chat-profile", profile.displayName());
         assertEquals(ModelType.CHAT, profile.modelType());
-    }
-
-    @Test
-    void should_createProfileWithSecretReference_when_create_given_secretId() {
-        // given
-        // 引用密钥模式：secretId 非空、内嵌凭证为空
-
-        // when
-        ModelProfile profile = ModelProfile.create(
-                "p1", "chat-profile", null, ApiFormat.OPENAI,
-                "https://example.com/v1", "gpt-4", null,
-                "secret-1", "gpt", 8192, 2048, 10, ModelType.CHAT, null);
-
-        // then
-        assertEquals("secret-1", profile.secretId());
-        assertNull(profile.encryptedCredential());
-    }
-
-    @Test
-    void should_throwException_when_createProfile_given_bothCredentialAndSecretId() {
-        // given
-        // 内嵌密文与密钥引用同时提供
-
-        // when / then
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> ModelProfile.create(
-                        "p1", "chat-profile", null, ApiFormat.OPENAI,
-                        "https://example.com/v1", "gpt-4", "enc-cred",
-                        "secret-1", "gpt", 8192, 2048, 10, ModelType.CHAT, null));
-
-        assertEquals("凭证仅能内嵌或引用密钥其一，不可同时提供", ex.getMessage());
     }
 }

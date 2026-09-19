@@ -3,7 +3,9 @@ package com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.linkroa.deepdataagent.agent.domain.model.AgentListFilter;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.AgentDefinitionEntity;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.ibatis.annotations.Mapper;
 
 import java.time.OffsetDateTime;
@@ -12,19 +14,18 @@ import java.util.List;
 
 /**
  * Agent 定义 Mapper
+ *
+ * <p>约束：LambdaQueryWrapper / LambdaUpdateWrapper 的列引用一律使用方法引用
+ * （{@code AgentDefinitionEntity::getX}），不得写成 lambda 表达式（{@code e -> e.getX()}）——
+ * 后者编译为合成方法 {@code lambda$N}，MyBatis-Plus 的 PropertyNamer 无法解析属性名，
+ * 真实库运行期抛 ReflectionException。</p>
  */
 @Mapper
 public interface AgentDefinitionMapper extends BaseMapper<AgentDefinitionEntity> {
 
     default AgentDefinitionEntity selectByAgentId(String agentId) {
         return selectOne(Wrappers.<AgentDefinitionEntity>lambdaQuery()
-                .eq(e -> e.getAgentId(), agentId)
-                .last("LIMIT 1"));
-    }
-
-    default AgentDefinitionEntity selectByName(String name) {
-        return selectOne(Wrappers.<AgentDefinitionEntity>lambdaQuery()
-                .eq(e -> e.getName(), name)
+                .eq(AgentDefinitionEntity::getAgentId, agentId)
                 .last("LIMIT 1"));
     }
 
@@ -33,30 +34,59 @@ public interface AgentDefinitionMapper extends BaseMapper<AgentDefinitionEntity>
      */
     default AgentDefinitionEntity selectByAgentIdForUpdate(String agentId) {
         return selectOne(Wrappers.<AgentDefinitionEntity>lambdaQuery()
-                .eq(e -> e.getAgentId(), agentId)
+                .eq(AgentDefinitionEntity::getAgentId, agentId)
                 .last("FOR UPDATE"));
     }
 
-    default List<AgentDefinitionEntity> selectByCondition(String keyword, boolean includeArchived, long offset, int size) {
-        return selectList(buildCondition(keyword, includeArchived)
-                .orderByAsc(e -> e.getCreatedAt())
-                .last("LIMIT " + size + " OFFSET " + offset));
-    }
-
-    default long countByCondition(String keyword, boolean includeArchived) {
-        return selectCount(buildCondition(keyword, includeArchived));
+    /**
+     * 游标分页查询（keyset：行值比较 {@code (created_at, agent_id)} 定位游标；
+     * 正向降序取更旧页、before 方向升序取更新页后由应用层翻转）。
+     * <p>元数据过滤按激活版本快照的 {@code metadata_json} JSONB 包含匹配（EXISTS 子查询，
+     * 参数经 {@code {0}} 占位符绑定）。</p>
+     */
+    default List<AgentDefinitionEntity> selectByCursor(Long ownerId, AgentListFilter filter, int limit) {
+        LambdaQueryWrapper<AgentDefinitionEntity> query = Wrappers.<AgentDefinitionEntity>lambdaQuery()
+                .eq(AgentDefinitionEntity::getOwnerId, ownerId)
+                .like(StringUtils.isNotBlank(filter.keyword()), AgentDefinitionEntity::getName, filter.keyword())
+                // 归档过滤以 archived_at 时间戳表达（active=仅未归档 / archived=仅已归档）
+                .isNull(Boolean.FALSE.equals(filter.archived()), AgentDefinitionEntity::getArchivedAt)
+                .isNotNull(Boolean.TRUE.equals(filter.archived()), AgentDefinitionEntity::getArchivedAt)
+                .ge(filter.createdFrom() != null, AgentDefinitionEntity::getCreatedAt, filter.createdFrom())
+                .le(filter.createdTo() != null, AgentDefinitionEntity::getCreatedAt, filter.createdTo())
+                .apply(StringUtils.isNotBlank(filter.metadataJson()),
+                        "EXISTS (SELECT 1 FROM agent_version av WHERE av.agent_id = agent_definition.agent_id"
+                                + " AND av.version_number = agent_definition.active_version AND av.is_deleted = 0"
+                                + " AND av.metadata_json @> cast({0} as jsonb))",
+                        filter.metadataJson());
+        if (filter.cursorCreatedAt() != null) {
+            if (filter.reverse()) {
+                query.apply("(created_at, agent_id) > ({0}, {1})", filter.cursorCreatedAt(), filter.cursorAgentId());
+            } else {
+                query.apply("(created_at, agent_id) < ({0}, {1})", filter.cursorCreatedAt(), filter.cursorAgentId());
+            }
+        }
+        if (filter.reverse()) {
+            query.orderByAsc(AgentDefinitionEntity::getCreatedAt).orderByAsc(AgentDefinitionEntity::getAgentId);
+        } else {
+            query.orderByDesc(AgentDefinitionEntity::getCreatedAt).orderByDesc(AgentDefinitionEntity::getAgentId);
+        }
+        return selectList(query.last("LIMIT " + limit));
     }
 
     default int updateActiveVersion(String agentId, int versionNumber) {
         return update(null, Wrappers.<AgentDefinitionEntity>lambdaUpdate()
-                .set(e -> e.getActiveVersion(), versionNumber)
-                .set(e -> e.getUpdatedAt(), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")))
-                .eq(e -> e.getAgentId(), agentId));
+                .set(AgentDefinitionEntity::getActiveVersion, versionNumber)
+                .set(AgentDefinitionEntity::getUpdatedAt, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")))
+                .eq(AgentDefinitionEntity::getAgentId, agentId));
     }
 
-    private LambdaQueryWrapper<AgentDefinitionEntity> buildCondition(String keyword, boolean includeArchived) {
-        return Wrappers.<AgentDefinitionEntity>lambdaQuery()
-                .like(keyword != null && !keyword.isBlank(), e -> e.getName(), keyword)
-                .eq(!includeArchived, e -> e.getArchived(), false);
+    /**
+     * 设置归档时间（{@code null} = 取消归档，但公开契约不提供取消归档动作）。
+     */
+    default int updateArchivedAt(String agentId, OffsetDateTime archivedAt) {
+        return update(null, Wrappers.<AgentDefinitionEntity>lambdaUpdate()
+                .set(AgentDefinitionEntity::getArchivedAt, archivedAt)
+                .set(AgentDefinitionEntity::getUpdatedAt, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")))
+                .eq(AgentDefinitionEntity::getAgentId, agentId));
     }
 }

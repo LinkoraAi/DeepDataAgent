@@ -21,14 +21,12 @@ public class AgentDefinitionEntity extends BaseEntity {
     private String name;
     /** 描述 */
     private String description;
-    /** 是否归档 */
-    private Boolean archived;
-    /** 归档时间 */
+    /** 归档时间（NULL=未归档；归档仅以时间戳表达） */
     private OffsetDateTime archivedAt;
     /** 最新发布号 */
     private Integer latestVersion;
     /** 当前生效版本号（默认随发布同步，可回滚） */
     private Integer activeVersion;
-    /** 工作空间ID（占位） */
-    private String workspaceId;
+    /** 归属用户 ID */
+    private Long ownerId;
 }

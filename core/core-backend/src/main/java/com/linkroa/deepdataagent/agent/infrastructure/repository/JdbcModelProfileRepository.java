@@ -20,6 +20,11 @@ public class JdbcModelProfileRepository implements ModelProfileRepository {
 
     private final ModelProfileMapper mapper;
 
+    /**
+     * 构造器装配唯一的表访问器依赖。
+     *
+     * @param mapper 模型配置表 Mapper
+     */
     public JdbcModelProfileRepository(ModelProfileMapper mapper) {
         this.mapper = mapper;
     }
@@ -37,7 +42,7 @@ public class JdbcModelProfileRepository implements ModelProfileRepository {
     public ModelProfile update(ModelProfile profile) {
         ModelProfileEntity entity = ModelProfilePersistenceConvert.INSTANCE.toEntity(profile);
         mapper.update(entity, Wrappers.<ModelProfileEntity>lambdaUpdate()
-                .eq(e -> e.getProfileId(), profile.profileId()));
+                .eq(ModelProfileEntity::getProfileId, profile.profileId()));
         return findByProfileId(profile.profileId()).orElse(profile);
     }
 
@@ -57,8 +62,9 @@ public class JdbcModelProfileRepository implements ModelProfileRepository {
     }
 
     @Override
-    public List<ModelProfile> findByCondition(String keyword, ModelProfileStatus status, int page, int size) {
+    public List<ModelProfile> findByCondition(Long ownerId, String keyword, ModelProfileStatus status, int page, int size) {
         return mapper.selectByCondition(
+                        ownerId,
                         keyword,
                         status != null ? status.name() : null,
                         (long) Math.max(0, page - 1) * size,
@@ -69,14 +75,8 @@ public class JdbcModelProfileRepository implements ModelProfileRepository {
     }
 
     @Override
-    public long countByCondition(String keyword, ModelProfileStatus status) {
-        return mapper.countByCondition(keyword, status != null ? status.name() : null);
-    }
-
-    @Override
-    public long countBySecretId(String secretId) {
-        Long count = mapper.countBySecretId(secretId);
-        return count != null ? count : 0;
+    public long countByCondition(Long ownerId, String keyword, ModelProfileStatus status) {
+        return mapper.countByCondition(ownerId, keyword, status != null ? status.name() : null);
     }
 
     @Override
@@ -88,6 +88,6 @@ public class JdbcModelProfileRepository implements ModelProfileRepository {
     public void deleteByProfileId(String profileId) {
         // 逻辑删除（is_deleted 置 1）由 MyBatis-Plus @TableLogic 内建实现
         mapper.delete(Wrappers.<ModelProfileEntity>lambdaUpdate()
-                .eq(e -> e.getProfileId(), profileId));
+                .eq(ModelProfileEntity::getProfileId, profileId));
     }
 }

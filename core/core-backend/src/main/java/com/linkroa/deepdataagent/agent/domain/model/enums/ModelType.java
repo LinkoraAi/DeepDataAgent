@@ -16,6 +16,11 @@ public enum ModelType {
         this.code = code;
     }
 
+    /**
+     * 数据库存取用的整型码值。
+     *
+     * @return 码值（1=对话/生成，2=向量嵌入）
+     */
     public int getCode() {
         return code;
     }

@@ -6,6 +6,11 @@ package com.linkroa.deepdataagent.shared.exception;
  */
 public class ResourceNotFoundException extends RuntimeException {
 
+    /**
+     * 构造 404 语义异常，消息随错误信封下发。
+     *
+     * @param message 缺失说明（含资源标识）
+     */
     public ResourceNotFoundException(String message) {
         super(message);
     }

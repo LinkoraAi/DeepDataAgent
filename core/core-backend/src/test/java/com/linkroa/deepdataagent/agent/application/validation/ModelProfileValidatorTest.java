@@ -19,8 +19,8 @@ class ModelProfileValidatorTest {
     private ModelProfile buildProfile(ModelProfileStatus status) {
         return ModelProfile.restore(
                 "p1", "chat-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                "encrypted", null, "gpt", 8192, 2048, 10, ModelType.CHAT, null,
-                status, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
+                "encrypted", "gpt", 8192, 2048, 10, ModelType.CHAT, null,
+                status, 1L, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
     }
 

@@ -1,6 +1,7 @@
 package com.linkroa.deepdataagent.agent.domain.repository;
 
 import com.linkroa.deepdataagent.agent.domain.model.Environment;
+import com.linkroa.deepdataagent.agent.domain.model.EnvironmentListFilter;
 
 import java.util.List;
 import java.util.Optional;
@@ -26,9 +27,9 @@ public interface EnvironmentRepository {
     Optional<Environment> findByEnvironmentId(String environmentId);
 
     /**
-     * 按名称查询（名称唯一性校验用）
+     * 按名称查询（owner 隔离下名称唯一）
      */
-    Optional<Environment> findByName(String name);
+    Optional<Environment> findByNameAndOwnerId(String name, Long ownerId);
 
     /**
      * 按业务ID查询并锁定该行（FOR UPDATE），用于删除等 check-then-act 场景的事务内串行化
@@ -41,19 +42,9 @@ public interface EnvironmentRepository {
     List<Environment> findByIds(List<String> environmentIds);
 
     /**
-     * 查询全部运行环境（逻辑删除过滤由 MyBatis-Plus 内建）
+     * 游标分页查询（owner 隔离，创建时间降序 keyset，metadata 包含 / 创建时间区间过滤）
      */
-    List<Environment> findAll();
-
-    /**
-     * 分页查询
-     */
-    List<Environment> findByPage(int page, int size);
-
-    /**
-     * 分页统计
-     */
-    long countAll();
+    List<Environment> findByCursor(Long ownerId, EnvironmentListFilter filter, int limit);
 
     /**
      * 逻辑删除

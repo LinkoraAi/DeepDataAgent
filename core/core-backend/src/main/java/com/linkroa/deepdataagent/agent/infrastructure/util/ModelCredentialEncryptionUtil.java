@@ -27,6 +27,11 @@ public class ModelCredentialEncryptionUtil {
 
     private final ModelEncryptionProperties encryptionProperties;
 
+    /**
+     * 以模型加密配置构造工具（密钥独立于数据源 / Vault，缺失时调用点 fail-fast）。
+     *
+     * @param encryptionProperties 模型加密密钥配置（{@code APP_MODEL_ENCRYPTION_KEY}）
+     */
     public ModelCredentialEncryptionUtil(ModelEncryptionProperties encryptionProperties) {
         this.encryptionProperties = encryptionProperties;
     }

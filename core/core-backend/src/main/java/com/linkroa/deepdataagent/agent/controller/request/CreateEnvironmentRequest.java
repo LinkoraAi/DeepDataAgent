@@ -2,23 +2,25 @@ package com.linkroa.deepdataagent.agent.controller.request;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
+
+import java.util.Map;
 
 /**
- * 创建运行环境请求
+ * 创建运行环境请求（对外形状：name + description + config + metadata）。
+ * <p>{@code name} 仅做非空校验（公开契约不设长度上限）；{@code description} 可选，
+ * 缺省空串；{@code config} 可选，缺省 {@code {"type":"cloud"}}；{@code metadata} 为
+ * 可选 key/value 对象。</p>
  */
 public record CreateEnvironmentRequest(
 
         @NotBlank(message = "运行环境名称不能为空")
-        @Size(max = 64, message = "运行环境名称不能超过64个字符")
         String name,
 
-        @NotBlank(message = "环境类型不能为空")
-        String type,
+        String description,
 
-        @NotNull(message = "沙箱规格不能为空")
         @Valid
-        SandboxSpecRequest sandboxSpec
+        EnvironmentConfigRequest config,
+
+        Map<String, Object> metadata
 ) {
 }

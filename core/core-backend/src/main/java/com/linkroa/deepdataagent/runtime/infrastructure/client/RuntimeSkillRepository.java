@@ -21,6 +21,11 @@ public class RuntimeSkillRepository implements AgentSkillRepository {
 
     private final Map<String, AgentSkill> skills;
 
+    /**
+     * 以装配规格中已物化的技能清单构建只读内存仓储（技能名为键，与 SKILL.md frontmatter 的 name 对齐）。
+     *
+     * @param skills 已物化技能清单（可空 = 空仓储）
+     */
     public RuntimeSkillRepository(List<Skill> skills) {
         this.skills = new LinkedHashMap<>();
         if (skills != null) {

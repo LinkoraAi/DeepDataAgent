@@ -5,143 +5,173 @@ import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.ChatEventType;
 import org.junit.jupiter.api.Test;
 
+import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link SseEventEnvelopeConvert} 应用层信封转换单测：Message 信封结构 / role 派生 /
- * content 直取与 data 块包装 / session_status 归一化。
+ * {@link SseEventEnvelopeConvert} 扁平 Event 转换单测。
+ * <p>契约：领域 {@link ChatEvent} → 扁平 Event {@code {id, type, processed_at?, @JsonAnyGetter 类型自有字段}}。
+ * 固定字段仅取事件 ID（evt_）、事件类型与可空处理时间；payload 顶层字段原样透传——
+ * content 块数组直接成为顶层 {@code content}（不包装固定槽、不派生 role），未知字段亦原样透传；
+ * 领域内部字段（sessionId / seq / 审计 / DB 主键）一律不进入事件对象。</p>
  */
 class SseEventEnvelopeConvertTest {
 
     private final SseEventEnvelopeConvert converter = SseEventEnvelopeConvert.INSTANCE;
 
     @Test
-    void should_buildMessageEnvelope_when_toEnvelope_given_textBlockEvent() {
-        // given
-        ChatEvent event = ChatEvent.create("s-1", "r-1", ChatEventType.MESSAGE,
-                "{\"content\":[{\"type\":\"text\",\"text\":\"你好\",\"block_id\":\"blk-1\"}],\"is_last\":false}", 3L);
+    void should_promoteContentBlocksToTopLevel_when_toEnvelope_given_agentMessageEvent() {
+        // given（消息类事件 payload.content 为 content block 数组）
+        ChatEvent event = ChatEvent.create("s-1", ChatEventType.AGENT_MESSAGE,
+                "{\"content\":[{\"type\":\"text\",\"text\":\"你好\"}]}", 3L);
 
         // when
         SseEventEnvelope envelope = converter.toEnvelope(event);
 
-        // then（信封固定字段 + content 直取 + metadata 承载 session_id/round_id/is_last）
-        assertEquals("message", envelope.object());
+        // then（固定字段 + content 顶层透传，不二次包装、不派生 role）
         assertEquals(event.eventId(), envelope.id());
-        assertEquals("assistant", envelope.role());
-        assertEquals("message", envelope.type());
-        assertEquals("completed", envelope.status());
-        assertEquals(3L, envelope.sequence_number());
-        assertEquals("s-1", envelope.metadata().get("session_id"));
-        assertEquals("r-1", envelope.metadata().get("round_id"));
-        assertEquals(false, envelope.metadata().get("is_last"));
-        assertEquals(1, envelope.content().size());
-        assertEquals("text", envelope.content().get(0).get("type"));
-        assertEquals("你好", envelope.content().get(0).get("text"));
+        assertEquals("agent.message", envelope.type());
+        assertEquals(event.processedAt(), envelope.processedAt());
+        List<?> content = (List<?>) envelope.attributes().get("content");
+        assertEquals(1, content.size());
+        assertEquals(Map.of("type", "text", "text", "你好"), content.getFirst());
     }
 
     @Test
-    void should_deriveToolRole_when_toEnvelope_given_toolCallEvent() {
+    void should_expandTypedFields_when_toEnvelope_given_sessionStatusEvent() {
+        // given（状态事件无 content；类型自有字段直接位于顶层）
+        ChatEvent event = ChatEvent.create("s-1", ChatEventType.SESSION_STATUS_IDLE,
+                "{\"stop_reason\":{\"type\":\"end_turn\"}}", 5L);
+
+        // when
+        SseEventEnvelope envelope = converter.toEnvelope(event);
+
+        // then
+        assertEquals("session.status_idle", envelope.type());
+        assertFalse(envelope.attributes().containsKey("content"));
+        assertEquals(Map.of("type", "end_turn"), envelope.attributes().get("stop_reason"));
+    }
+
+    @Test
+    void should_passThroughUnknownFields_when_toEnvelope_given_payloadWithExtraKeys() {
+        // given（payload 含类型未声明的字段：原样透传，不做白名单裁剪）
+        ChatEvent event = ChatEvent.create("s-1", ChatEventType.AGENT_TOOL_USE,
+                "{\"tool_use_id\":\"tc-1\",\"future_field\":{\"nested\":true}}", 6L);
+
+        // when
+        SseEventEnvelope envelope = converter.toEnvelope(event);
+
+        // then
+        assertEquals("tc-1", envelope.attributes().get("tool_use_id"));
+        assertEquals(Map.of("nested", true), envelope.attributes().get("future_field"));
+    }
+
+    @Test
+    void should_keepNestedErrorShape_when_toEnvelope_given_sessionErrorEvent() {
+        // given（session.error 的 error 为嵌套对象）
+        ChatEvent event = ChatEvent.create("s-1", ChatEventType.SESSION_ERROR,
+                "{\"error\":{\"type\":\"run_error\",\"message\":\"执行超时\","
+                        + "\"retry_status\":{\"type\":\"terminal\"},\"error_code\":\"DEEP_AGENT_RUN_ERROR\"}}", 7L);
+
+        // when
+        SseEventEnvelope envelope = converter.toEnvelope(event);
+
+        // then
+        @SuppressWarnings("unchecked")
+        Map<String, Object> error = (Map<String, Object>) envelope.attributes().get("error");
+        assertEquals("run_error", error.get("type"));
+        assertEquals(Map.of("type", "terminal"), error.get("retry_status"));
+        assertEquals("DEEP_AGENT_RUN_ERROR", error.get("error_code"));
+    }
+
+    @Test
+    void should_convertNullProcessedAt_when_toEnvelope_given_unprocessedEvent() {
+        // given（未处理事件 processed_at 可空）
+        ChatEvent event = ChatEvent.restore(1L, "evt_abc", "s-1", 8L, ChatEventType.USER_MESSAGE,
+                "{\"content\":[]}", null, OffsetDateTime.now(), OffsetDateTime.now(), null, null, null);
+
+        // when
+        SseEventEnvelope envelope = converter.toEnvelope(event);
+
+        // then
+        assertNull(envelope.processedAt());
+        assertEquals("user.message", envelope.type());
+    }
+
+    @Test
+    void should_defaultAttributesToEmptyMap_when_toEnvelope_given_blankOrMalformedPayload() {
+        // given（空白 payload 与非法 JSON 均收敛为空对象，不阻断事件流）
+        ChatEvent blank = ChatEvent.create("s-1", ChatEventType.SESSION_DELETED, " ", 9L);
+        ChatEvent malformed = ChatEvent.create("s-1", ChatEventType.SESSION_ERROR, "{非法 json", 10L);
+
+        // when
+        SseEventEnvelope blankEnvelope = converter.toEnvelope(blank);
+        SseEventEnvelope malformedEnvelope = converter.toEnvelope(malformed);
+
+        // then
+        assertEquals(Map.of(), blankEnvelope.attributes());
+        assertEquals(Map.of(), malformedEnvelope.attributes());
+    }
+
+    @Test
+    void should_notExposeInternalFields_when_toEnvelope_given_persistedEvent() {
+        // given（持久化事件携带领域内部字段）
+        ChatEvent event = ChatEvent.create("s-1", ChatEventType.AGENT_MESSAGE,
+                "{\"content\":[{\"type\":\"text\",\"text\":\"你好\"}]}", 11L);
+
+        // when
+        SseEventEnvelope envelope = converter.toEnvelope(event);
+
+        // then（扁平 Event 仅 id/type/processed_at + 类型自有字段；无 object / role / created_at）
+        assertNotNull(envelope.id());
+        assertFalse(envelope.attributes().containsKey("object"));
+        assertFalse(envelope.attributes().containsKey("role"));
+        assertFalse(envelope.attributes().containsKey("created_at"));
+        assertFalse(envelope.attributes().containsKey("sessionId"));
+        assertFalse(envelope.attributes().containsKey("seq"));
+    }
+
+    @Test
+    void should_throw_when_toEnvelope_given_nullEvent() {
+        // when & then（null 事件直接抛参错，不产生空信封）
+        assertThrows(NullPointerException.class, () -> converter.toEnvelope(null));
+    }
+
+    @Test
+    void should_rejectInvalidEvent_when_constructEvent_given_nonPositiveSeq() {
+        // when & then（seq 必须为正：不满足不变量的领域事件构造期即拒绝）
+        assertThrows(IllegalArgumentException.class,
+                () -> ChatEvent.create("s-1", ChatEventType.AGENT_MESSAGE, "{}", 0L));
+    }
+
+    @Test
+    void should_rejectEnvelope_when_constructEnvelope_given_invalidIdOrBlankType() {
         // given
-        ChatEvent event = ChatEvent.create("s-1", "r-1", ChatEventType.TOOL_CALL,
-                "{\"content\":[{\"type\":\"tool_call\",\"tool_call_id\":\"tc-1\",\"name\":\"search\"}],\"is_last\":true}", 4L);
+        OffsetDateTime now = OffsetDateTime.now();
 
-        // when
-        SseEventEnvelope envelope = converter.toEnvelope(event);
-
-        // then（工具调用类事件 role=tool，type 小写）
-        assertEquals("tool", envelope.role());
-        assertEquals("tool_call", envelope.type());
+        // when & then（信封不变量：id 必须 evt_ 前缀、type 非空白）
+        assertThrows(IllegalArgumentException.class, () -> new SseEventEnvelope(
+                "abc_no_prefix", "agent.message", now, Map.of()));
+        assertThrows(IllegalArgumentException.class, () -> new SseEventEnvelope(
+                "evt_1", " ", now, Map.of()));
     }
 
     @Test
-    void should_deriveUserRole_when_toEnvelope_given_userMessageEvent() {
-        // given
-        ChatEvent event = ChatEvent.create("s-1", "r-1", ChatEventType.USER_MESSAGE,
-                "{\"content\":[{\"type\":\"text\",\"text\":\"你好\"}],\"is_last\":true}", 4L);
-
+    void should_defaultAttributesToEmptyMap_when_constructEnvelope_given_nullAttributes() {
+        // given（attributes 传 null：紧凑构造器归一为空 Map，树遍历免判空）
         // when
-        SseEventEnvelope envelope = converter.toEnvelope(event);
+        SseEventEnvelope envelope = new SseEventEnvelope("evt_1", "agent.thinking", null, null);
 
-        // then（用户消息回显 role=user，type 小写，content 直取文本块）
-        assertEquals("user", envelope.role());
-        assertEquals("user_message", envelope.type());
-        assertEquals("text", envelope.content().get(0).get("type"));
-        assertEquals("你好", envelope.content().get(0).get("text"));
-    }
-
-    @Test
-    void should_wrapFlatPayloadAsDataBlock_when_toEnvelope_given_runStartEvent() {
-        // given
-        ChatEvent event = ChatEvent.create("s-1", "r-1", ChatEventType.RUN_START,
-                "{\"round_id\":\"r-1\",\"run_id\":\"run-42\"}", 1L);
-
-        // when
-        SseEventEnvelope envelope = converter.toEnvelope(event);
-
-        // then（扁平合成事件包装为 data 块，run_id 保留在 content[0].data）
-        assertEquals("run_start", envelope.type());
-        assertEquals(1, envelope.content().size());
-        assertEquals("data", envelope.content().get(0).get("type"));
-        assertEquals("run-42", dataOf(envelope, 0).get("run_id"));
-    }
-
-    @Test
-    void should_normalizeSessionStatus_when_toEnvelope_given_sessionStatusEvent() {
-        // given
-        ChatEvent event = ChatEvent.create("s-1", "r-1", ChatEventType.SESSION_STATUS,
-                "{\"status\":\"IDLE\",\"stop_reason\":\"stop\"}", 5L);
-
-        // when
-        SseEventEnvelope envelope = converter.toEnvelope(event);
-
-        // then（status→session_status 更名、值保持枚举名，stop_reason 保留字符串）
-        assertEquals("session_status", envelope.type());
-        assertEquals(1, envelope.content().size());
-        Map<String, Object> data = dataOf(envelope, 0);
-        assertEquals("IDLE", data.get("session_status"));
-        assertEquals("stop", data.get("stop_reason"));
-    }
-
-    @Test
-    void should_useEmptyDataBlock_when_toEnvelope_given_malformedPayload() {
-        // given（非法 payload 收敛空对象，不阻断事件流）
-        ChatEvent event = ChatEvent.create("s-1", "r-1", ChatEventType.RUN_START, "{非法 json", 2L);
-
-        // when
-        SseEventEnvelope envelope = converter.toEnvelope(event);
-
-        // then（数据块仍产出，data 为空）
-        assertEquals("run_start", envelope.type());
-        assertEquals(1, envelope.content().size());
-        assertEquals("data", envelope.content().get(0).get("type"));
-    }
-
-    @Test
-    void should_mapHumanConfirmTypes_when_toEnvelope_given_hitlEvents() {
-        // given（HITL 事件为扁平载荷，携带 reply_id 关联待确认项 / 确认结果）
-        ChatEvent required = ChatEvent.create("s-1", "r-1", ChatEventType.HUMAN_CONFIRM_REQUIRED,
-                "{\"reply_id\":\"reply-1\"}", 6L);
-        ChatEvent result = ChatEvent.create("s-1", "r-1", ChatEventType.HUMAN_CONFIRM_RESULT,
-                "{\"reply_id\":\"reply-1\"}", 7L);
-
-        // when
-        SseEventEnvelope requiredEnv = converter.toEnvelope(required);
-        SseEventEnvelope resultEnv = converter.toEnvelope(result);
-
-        // then（type 小写 + role=assistant（非工具类）+ 扁平 payload 包装为 data 块）
-        assertEquals("human_confirm_required", requiredEnv.type());
-        assertEquals("assistant", requiredEnv.role());
-        assertEquals("data", requiredEnv.content().get(0).get("type"));
-        assertEquals("reply-1", dataOf(requiredEnv, 0).get("reply_id"));
-        assertEquals("human_confirm_result", resultEnv.type());
-        assertEquals("assistant", resultEnv.role());
-        assertEquals("reply-1", dataOf(resultEnv, 0).get("reply_id"));
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> dataOf(SseEventEnvelope envelope, int index) {
-        return (Map<String, Object>) envelope.content().get(index).get("data");
+        // then
+        assertTrue(envelope.attributes().isEmpty());
+        assertNull(envelope.processedAt());
     }
 }

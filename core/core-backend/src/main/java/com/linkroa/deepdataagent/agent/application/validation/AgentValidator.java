@@ -14,7 +14,7 @@ public class AgentValidator {
      * @param definition 目标 Agent
      */
     public static void validatePublishable(AgentDefinition definition) {
-        if (definition.archived()) {
+        if (definition.isArchived()) {
             throw new ResourceConflictException("Agent「" + definition.name() + "」已归档，无法发布新版本");
         }
     }

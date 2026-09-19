@@ -24,6 +24,12 @@ public record SendMessageCommand(
         }
     }
 
+    /**
+     * 便捷构造：{@code runId} 留空，由应用服务在开跑时分配。
+     *
+     * @param sessionId 会话 ID
+     * @param message   用户消息全文
+     */
     public SendMessageCommand(String sessionId, String message) {
         this(sessionId, message, null);
     }

@@ -8,8 +8,6 @@ package com.linkroa.deepdataagent.runtime.domain.event;
  */
 public enum AgentStreamSignalType {
 
-    /** SDK 执行开始（已由应用层 RUN_START 承接，无视即可，仅作状态可达性参考） */
-    START,
     /** 推理文本增量 */
     THINKING_DELTA,
     /** 推理块结束（空 delta + is_last 收尾标记） */

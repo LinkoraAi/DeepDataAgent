@@ -37,24 +37,19 @@ public interface ModelProfileRepository {
     Optional<ModelProfile> findByDisplayName(String displayName);
 
     /**
-     * 分页查询
+     * 分页查询（按 owner 隔离）
      */
-    List<ModelProfile> findByCondition(String keyword, ModelProfileStatus status, int page, int size);
+    List<ModelProfile> findByCondition(Long ownerId, String keyword, ModelProfileStatus status, int page, int size);
 
     /**
-     * 分页统计
+     * 分页统计（按 owner 隔离）
      */
-    long countByCondition(String keyword, ModelProfileStatus status);
+    long countByCondition(Long ownerId, String keyword, ModelProfileStatus status);
 
     /**
      * 更新状态（启用/禁用）
      */
     void updateStatus(String profileId, ModelProfileStatus status);
-
-    /**
-     * 统计仍引用指定密钥（secret_id）的未删除模型配置数（删除冲突校验）
-     */
-    long countBySecretId(String secretId);
 
     /**
      * 逻辑删除

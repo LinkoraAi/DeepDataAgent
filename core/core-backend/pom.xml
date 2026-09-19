@@ -14,6 +14,14 @@
     <name>DeepDataAgent Backend</name>
     <description>Spring Boot backend for DeepDataAgent.</description>
 
+    <properties>
+        <!-- surefire 排除组默认值（align-qoder-vault-credential-capabilities tasks 2.7 选项 a）：
+             默认 test 档排除 @Tag("integration") 用例（依赖真实 PostgreSQL / Redis / Docker）；
+             CI 集成任务以 -Dsurefire.excludedGroups= 置空放行该组，并须提供 TEST_PG_URL /
+             TEST_REDIS_URL（缺失即快速失败）。 -->
+        <surefire.excludedGroups>integration</surefire.excludedGroups>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -35,6 +43,14 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
+        <!-- Redisson 核心库（协调租约 Redis 存储，move-coordination-leases-to-redis D1）：
+             手动装配 RedissonClient + RScript EVALSHA 执行 owner-scoped Lua；
+             不引 spring-boot-starter（避免与 Boot 4 自动配置冲突）、不用 RLock（线程绑定与本系统跨线程续约/释放冲突）。 -->
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson</artifactId>
+            <version>${redisson.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-autoconfigure</artifactId>
@@ -43,11 +59,6 @@
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot4-starter</artifactId>
             <version>${mybatis-plus.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.alibaba.opensandbox</groupId>
-            <artifactId>sandbox</artifactId>
-            <version>${opensandbox.version}</version>
         </dependency>
         <dependency>
             <groupId>com.mysql</groupId>
@@ -99,6 +110,14 @@
             <version>${mockito.version}</version>
             <scope>test</scope>
         </dependency>
+        <!-- 架构门禁（R6 信息模式）：仅 test scope，不新增运行期依赖；
+             强制断言（违规 import = 0）待 straighten-event-factory-and-inbound 收尾时启用 -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>1.4.1</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>io.agentscope</groupId>
             <artifactId>agentscope-harness</artifactId>
@@ -137,6 +156,30 @@
             <artifactId>mapstruct</artifactId>
             <version>${mapstruct.version}</version>
         </dependency>
+        <!-- JWT（HS256）签发与校验，无状态认证 -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>${jjwt.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <!-- bcrypt 密码散列（独立库，避免引入完整 Spring Security） -->
+        <dependency>
+            <groupId>at.favre.lib</groupId>
+            <artifactId>bcrypt</artifactId>
+            <version>${bcrypt.version}</version>
+        </dependency>
 
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
@@ -156,7 +199,8 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <argLine>@{argLine} -javaagent:"${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar" -Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
-                    <excludedGroups>integration</excludedGroups>
+                    <!-- 默认排除集成组；CI 集成任务以 -Dsurefire.excludedGroups= 置空显式放行 -->
+                    <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>
             <plugin>

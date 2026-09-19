@@ -12,13 +12,18 @@ import java.util.List;
 
 /**
  * 模型配置 Mapper
+ *
+ * <p>约束：LambdaQueryWrapper / LambdaUpdateWrapper 的列引用一律使用方法引用
+ * （{@code ModelProfileEntity::getX}），不得写成 lambda 表达式（{@code e -> e.getX()}）——
+ * 后者编译为合成方法 {@code lambda$N}，MyBatis-Plus 的 PropertyNamer 无法解析属性名，
+ * 真实库运行期抛 ReflectionException。</p>
  */
 @Mapper
 public interface ModelProfileMapper extends BaseMapper<ModelProfileEntity> {
 
     default ModelProfileEntity selectByProfileId(String profileId) {
         return selectOne(Wrappers.<ModelProfileEntity>lambdaQuery()
-                .eq(e -> e.getProfileId(), profileId)
+                .eq(ModelProfileEntity::getProfileId, profileId)
                 .last("LIMIT 1"));
     }
 
@@ -28,41 +33,37 @@ public interface ModelProfileMapper extends BaseMapper<ModelProfileEntity> {
      */
     default ModelProfileEntity selectByProfileIdForUpdate(String profileId) {
         return selectOne(Wrappers.<ModelProfileEntity>lambdaQuery()
-                .eq(e -> e.getProfileId(), profileId)
+                .eq(ModelProfileEntity::getProfileId, profileId)
                 .last("FOR UPDATE"));
     }
 
     default ModelProfileEntity selectByDisplayName(String displayName) {
         return selectOne(Wrappers.<ModelProfileEntity>lambdaQuery()
-                .eq(e -> e.getDisplayName(), displayName)
+                .eq(ModelProfileEntity::getDisplayName, displayName)
                 .last("LIMIT 1"));
     }
 
-    default List<ModelProfileEntity> selectByCondition(String keyword, String status, long offset, int size) {
-        return selectList(buildCondition(keyword, status)
-                .orderByAsc(e -> e.getCreatedAt())
+    default List<ModelProfileEntity> selectByCondition(Long ownerId, String keyword, String status, long offset, int size) {
+        return selectList(buildCondition(ownerId, keyword, status)
+                .orderByAsc(ModelProfileEntity::getCreatedAt)
                 .last("LIMIT " + size + " OFFSET " + offset));
     }
 
-    default long countByCondition(String keyword, String status) {
-        return selectCount(buildCondition(keyword, status));
-    }
-
-    default Long countBySecretId(String secretId) {
-        return selectCount(Wrappers.<ModelProfileEntity>lambdaQuery()
-                .eq(e -> e.getSecretId(), secretId));
+    default long countByCondition(Long ownerId, String keyword, String status) {
+        return selectCount(buildCondition(ownerId, keyword, status));
     }
 
     default int updateStatus(String profileId, String status) {
         return update(null, Wrappers.<ModelProfileEntity>lambdaUpdate()
-                .set(e -> e.getStatus(), status)
-                .set(e -> e.getUpdatedAt(), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")))
-                .eq(e -> e.getProfileId(), profileId));
+                .set(ModelProfileEntity::getStatus, status)
+                .set(ModelProfileEntity::getUpdatedAt, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")))
+                .eq(ModelProfileEntity::getProfileId, profileId));
     }
 
-    private LambdaQueryWrapper<ModelProfileEntity> buildCondition(String keyword, String status) {
+    private LambdaQueryWrapper<ModelProfileEntity> buildCondition(Long ownerId, String keyword, String status) {
         return Wrappers.<ModelProfileEntity>lambdaQuery()
-                .like(keyword != null && !keyword.isBlank(), e -> e.getDisplayName(), keyword)
-                .eq(status != null && !status.isBlank(), e -> e.getStatus(), status);
+                .eq(ModelProfileEntity::getOwnerId, ownerId)
+                .like(keyword != null && !keyword.isBlank(), ModelProfileEntity::getDisplayName, keyword)
+                .eq(status != null && !status.isBlank(), ModelProfileEntity::getStatus, status);
     }
 }

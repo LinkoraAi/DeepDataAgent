@@ -2,6 +2,7 @@ package com.linkroa.deepdataagent.agent.infrastructure.repository;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.agent.domain.model.Environment;
+import com.linkroa.deepdataagent.agent.domain.model.EnvironmentListFilter;
 import com.linkroa.deepdataagent.agent.domain.repository.EnvironmentRepository;
 import com.linkroa.deepdataagent.agent.infrastructure.convert.EnvironmentPersistenceConvert;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.EnvironmentEntity;
@@ -19,6 +20,11 @@ public class JdbcEnvironmentRepository implements EnvironmentRepository {
 
     private final EnvironmentMapper mapper;
 
+    /**
+     * 构造器装配唯一的表访问器依赖。
+     *
+     * @param mapper 运行环境表 Mapper
+     */
     public JdbcEnvironmentRepository(EnvironmentMapper mapper) {
         this.mapper = mapper;
     }
@@ -35,7 +41,7 @@ public class JdbcEnvironmentRepository implements EnvironmentRepository {
     public Environment update(Environment environment) {
         EnvironmentEntity entity = EnvironmentPersistenceConvert.INSTANCE.toEntity(environment);
         mapper.update(entity, Wrappers.<EnvironmentEntity>lambdaUpdate()
-                .eq(e -> e.getEnvironmentId(), environment.environmentId()));
+                .eq(EnvironmentEntity::getEnvironmentId, environment.environmentId()));
         return findByEnvironmentId(environment.environmentId()).orElse(environment);
     }
 
@@ -45,8 +51,8 @@ public class JdbcEnvironmentRepository implements EnvironmentRepository {
     }
 
     @Override
-    public Optional<Environment> findByName(String name) {
-        return Optional.ofNullable(EnvironmentPersistenceConvert.INSTANCE.toDomain(mapper.selectByName(name)));
+    public Optional<Environment> findByNameAndOwnerId(String name, Long ownerId) {
+        return Optional.ofNullable(EnvironmentPersistenceConvert.INSTANCE.toDomain(mapper.selectByNameAndOwnerId(name, ownerId)));
     }
 
     @Override
@@ -62,27 +68,15 @@ public class JdbcEnvironmentRepository implements EnvironmentRepository {
     }
 
     @Override
-    public List<Environment> findAll() {
-        return mapper.selectList(Wrappers.<EnvironmentEntity>lambdaQuery()).stream()
+    public List<Environment> findByCursor(Long ownerId, EnvironmentListFilter filter, int limit) {
+        return mapper.selectByCursor(ownerId, filter, limit).stream()
                 .map(EnvironmentPersistenceConvert.INSTANCE::toDomain)
                 .toList();
-    }
-
-    @Override
-    public List<Environment> findByPage(int page, int size) {
-        return mapper.selectPage((long) Math.max(0, page - 1) * size, size).stream()
-                .map(EnvironmentPersistenceConvert.INSTANCE::toDomain)
-                .toList();
-    }
-
-    @Override
-    public long countAll() {
-        return mapper.countAll();
     }
 
     @Override
     public void deleteByEnvironmentId(String environmentId) {
         mapper.delete(Wrappers.<EnvironmentEntity>lambdaUpdate()
-                .eq(e -> e.getEnvironmentId(), environmentId));
+                .eq(EnvironmentEntity::getEnvironmentId, environmentId));
     }
 }

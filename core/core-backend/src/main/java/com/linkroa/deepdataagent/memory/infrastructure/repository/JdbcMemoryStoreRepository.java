@@ -1,6 +1,5 @@
 package com.linkroa.deepdataagent.memory.infrastructure.repository;
 
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.memory.domain.model.MemoryStore;
 import com.linkroa.deepdataagent.memory.domain.repository.MemoryStoreRepository;
 import com.linkroa.deepdataagent.memory.infrastructure.convert.MemoryStorePersistenceConvert;
@@ -8,6 +7,7 @@ import com.linkroa.deepdataagent.memory.infrastructure.persistence.entity.Memory
 import com.linkroa.deepdataagent.memory.infrastructure.persistence.mapper.MemoryStoreMapper;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -19,6 +19,11 @@ public class JdbcMemoryStoreRepository implements MemoryStoreRepository {
 
     private final MemoryStoreMapper mapper;
 
+    /**
+     * 构造器装配唯一的表访问器依赖。
+     *
+     * @param mapper 记忆库表 Mapper
+     */
     public JdbcMemoryStoreRepository(MemoryStoreMapper mapper) {
         this.mapper = mapper;
     }
@@ -28,48 +33,50 @@ public class JdbcMemoryStoreRepository implements MemoryStoreRepository {
         MemoryStoreEntity entity = MemoryStorePersistenceConvert.INSTANCE.toEntity(store);
         entity.setId(null);
         mapper.insert(entity);
-        return findByMemoryId(store.memoryId()).orElse(store);
+        return findByStoreId(store.storeId()).orElse(store);
     }
 
     @Override
-    public Optional<MemoryStore> findByMemoryId(String memoryId) {
-        return Optional.ofNullable(MemoryStorePersistenceConvert.INSTANCE.toDomain(mapper.selectByMemoryId(memoryId)));
+    public Optional<MemoryStore> findByStoreId(String storeId) {
+        return Optional.ofNullable(MemoryStorePersistenceConvert.INSTANCE.toDomain(mapper.selectByStoreId(storeId)));
     }
 
     @Override
-    public Optional<MemoryStore> findByMemoryIdForUpdate(String memoryId) {
-        return Optional.ofNullable(MemoryStorePersistenceConvert.INSTANCE.toDomain(mapper.selectByMemoryIdForUpdate(memoryId)));
+    public Optional<MemoryStore> findByStoreIdForUpdate(String storeId) {
+        return Optional.ofNullable(MemoryStorePersistenceConvert.INSTANCE.toDomain(mapper.selectByStoreIdForUpdate(storeId)));
     }
 
     @Override
-    public List<MemoryStore> findByIds(List<String> memoryIds) {
-        return mapper.selectByIds(memoryIds).stream()
+    public List<MemoryStore> findByIds(Long ownerId, List<String> storeIds) {
+        return mapper.selectByIds(ownerId, storeIds).stream()
                 .map(MemoryStorePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 
     @Override
-    public List<MemoryStore> findAll() {
-        return mapper.selectList(Wrappers.<MemoryStoreEntity>lambdaQuery()).stream()
+    public List<MemoryStore> findByPage(Long ownerId, int page, int size) {
+        return mapper.selectPage(ownerId, (long) Math.max(0, page - 1) * size, size).stream()
                 .map(MemoryStorePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 
     @Override
-    public List<MemoryStore> findByPage(int page, int size) {
-        return mapper.selectPage((long) Math.max(0, page - 1) * size, size).stream()
-                .map(MemoryStorePersistenceConvert.INSTANCE::toDomain)
-                .toList();
+    public long countByOwnerId(Long ownerId) {
+        return mapper.countByOwnerId(ownerId);
     }
 
     @Override
-    public long countAll() {
-        return mapper.countAll();
+    public int archive(String storeId, OffsetDateTime archivedAt) {
+        return mapper.archive(storeId, archivedAt);
     }
 
     @Override
-    public void deleteByMemoryId(String memoryId) {
-        mapper.delete(Wrappers.<MemoryStoreEntity>lambdaUpdate()
-                .eq(e -> e.getMemoryId(), memoryId));
+    public int adjustStats(String storeId, int deltaCount, long deltaSize) {
+        return mapper.adjustStats(storeId, deltaCount, deltaSize);
+    }
+
+    @Override
+    public void deleteByStoreId(String storeId) {
+        mapper.deleteByStoreId(storeId);
     }
 }

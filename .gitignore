@@ -47,6 +47,8 @@ data/sqlite/*.db
 data/memory/**
 # agnent scope memory data
 data/agentscope/**
+# agent 工作区（AGENTS.md 物化落点）
+data/agentscope-workspaces/**
 .env
 docs/
 

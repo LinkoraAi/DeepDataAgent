@@ -29,6 +29,7 @@ class PasswordEncryptionUtilTest {
         assertNotNull(encrypted);
         assertNotEquals(plainPassword, encrypted);
         assertTrue(encrypted.length() > plainPassword.length());
+        assertTrue(encrypted.startsWith(PasswordEncryptionUtil.ENCRYPTED_PREFIX));
     }
 
     @Test
@@ -204,19 +205,19 @@ class PasswordEncryptionUtilTest {
 
     @Test
     void should_returnOriginalText_when_decrypt_given_shortBase64() {
-        // given - Base64编码但长度小于20（isEncrypted返回false）
-        String shortBase64 = "dGVzdHRlc3Q="; // 12 chars, less than 20
+        // given - Base64编码但无密文前缀（isEncrypted返回false）
+        String shortBase64 = "dGVzdHRlc3Q="; // 12 chars
 
         // when
         String result = encryptionUtil.decrypt(shortBase64);
 
-        // then - 应该返回原文，因为isEncrypted返回false
+        // then - 应该返回原文，因为无前缀视为明文
         assertEquals(shortBase64, result);
     }
 
     @Test
     void should_returnOriginalText_when_decrypt_given_nonEncryptedLongText() {
-        // given - 非加密的长文本（不是有效的Base64或长度不满足加密格式）
+        // given - 非加密的长文本（无密文前缀）
         String longPlainText = "this-is-a-very-long-plain-text-password-that-is-not-encrypted";
 
         // when
@@ -227,15 +228,67 @@ class PasswordEncryptionUtilTest {
     }
 
     @Test
+    void should_returnOriginalText_when_decrypt_given_longValidBase64PlainText() {
+        // given - 明文恰好是合法且较长的 Base64（旧版启发式会误判为密文），但无密文前缀
+        String longBase64PlainText = "dGVzdHRlc3R0ZXN0dGVzdHRlc3R0ZXN0dGVzdHRlc3Q="; // 40 chars, valid base64
+
+        // when
+        String result = encryptionUtil.decrypt(longBase64PlainText);
+
+        // then - 显式前缀判定：无前缀一律透传，不再误判
+        assertEquals(longBase64PlainText, result);
+    }
+
+    @Test
     void should_throwException_when_decrypt_given_invalidEncryptedData() {
-        // given - 看起来像加密的Base64（长度>=20）但数据无效
-        // 使用有效的Base64但内容不是有效的加密数据
-        String invalidEncryptedData = "dGVzdHRlc3R0ZXN0dGVzdHRlc3R0ZXN0dGVzdHRlc3Q="; // 40 chars base64
+        // given - 带密文前缀但内容不是有效的加密数据
+        // 使用有效的Base64但内容不是有效的加密数据（解码后无法通过 GCM 验签）
+        String invalidEncryptedData = PasswordEncryptionUtil.ENCRYPTED_PREFIX
+                + "dGVzdHRlc3R0ZXN0dGVzdHRlc3R0ZXN0dGVzdHRlc3Q="; // 40 chars base64
 
         // when & then - 应该抛出异常，因为数据格式不正确
         IllegalStateException exception = assertThrows(IllegalStateException.class, () ->
             encryptionUtil.decrypt(invalidEncryptedData)
         );
         assertEquals("密码解密失败", exception.getMessage());
+    }
+
+    @Test
+    void should_returnPlainText_when_decrypt_given_legacyCiphertextWithoutPrefix() {
+        // given - 旧格式密文：无前缀 Base64(iv||密文)，与新版唯一差异是缺 dse: 前缀（算法/密钥同源）
+        String plainPassword = "legacyStoredP@ss";
+        String legacyCiphertext = encryptionUtil.encrypt(plainPassword)
+                .substring(PasswordEncryptionUtil.ENCRYPTED_PREFIX.length());
+
+        // when - 过渡双读：命中旧启发式（长度≥20 且合法 Base64）按旧格式解密
+        String decrypted = encryptionUtil.decrypt(legacyCiphertext);
+
+        // then
+        assertEquals(plainPassword, decrypted);
+    }
+
+    @Test
+    void should_passThroughOriginal_when_decrypt_given_legacyHeuristicMatchButDecryptFailed() {
+        // given - 真正的历史明文：恰好命中旧启发式（合法 Base64 且长度≥20）但无法通过 GCM 验签
+        String legacyPlainText = "dGVzdHRlc3R0ZXN0dGVzdHRlc3R0ZXN0dGVzdHRlc3Q="; // 40 chars valid base64
+
+        // when - 双读尝试解密失败（认证标签异常等）→ 按明文透传、不抛异常
+        String result = encryptionUtil.decrypt(legacyPlainText);
+
+        // then
+        assertEquals(legacyPlainText, result);
+    }
+
+    @Test
+    void should_returnSameValue_when_encrypt_given_alreadyEncryptedCiphertext() {
+        // given - 已带 dse: 前缀的密文（如实体回读后再次经转换层）
+        String encrypted = encryptionUtil.encrypt("mySecretPassword123");
+
+        // when - 幂等守卫：不重复加密，防双重化
+        String reEncrypted = encryptionUtil.encrypt(encrypted);
+
+        // then - 原样返回，且仍可解出真实明文
+        assertEquals(encrypted, reEncrypted);
+        assertEquals("mySecretPassword123", encryptionUtil.decrypt(reEncrypted));
     }
 }

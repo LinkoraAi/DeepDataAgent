@@ -1,6 +1,6 @@
 package com.linkroa.deepdataagent.datasource.infrastructure.adapter;
 
-import com.linkroa.deepdataagent.datasource.controller.response.ParsedFieldResponse;
+import com.linkroa.deepdataagent.datasource.domain.model.ParsedField;
 import com.linkroa.deepdataagent.datasource.domain.model.ApiField;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -265,21 +265,21 @@ class ApiResponseParserTest {
     @Test
     void should_returnTreeWithChildren_when_parseFieldsAsTree_given_nestedObject() {
         String jsonResponse = "{\"city\":\"上海\",\"forecast\":{\"day\":\"2024-01-01\",\"temp\":25}}";
-        List<ParsedFieldResponse> result = parser.parseFieldsAsTree(jsonResponse, "$");
+        List<ParsedField> result = parser.parseFieldsAsTree(jsonResponse, "$");
 
         assertEquals(2, result.size());
 
-        ParsedFieldResponse cityField = result.stream()
+        ParsedField cityField = result.stream()
                 .filter(f -> "city".equals(f.originalName())).findFirst().orElseThrow();
         assertEquals("string", cityField.fieldType());
         assertTrue(cityField.children().isEmpty());
 
-        ParsedFieldResponse forecastField = result.stream()
+        ParsedField forecastField = result.stream()
                 .filter(f -> "forecast".equals(f.originalName())).findFirst().orElseThrow();
         assertEquals("object", forecastField.fieldType());
         assertEquals(2, forecastField.children().size());
 
-        ParsedFieldResponse dayField = forecastField.children().stream()
+        ParsedField dayField = forecastField.children().stream()
                 .filter(f -> "day".equals(f.originalName())).findFirst().orElseThrow();
         assertEquals("$.forecast.day", dayField.jsonPath());
         assertEquals("string", dayField.fieldType());
@@ -289,14 +289,14 @@ class ApiResponseParserTest {
     @Test
     void should_returnTreeWithArrayChildren_when_parseFieldsAsTree_given_arrayOfObjects() {
         String jsonResponse = "{\"items\":[{\"sku\":\"A001\",\"price\":99.9}]}";
-        List<ParsedFieldResponse> result = parser.parseFieldsAsTree(jsonResponse, "$");
+        List<ParsedField> result = parser.parseFieldsAsTree(jsonResponse, "$");
 
         assertEquals(1, result.size());
-        ParsedFieldResponse itemsField = result.getFirst();
+        ParsedField itemsField = result.getFirst();
         assertEquals("array", itemsField.fieldType());
         assertEquals(2, itemsField.children().size());
 
-        ParsedFieldResponse skuField = itemsField.children().stream()
+        ParsedField skuField = itemsField.children().stream()
                 .filter(f -> "sku".equals(f.originalName())).findFirst().orElseThrow();
         assertEquals("$.items.*.sku", skuField.jsonPath());
     }
@@ -304,22 +304,22 @@ class ApiResponseParserTest {
     @Test
     void should_returnDeepNestedTree_when_parseFieldsAsTree_given_multiLevelStructure() {
         String jsonResponse = "{\"data\":{\"user\":{\"profile\":{\"age\":25}}}}";
-        List<ParsedFieldResponse> result = parser.parseFieldsAsTree(jsonResponse, "$");
+        List<ParsedField> result = parser.parseFieldsAsTree(jsonResponse, "$");
 
         assertEquals(1, result.size());
-        ParsedFieldResponse dataField = result.getFirst();
+        ParsedField dataField = result.getFirst();
         assertEquals("object", dataField.fieldType());
         assertEquals(1, dataField.children().size());
 
-        ParsedFieldResponse userField = dataField.children().getFirst();
+        ParsedField userField = dataField.children().getFirst();
         assertEquals("$.data.user", userField.jsonPath());
         assertEquals(1, userField.children().size());
 
-        ParsedFieldResponse profileField = userField.children().getFirst();
+        ParsedField profileField = userField.children().getFirst();
         assertEquals("$.data.user.profile", profileField.jsonPath());
         assertEquals(1, profileField.children().size());
 
-        ParsedFieldResponse ageField = profileField.children().getFirst();
+        ParsedField ageField = profileField.children().getFirst();
         assertEquals("$.data.user.profile.age", ageField.jsonPath());
         assertEquals("number", ageField.fieldType());
         assertTrue(ageField.children().isEmpty());
@@ -328,7 +328,7 @@ class ApiResponseParserTest {
     @Test
     void should_returnEmptyTree_when_parseFieldsAsTree_given_emptyArray() {
         String jsonResponse = "{\"data\":[]}";
-        List<ParsedFieldResponse> result = parser.parseFieldsAsTree(jsonResponse, "$.data");
+        List<ParsedField> result = parser.parseFieldsAsTree(jsonResponse, "$.data");
 
         assertTrue(result.isEmpty());
     }
@@ -336,7 +336,7 @@ class ApiResponseParserTest {
     @Test
     void should_returnTreeFromArrayRoot_when_parseFieldsAsTree_given_arrayRootPath() {
         String jsonResponse = "{\"list\":[{\"time\":\"14:26\",\"code\":\"AED\"}]}";
-        List<ParsedFieldResponse> result = parser.parseFieldsAsTree(jsonResponse, "$.list.*");
+        List<ParsedField> result = parser.parseFieldsAsTree(jsonResponse, "$.list.*");
 
         assertEquals(2, result.size());
         assertTrue(result.stream().allMatch(f -> f.children().isEmpty()));

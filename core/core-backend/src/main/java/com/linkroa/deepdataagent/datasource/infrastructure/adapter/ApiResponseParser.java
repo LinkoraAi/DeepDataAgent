@@ -1,7 +1,7 @@
 package com.linkroa.deepdataagent.datasource.infrastructure.adapter;
 
 import com.jayway.jsonpath.JsonPath;
-import com.linkroa.deepdataagent.datasource.controller.response.ParsedFieldResponse;
+import com.linkroa.deepdataagent.datasource.domain.model.ParsedField;
 import com.linkroa.deepdataagent.datasource.domain.model.ApiField;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
@@ -53,7 +53,7 @@ public class ApiResponseParser {
         return parseFieldsFromNode(responseData, rootPath);
     }
 
-    public List<ParsedFieldResponse> parseFieldsAsTree(String jsonResponse, String rootPath) {
+    public List<ParsedField> parseFieldsAsTree(String jsonResponse, String rootPath) {
         if (StringUtils.isBlank(jsonResponse)) {
             throw new IllegalArgumentException("API响应不能为空");
         }
@@ -65,7 +65,7 @@ public class ApiResponseParser {
         return buildTreeFromNode(rootNode, rootPath);
     }
 
-    private List<ParsedFieldResponse> buildTreeFromNode(Object rootNode, String rootPath) {
+    private List<ParsedField> buildTreeFromNode(Object rootNode, String rootPath) {
         if (rootNode == null) {
             return List.of();
         }
@@ -88,15 +88,15 @@ public class ApiResponseParser {
         return List.of();
     }
 
-    private List<ParsedFieldResponse> buildTreeFromMap(Map<?, ?> map, String rootPath) {
-        List<ParsedFieldResponse> fields = new ArrayList<>();
+    private List<ParsedField> buildTreeFromMap(Map<?, ?> map, String rootPath) {
+        List<ParsedField> fields = new ArrayList<>();
         for (Map.Entry<?, ?> entry : map.entrySet()) {
             String fieldName = String.valueOf(entry.getKey());
             Object fieldValue = entry.getValue();
             String fieldPath = buildJsonPath(rootPath, fieldName);
             String fieldType = inferFieldType(fieldValue);
 
-            List<ParsedFieldResponse> children = List.of();
+            List<ParsedField> children = List.of();
             if (fieldValue instanceof Map<?, ?> nestedMap) {
                 children = buildTreeFromMap(nestedMap, fieldPath);
             } else if (fieldValue instanceof List<?> list && !list.isEmpty()) {
@@ -107,7 +107,7 @@ public class ApiResponseParser {
                 }
             }
 
-            fields.add(new ParsedFieldResponse(
+            fields.add(new ParsedField(
                     fieldName,
                     fieldPath,
                     fieldType,

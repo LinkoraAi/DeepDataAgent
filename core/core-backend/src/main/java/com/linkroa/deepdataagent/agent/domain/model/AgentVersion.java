@@ -8,6 +8,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Agent 版本领域模型（对应 agent_version 表，每次发布生成一行快照）
@@ -16,16 +17,16 @@ import java.util.List;
  * @param versionId         版本业务唯一ID
  * @param agentId           Agent业务ID
  * @param versionNumber     发布号（同一 Agent 内递增，MAX+1，无乐观锁）
- * @param name              版本名称（发布标签）
- * @param description       版本描述
- * @param system            系统提示词（运行装配来源）
- * @param modelProfileId   引用模型配置 profile_id
- * @param skillIds          挂载的技能（[{skillId, version}]，版本锁定，仅存引用）
- * @param knowledgeBaseIds  预留知识库引用
- * @param dataSourceIds     数据源引用（[数据源 id 数字数组]，关联 datasource 域 id）
- * @param environmentId     运行环境引用（environment_id，可空/未引用回退默认规格）
- * @param memoryStoreIds    记忆库引用（[记忆库 id 字符串数组]，可空/未引用不装配记忆工具）
- * @param workspaceId       工作空间归属（本期占位，不做边界校验）
+ * @param name              版本名称（发布时从 Agent 定义复制，无独立发布标签入参）
+ * @param description       版本描述（发布时从 Agent 定义复制）
+ * @param systemPrompt      系统提示词（对外字段名 {@code system}；版本快照唯一指令载体）
+ * @param modelProfileId    内部模型供应商配置引用（可空 = 目录模型未配置映射；不进入对外契约）
+ * @param modelJson         模型引用（JSONB：目录模型 id 字符串简写或 {id, effort?, context_window?} 对象，见 {@link ModelRef}）
+ * @param toolsJson         内联工具配方（JSONB：{@code [{type, ...}]}，见 {@link AgentTool}）
+ * @param mcpServersJson    内联外部 MCP 工具源配方（JSONB：{@code [{name, type:"url", url}]}，见 {@link McpServer}）
+ * @param skillsJson        技能绑定配方（{@code [{type, skill_id, version}]}，type 取 catalog / custom，见 {@link SkillBinding}）
+ * @param multiagent        多智能体编排配置（JSONB；本期非空提交 400、响应恒 null）
+ * @param metadataJson      业务自定义元数据（JSONB 键值对象，可空）
  * @param createdAt         创建时间
  * @param updatedAt         更新时间
  * @param createdBy         创建人
@@ -38,14 +39,14 @@ public record AgentVersion(
         int versionNumber,
         String name,
         String description,
-        String system,
+        String systemPrompt,
         String modelProfileId,
-        String skillIds,
-        String knowledgeBaseIds,
-        String dataSourceIds,
-        String environmentId,
-        String memoryStoreIds,
-        String workspaceId,
+        String modelJson,
+        String toolsJson,
+        String mcpServersJson,
+        String skillsJson,
+        String multiagent,
+        String metadataJson,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         String createdBy,
@@ -70,19 +71,28 @@ public record AgentVersion(
         if (StringUtils.isBlank(name)) {
             throw new IllegalArgumentException("版本名称不能为空");
         }
-        if (name.length() > 64) {
-            throw new IllegalArgumentException("版本名称长度不能超过64个字符");
+        if (name.length() > MAX_NAME_LENGTH) {
+            throw new IllegalArgumentException("版本名称长度不能超过" + MAX_NAME_LENGTH + "个字符");
         }
-        if (StringUtils.isBlank(modelProfileId)) {
-            throw new IllegalArgumentException("模型配置引用不能为空");
+        if (StringUtils.isBlank(modelProfileId) && StringUtils.isBlank(modelJson)) {
+            throw new IllegalArgumentException("模型引用不能为空");
         }
-        if (StringUtils.isNotEmpty(description) && description.length() > 500) {
-            throw new IllegalArgumentException("版本描述不能超过500个字符");
+        if (StringUtils.isNotEmpty(description) && description.length() > MAX_DESCRIPTION_LENGTH) {
+            throw new IllegalArgumentException("版本描述不能超过" + MAX_DESCRIPTION_LENGTH + "个字符");
         }
-        if (system != null && system.length() > 20000) {
-            throw new IllegalArgumentException("系统提示词长度不能超过20000个字符");
+        if (systemPrompt != null && systemPrompt.length() > MAX_SYS_PROMPT_LENGTH) {
+            throw new IllegalArgumentException("系统提示词长度不能超过" + MAX_SYS_PROMPT_LENGTH + "个字符");
         }
     }
+
+    /** 系统提示词长度上限（{@code system} 字段，100000 字符）。 */
+    public static final int MAX_SYS_PROMPT_LENGTH = 100000;
+
+    /** 版本名称长度上限（与公开契约 1-256 及 V1 列宽 {@code VARCHAR(256)} 一致）。 */
+    public static final int MAX_NAME_LENGTH = 256;
+
+    /** 版本描述长度上限（与公开契约 ≤2048 及 V1 列宽 {@code VARCHAR(2048)} 一致）。 */
+    public static final int MAX_DESCRIPTION_LENGTH = 2048;
 
     /**
      * 创建新的 Agent 版本快照
@@ -93,19 +103,20 @@ public record AgentVersion(
             int versionNumber,
             String name,
             String description,
-            String system,
+            String systemPrompt,
             String modelProfileId,
-            String skillIds,
-            String knowledgeBaseIds,
-            String dataSourceIds,
-            String environmentId,
-            String memoryStoreIds,
-            String workspaceId
+            String modelJson,
+            String toolsJson,
+            String mcpServersJson,
+            String skillsJson,
+            String multiagent,
+            String metadataJson
     ) {
         return new AgentVersion(
                 null, versionId, agentId, versionNumber, name, description,
-                system != null ? system : "", modelProfileId,
-                skillIds, knowledgeBaseIds, dataSourceIds, environmentId, memoryStoreIds, workspaceId,
+                systemPrompt != null ? systemPrompt : "", modelProfileId, modelJson,
+                toolsJson, mcpServersJson, skillsJson,
+                multiagent, metadataJson,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 null, null
@@ -122,14 +133,14 @@ public record AgentVersion(
             int versionNumber,
             String name,
             String description,
-            String system,
+            String systemPrompt,
             String modelProfileId,
-            String skillIds,
-            String knowledgeBaseIds,
-            String dataSourceIds,
-            String environmentId,
-            String memoryStoreIds,
-            String workspaceId,
+            String modelJson,
+            String toolsJson,
+            String mcpServersJson,
+            String skillsJson,
+            String multiagent,
+            String metadataJson,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
             String createdBy,
@@ -137,81 +148,67 @@ public record AgentVersion(
     ) {
         return new AgentVersion(
                 id, versionId, agentId, versionNumber, name, description,
-                system, modelProfileId, skillIds,
-                knowledgeBaseIds, dataSourceIds, environmentId, memoryStoreIds, workspaceId,
-                createdAt, updatedAt, createdBy, updatedBy
-        );
+                systemPrompt, modelProfileId, modelJson,
+                toolsJson, mcpServersJson, skillsJson,
+                multiagent, metadataJson,
+                createdAt, updatedAt, createdBy, updatedBy);
     }
 
     /**
-     * 解析挂载的技能引用列表（[{skillId, version}]）。
+     * 解析本版本挂载的技能绑定列表（{@code [{type, skill_id, version}]}，type 取 catalog / custom）。
      */
-    public List<SkillRef> parseSkillRefs() {
-        return parseSkillRefs(skillIds);
+    public List<SkillBinding> parseSkills() {
+        return SkillBinding.parse(skillsJson);
     }
 
     /**
-     * 静态解析挂载技能引用（供发布流程一致性校验复用）。
+     * 静态解析技能绑定配方（供发布完整性校验 / 运行装配复用）。
      */
-    public static List<SkillRef> parseSkillRefs(String skillIds) {
-        if (StringUtils.isBlank(skillIds)) {
-            return List.of();
+    public static List<SkillBinding> parseSkills(String skillsJson) {
+        return SkillBinding.parse(skillsJson);
+    }
+
+    /**
+     * 解析本版本的模型引用（字符串简写或对象形态；未配置返回 {@code null}）。
+     */
+    public ModelRef parseModel() {
+        return ModelRef.parse(modelJson);
+    }
+
+    /**
+     * 解析本版本挂载的工具配置列表（{@code [{type, ...}]}，四类型见 {@link AgentTool}）。
+     */
+    public List<AgentTool> parseTools() {
+        return AgentTool.parse(toolsJson);
+    }
+
+    /**
+     * 解析本版本声明的 MCP 服务器列表（{@code [{name, type:"url", url}]}）。
+     */
+    public List<McpServer> parseMcpServers() {
+        return McpServer.parse(mcpServersJson);
+    }
+
+    /**
+     * 解析业务自定义元数据键值对象（空白配方返回空 Map）。
+     */
+    public Map<String, Object> parseMetadata() {
+        return parseMetadata(metadataJson);
+    }
+
+    /**
+     * 静态解析元数据配方（供发布校验 / 协议转换复用）。
+     */
+    public static Map<String, Object> parseMetadata(String metadataJson) {
+        if (StringUtils.isBlank(metadataJson)) {
+            return Map.of();
         }
         try {
-            return OBJECT_MAPPER.readValue(skillIds, new TypeReference<>() {
+            return OBJECT_MAPPER.readValue(metadataJson, new TypeReference<>() {
             });
         } catch (JacksonException e) {
-            throw new IllegalStateException("技能引用JSON解析失败", e);
+            throw new IllegalStateException("元数据JSON解析失败", e);
         }
     }
 
-    /**
-     * 解析数据源引用列表（[数据源 id 数字数组]）。
-     */
-    public List<Long> parseDatasourceIds() {
-        return parseDatasourceIds(dataSourceIds);
-    }
-
-    /**
-     * 静态解析数据源引用（供运行装配复用）。
-     */
-    public static List<Long> parseDatasourceIds(String dataSourceIds) {
-        if (StringUtils.isBlank(dataSourceIds)) {
-            return List.of();
-        }
-        try {
-            return OBJECT_MAPPER.readValue(dataSourceIds, new TypeReference<>() {
-            });
-        } catch (JacksonException e) {
-            throw new IllegalStateException("数据源引用JSON解析失败", e);
-        }
-    }
-
-    /**
-     * 解析记忆库引用列表（[记忆库 id 字符串数组]）。
-     */
-    public List<String> parseMemoryStoreIds() {
-        return parseMemoryStoreIds(memoryStoreIds);
-    }
-
-    /**
-     * 静态解析记忆库引用（供发布完整性校验 / 运行装配复用）。
-     */
-    public static List<String> parseMemoryStoreIds(String memoryStoreIds) {
-        if (StringUtils.isBlank(memoryStoreIds)) {
-            return List.of();
-        }
-        try {
-            return OBJECT_MAPPER.readValue(memoryStoreIds, new TypeReference<>() {
-            });
-        } catch (JacksonException e) {
-            throw new IllegalStateException("记忆库引用JSON解析失败", e);
-        }
-    }
-
-    /**
-     * 技能引用（技能ID + 版本锁定号）
-     */
-    public record SkillRef(String skillId, Integer version) {
-    }
 }

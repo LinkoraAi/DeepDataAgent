@@ -12,7 +12,7 @@ public record CreateMemoryStoreRequest(
         @Size(max = 64, message = "记忆库名称不能超过64个字符")
         String name,
 
-        @NotBlank(message = "记忆类型不能为空")
-        String type
+        @Size(max = 500, message = "记忆库描述不能超过500个字符")
+        String description
 ) {
 }

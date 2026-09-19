@@ -2,6 +2,7 @@ package com.linkroa.deepdataagent.shared.util;
 
 import org.apache.ibatis.type.BaseTypeHandler;
 import org.apache.ibatis.type.JdbcType;
+import org.apache.commons.lang3.StringUtils;
 import org.postgresql.util.PGobject;
 
 import java.sql.CallableStatement;
@@ -14,6 +15,9 @@ import java.sql.SQLException;
  * <p>将 Java String 字段与 PG jsonb 列互转：写入时将字符串包装为 jsonb 类型的 {@link PGobject}，
  * 读取时把驱动返回的 PGobject 还原为 JSON 文本字符串。用于 MyBatis-Plus 自动 SQL 及注解 SQL
  * 中对 JSONB 列的读写，避免 setString 直写 jsonb 列导致类型不匹配。</p>
+ * <p>空串归一化：空白 JSON 文本（{@code ""}）不是合法 JSON，直写 jsonb 列会抛
+ * {@code invalid input syntax for type json}；统一将空白字符串归一化为 NULL 写入，
+ * 读取时空值列返回 null，避免各域手工特判空串（语义即「未提供」）。</p>
  */
 public class PostgresJsonbTypeHandler extends BaseTypeHandler<String> {
 
@@ -23,6 +27,11 @@ public class PostgresJsonbTypeHandler extends BaseTypeHandler<String> {
     @Override
     public void setNonNullParameter(PreparedStatement ps, int i, String parameter, JdbcType jdbcType)
             throws SQLException {
+        // 空白字符串归一化为 NULL（空串不是合法 JSON，且语义等同「未提供」）
+        if (StringUtils.isBlank(parameter)) {
+            ps.setObject(i, null);
+            return;
+        }
         PGobject object = new PGobject();
         object.setType(JSONB_TYPE);
         object.setValue(parameter);

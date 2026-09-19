@@ -2,6 +2,7 @@ package com.linkroa.deepdataagent.agent.infrastructure.repository;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.agent.domain.model.AgentDefinition;
+import com.linkroa.deepdataagent.agent.domain.model.AgentListFilter;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentDefinitionRepository;
 import com.linkroa.deepdataagent.agent.infrastructure.convert.AgentPersistenceConvert;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.AgentDefinitionEntity;
@@ -9,7 +10,6 @@ import com.linkroa.deepdataagent.agent.infrastructure.persistence.mapper.AgentDe
 import org.springframework.stereotype.Repository;
 
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -21,6 +21,11 @@ public class JdbcAgentDefinitionRepository implements AgentDefinitionRepository 
 
     private final AgentDefinitionMapper mapper;
 
+    /**
+     * 构造器装配唯一的表访问器依赖。
+     *
+     * @param mapper Agent 定义表 Mapper
+     */
     public JdbcAgentDefinitionRepository(AgentDefinitionMapper mapper) {
         this.mapper = mapper;
     }
@@ -37,7 +42,7 @@ public class JdbcAgentDefinitionRepository implements AgentDefinitionRepository 
     public AgentDefinition update(AgentDefinition definition) {
         AgentDefinitionEntity entity = AgentPersistenceConvert.INSTANCE.toEntity(definition);
         mapper.update(entity, Wrappers.<AgentDefinitionEntity>lambdaUpdate()
-                .eq(e -> e.getAgentId(), definition.agentId()));
+                .eq(AgentDefinitionEntity::getAgentId, definition.agentId()));
         return findByAgentId(definition.agentId()).orElse(definition);
     }
 
@@ -52,33 +57,15 @@ public class JdbcAgentDefinitionRepository implements AgentDefinitionRepository 
     }
 
     @Override
-    public Optional<AgentDefinition> findByName(String name) {
-        return Optional.ofNullable(AgentPersistenceConvert.INSTANCE.toDomain(mapper.selectByName(name)));
-    }
-
-    @Override
-    public List<AgentDefinition> findByCondition(String keyword, boolean includeArchived, int page, int size) {
-        return mapper.selectByCondition(
-                        keyword,
-                        includeArchived,
-                        (long) Math.max(0, page - 1) * size,
-                        size)
-                .stream()
+    public List<AgentDefinition> findByCursor(Long ownerId, AgentListFilter filter, int limit) {
+        return mapper.selectByCursor(ownerId, filter, limit).stream()
                 .map(AgentPersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 
     @Override
-    public long countByCondition(String keyword, boolean includeArchived) {
-        return mapper.countByCondition(keyword, includeArchived);
-    }
-
-    @Override
-    public void updateArchived(String agentId, boolean archived) {
-        mapper.update(null, Wrappers.<AgentDefinitionEntity>lambdaUpdate()
-                .set(e -> e.getArchived(), archived)
-                .set(e -> e.getArchivedAt(), archived ? OffsetDateTime.now(ZoneId.of("Asia/Shanghai")) : null)
-                .eq(e -> e.getAgentId(), agentId));
+    public void updateArchivedAt(String agentId, OffsetDateTime archivedAt) {
+        mapper.updateArchivedAt(agentId, archivedAt);
     }
 
     @Override
@@ -89,6 +76,6 @@ public class JdbcAgentDefinitionRepository implements AgentDefinitionRepository 
     @Override
     public void deleteByAgentId(String agentId) {
         mapper.delete(Wrappers.<AgentDefinitionEntity>lambdaUpdate()
-                .eq(e -> e.getAgentId(), agentId));
+                .eq(AgentDefinitionEntity::getAgentId, agentId));
     }
 }

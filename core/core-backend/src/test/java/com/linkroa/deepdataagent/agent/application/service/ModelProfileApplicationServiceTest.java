@@ -11,6 +11,8 @@ import com.linkroa.deepdataagent.agent.domain.repository.ModelProfileRepository;
 import com.linkroa.deepdataagent.agent.infrastructure.util.ModelCredentialEncryptionUtil;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.shared.security.AuthContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -49,6 +51,7 @@ class ModelProfileApplicationServiceTest {
 
     @BeforeEach
     void setUp() {
+        AuthContext.setUserId(1L);
         service = new ModelProfileApplicationService();
         org.springframework.test.util.ReflectionTestUtils.setField(service, "modelProfileRepository", modelProfileRepository);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "agentVersionRepository", agentVersionRepository);
@@ -65,18 +68,23 @@ class ModelProfileApplicationServiceTest {
         }).when(transactionTemplate).executeWithoutResult(any());
     }
 
+    @AfterEach
+    void tearDown() {
+        AuthContext.clear();
+    }
+
     private ModelProfile createEnabledProfile(String profileId, String name) {
         return ModelProfile.restore(
                 profileId, name, null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                "encrypted", null, "gpt", 8192, 2048, 10, ModelType.CHAT, null,
-                ModelProfileStatus.ENABLED,
+                "encrypted", "gpt", 8192, 2048, 10, ModelType.CHAT, null,
+                ModelProfileStatus.ENABLED, 1L,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
     }
 
     private CreateModelProfileCommand buildCreateCommand(String name) {
         return new CreateModelProfileCommand(name, null, ApiFormat.OPENAI, "https://example.com/v1",
-                "gpt-4", "sk-plain", null, "gpt", 8192, 2048, 10, ModelType.CHAT, null);
+                "gpt-4", "sk-plain", "gpt", 8192, 2048, 10, ModelType.CHAT, null);
     }
 
     @Test
@@ -116,7 +124,7 @@ class ModelProfileApplicationServiceTest {
 
         UpdateModelProfileCommand command = new UpdateModelProfileCommand(
                 "p1", "chat-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                null, null, "gpt", 8192, 2048, 10, ModelType.CHAT, null);
+                null, "gpt", 8192, 2048, 10, ModelType.CHAT, null);
 
         // when
         ModelProfile updated = service.updateProfile(command);
@@ -136,7 +144,7 @@ class ModelProfileApplicationServiceTest {
 
         UpdateModelProfileCommand command = new UpdateModelProfileCommand(
                 "p1", "chat-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                "", null, "gpt", 8192, 2048, 10, ModelType.CHAT, null);
+                "", "gpt", 8192, 2048, 10, ModelType.CHAT, null);
 
         // when
         ModelProfile updated = service.updateProfile(command);
@@ -156,7 +164,7 @@ class ModelProfileApplicationServiceTest {
 
         UpdateModelProfileCommand command = new UpdateModelProfileCommand(
                 "p1", "chat-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                "sk-new", null, "gpt", 8192, 2048, 10, ModelType.CHAT, null);
+                "sk-new", "gpt", 8192, 2048, 10, ModelType.CHAT, null);
 
         // when
         ModelProfile updated = service.updateProfile(command);
@@ -175,7 +183,7 @@ class ModelProfileApplicationServiceTest {
 
         UpdateModelProfileCommand command = new UpdateModelProfileCommand(
                 "p1", "other-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                null, null, "gpt", 8192, 2048, 10, ModelType.CHAT, null);
+                null, "gpt", 8192, 2048, 10, ModelType.CHAT, null);
 
         // when / then
         assertThrows(ResourceConflictException.class, () -> service.updateProfile(command));
@@ -217,56 +225,5 @@ class ModelProfileApplicationServiceTest {
 
         // when / then
         assertThrows(ResourceNotFoundException.class, () -> service.disableProfile("missing"));
-    }
-
-    @Test
-    void should_storeSecretReferenceWithoutEncrypt_when_createProfile_given_secretId() {
-        // given（引用密钥模式：仅记录 secretId，不加密、不落明文）
-        when(modelProfileRepository.findByDisplayName("chat-profile")).thenReturn(Optional.empty());
-        when(modelProfileRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        CreateModelProfileCommand command = new CreateModelProfileCommand(
-                "chat-profile", null, ApiFormat.OPENAI, "https://example.com/v1",
-                "gpt-4", null, "secret-1", "gpt", 8192, 2048, 10, ModelType.CHAT, null);
-
-        // when
-        ModelProfile saved = service.createProfile(command);
-
-        // then
-        assertEquals("secret-1", saved.secretId());
-        assertEquals("", saved.encryptedCredential());
-        verify(encryptionUtil, never()).encrypt(anyString());
-    }
-
-    @Test
-    void should_throwIllegalArgument_when_createProfile_given_bothCredentialAndSecretId() {
-        // given（内嵌凭证与密钥引用同时提供）
-        when(modelProfileRepository.findByDisplayName("chat-profile")).thenReturn(Optional.empty());
-        CreateModelProfileCommand command = new CreateModelProfileCommand(
-                "chat-profile", null, ApiFormat.OPENAI, "https://example.com/v1",
-                "gpt-4", "sk-plain", "secret-1", "gpt", 8192, 2048, 10, ModelType.CHAT, null);
-
-        // when / then
-        assertThrows(IllegalArgumentException.class, () -> service.createProfile(command));
-        verify(modelProfileRepository, never()).save(any());
-    }
-
-    @Test
-    void should_switchToSecretReference_when_updateProfile_given_secretId() {
-        // given（从内嵌凭证切换为密钥引用，内嵌密文清空）
-        ModelProfile existing = createEnabledProfile("p1", "chat-profile");
-        when(modelProfileRepository.findByProfileId("p1")).thenReturn(Optional.of(existing));
-        when(modelProfileRepository.findByDisplayName("chat-profile")).thenReturn(Optional.of(existing));
-        when(modelProfileRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
-
-        UpdateModelProfileCommand command = new UpdateModelProfileCommand(
-                "p1", "chat-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                null, "secret-2", "gpt", 8192, 2048, 10, ModelType.CHAT, null);
-
-        // when
-        ModelProfile updated = service.updateProfile(command);
-
-        // then
-        assertEquals("secret-2", updated.secretId());
-        assertEquals("", updated.encryptedCredential());
     }
 }

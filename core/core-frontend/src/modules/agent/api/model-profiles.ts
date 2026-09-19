@@ -1,5 +1,5 @@
 /**
- * 模型配置管理接口模块（对齐后端 ModelProfileController：/api/v1/agent/model-profiles）。
+ * 模型配置管理接口模块（对齐后端 ModelProfileController：/api/v1/cloud/model-profiles）。
  * <p>凭证在响应中一律脱敏（credentialConfigured 仅表示是否已配置）；更新时
  * credential 传 null 保留原值、传空串清空。</p>
  */
@@ -47,7 +47,7 @@ export interface ModelProfilePayload {
   vectorDimension?: number | null;
 }
 
-const PROFILES_API_BASE = '/api/v1/agent/model-profiles';
+const PROFILES_API_BASE = '/api/v1/cloud/model-profiles';
 
 /** 创建模型配置。 */
 export function createModelProfile(payload: ModelProfilePayload): Promise<ModelProfileDto> {
