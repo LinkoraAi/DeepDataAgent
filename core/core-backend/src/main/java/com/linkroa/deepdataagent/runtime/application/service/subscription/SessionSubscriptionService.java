@@ -95,7 +95,7 @@ public class SessionSubscriptionService {
      * 打开一条线程作用域 SSE 订阅连接（公开契约嵌套端点
      * {@code GET /sessions/{id}/threads/{thread_id}/events/stream}）。
      * <p>线程流<b>仅提供 buffered</b>：不支持 {@code event_deltas[]} 增量协商（调用方先于本方法
-     * 对携带增量参数者返回 400）；回放按线程归属过滤（{@code session_thread_id} 为账本内部过滤键，
+     * 对携带增量参数者返回 400）；回放按线程归属过滤（{@code session_thread_id} 为事件表内部过滤键，
      * 不扩张对外扁平 Event 公开字段），其后保持会话级实时订阅（当前执行面仅主线程产生事件）。</p>
      *
      * @param sessionId   会话 ID
@@ -126,7 +126,7 @@ public class SessionSubscriptionService {
 
     /**
      * 将会话绑定到连接层并注册一个携带增量协商参数的订阅者：复用会话级连接句柄
-     * （多订阅者 fan-out）、注册「全部断连 → 取消在跑执行」回调，
+     * （多订阅者 fan-out）、注册「全部断连 → 取消运行中的执行」回调，
      * 再创建受超时 / 断连保护的 emitter（协商仅作用于本连接）。
      * <p>句柄「复用判定 + 绑定」对同一会话上下文加锁串行（句柄唯一所有者为 {@code AgentSessionContext}，
      * 替代原注册表 map 的 compute 原子性）：并发多标签页订阅共享同一句柄，不互相顶掉连接组。</p>
@@ -138,7 +138,7 @@ public class SessionSubscriptionService {
             handle = sseTransportPort.acquireHandle(context.connection());
             context.bindConnection(handle);
         }
-        // 断连不取消：SSE 连接仅为观察 / 回放通道，连接断开 MUST NOT 触发在跑执行取消
+        // 断连不取消：SSE 连接仅为观察 / 回放通道，连接断开 MUST NOT 触发运行中的执行取消
         //（取消只能由显式 POST /cancel 或 user.interrupt 发起；客户端断线重连凭 Last-Event-ID 回放）
         return sseTransportPort.openConnection(handle, deltaTargets, flushIntervalMs);
     }

@@ -342,7 +342,7 @@ class JdbcMemoryRepositoryTest {
 
     @Test
     void should_deleteVersionsBeforeEntries_when_deleteByStoreId_given_storeId() {
-        // given（级联物理删除：先版本行后条目行，避免外键/悬挂引用）
+        // given（级联物理删除：先版本行后条目行，避免外键/悬空引用）
 
         // when
         repository.deleteByStoreId("ms_1");

@@ -223,7 +223,7 @@ class RuntimeArchitectureTest {
         return noClasses().that().resideInAnyPackage(ROOT + "..application..")
                 // 白名单：信封被 application.convert 与 infrastructure.sse 共同消费，保留在 application.contract
                 // 为 AGENTS.md 已登记例外；契约类自身当前零跨层 import，此处为设计 D5/风险表明文要求的防御性豁免，
-                // 防止未来规则误伤该包的合法例外形态。
+                // 防止未来规则误判该包的合法例外形态。
                 .and().resideOutsideOfPackage(ROOT + ".runtime.application.contract..")
                 .should().dependOnClassesThat(applicationForbiddenTargets())
                 .because("应用层不得触碰基础设施与协议层（infrastructure.config 配置载体除外），保证用例编排可脱离技术细节单测与未来 Feign 化");

@@ -66,20 +66,20 @@ import java.util.function.Supplier;
  * （2.1 校验规则本体）与 {@link TurnEventWriter}（2.3 会话级 seq 分配与静默广播底座），
  * <b>MUST NOT</b> 依赖 {@code execution.TurnExecutionService}——中断路径以「DB CAS 条件更新 +
  * 本地推流收敛」闭环：取消信号只投递给进程内会话上下文（{@code interruptCurrentRun}）与持久
- * {@code canceling} 痕迹，由在跑执行侧的两源取消谓词自行感知收流，本服务不触碰任何执行链入口。</p>
+ * {@code canceling} 痕迹，由运行中的执行侧的两源取消谓词自行感知收流，本服务不触碰任何执行链入口。</p>
  * <p><b>中断 / 断连 / 删除 / 归档链路</b>（状态一律经内部相位 {@code turn_phase} 的 DB CAS，
  * 对外仅以终态收场事件集表达：线程先、会话后）：</p>
  * <pre>{@code
  *  user.interrupt → interruptSession
  *     markCanceling：CAS turn_phase → cancelling（无活跃执行 0 行 = 幂等空操作，不产生任何信号）
  *     提交成功后 sessionContext.interruptCurrentRun() → 标记中断 + turn.cancel() → SDK 流自然收流
- *     在跑执行侧感知在途取消（两源谓词：进程内中断标志 / cancelling 持久痕迹）
+ *     运行中的执行侧感知进行中的取消（两源谓词：进程内中断标志 / cancelling 持久痕迹）
  *        → 收场落 [session.thread_status_idle, session.status_idle]（stop_reason.type=interrupted），
  *          相位回 idle；取消期间零状态事件（session.interrupted / session.status_canceling 已废止）
  *  断连（SSE onTimeout/onError/onCompletion）MUST NOT 取消活跃执行——仅释放连接句柄
  *  deleteSession → [事务] 逻辑删会话 + 事件流 → cancel + reject pending + 释放 SSE + 上下文移除 + 工件清理
  *  archiveSession → [事务] 仅置 archived_at（正交维度，守卫 archived_at IS NULL；0 行 = 并发归档 → 409）
- *                   → 不产生任何状态事件，随后 cancel 在跑执行 + 释放 SSE + 释放 turn 租约
+ *                   → 不产生任何状态事件，随后 cancel 运行中的执行 + 释放 SSE + 释放 turn 租约
  * }</pre>
  */
 @Service
@@ -227,7 +227,7 @@ public class SessionLifecycleService {
      *    ├─ requireOwnedSession（不存在 / 越权 → 404）
      *    ├─ [事务] deleteBySessionId（agent_session + chat_event + session_thread 逻辑删，is_deleted=1）
      *    ├─ 拒绝待确认现场（HITL 等待期无流可收）并释放阻塞虚拟线程
-     *    ├─ AgentSessionContext.cancel()             // 幂等中断在跑执行
+     *    ├─ AgentSessionContext.cancel()             // 幂等中断运行中的执行
      *    ├─ bindConnection(NoOpConnectionHandle)     // 释放全部 SSE emitter（旧句柄 close）
      *    ├─ sessionRegistry.remove                   // 移除内存会话上下文
      *    ├─ deleteSessionArtifacts（尽力而为）        // 清理 scope=session 运行时产出
@@ -255,7 +255,7 @@ public class SessionLifecycleService {
                         DeploymentRunLifecycleApi.OUTCOME_TERMINATED));
             }
         });
-        // 幂等取消在跑执行并标记中断（事件流已删除，本轮经中断路径静默收尾）
+        // 幂等取消运行中的执行并标记中断（事件流已删除，本轮经中断路径静默收尾）
         sessionRegistry.get(sessionId).ifPresent(ctx -> ctx.cancel());
         // 关闭全部订阅者：解绑连接触发旧句柄 close 完成全部 emitter 关闭（替代 eventBroadcaster.complete）
         sessionRegistry.get(sessionId).ifPresent(ctx -> ctx.bindConnection(NoOpConnectionHandle.INSTANCE));
@@ -276,13 +276,13 @@ public class SessionLifecycleService {
     }
 
     /**
-     * 中断会话（{@code user.interrupt} 入站语义）：中断在跑 turn，状态经 {@code canceling}
+     * 中断会话（{@code user.interrupt} 入站语义）：中断运行中的 turn，状态经 {@code canceling}
      * 回 idle，不产生 cancelled 终态，中断以 {@code session.status_canceling}（取消请求）+
      * {@code session.interrupted} + {@code session.status_idle}（收敛回 idle）事件表达；
      * 无活跃执行时为空操作（幂等，状态不变，不产生任何取消信号）。
      * <p>HITL 等待期间（waiting_confirmation）的中断：无流可中断，durable 等待作废
      * 直接回 idle（waiting_confirmation → idle 为合法直达迁移，不经 canceling；
-     * 账本未应答明细随作废终局留痕收敛）。</p>
+     * 事件表未应答明细随作废终局留痕收敛）。</p>
      * <p><b>信号投递顺序</b>：取消判定仅两源——进程内中断标志 + {@code canceling} 持久痕迹。
      * 本方法 MUST 先完成 durable 作废 / {@code processing → canceling} 持久条件更新的事务提交，
      * 提交成功后才触发同实例进程内中断（{@code interruptCurrentRun}）使执行流提前收流；
@@ -298,7 +298,7 @@ public class SessionLifecycleService {
         }
         // 活跃执行取消：CAS 相位置 cancelling，提交成功后再触发 SDK 收流
         // （无活跃执行 / 已 canceling：CAS 0 行，取消幂等空操作——不产生任何取消信号，
-        //   后续轮次的在途取消谓词不受本次影响）
+        //   后续轮次进行中的取消谓词不受本次影响）
         if (markCanceling(sessionId) == 0) {
             return;
         }
@@ -339,7 +339,7 @@ public class SessionLifecycleService {
      * （对外 status 恒为 running，不改写）。
      * <p>取消链中段不落任何状态事件（对外状态无变化，取消请求以固定回执对外应答）；
      * {@code cancelling → idle} 由执行侧收敛时的中断终态出口（{@code FINISH_TURN}，
-     * 相位前置为空集）闭环，或被取消方在途的 maxIters 终态回退链闭环。</p>
+     * 相位前置为空集）闭环，或被取消方进行中的 maxIters 终态回退链闭环。</p>
      *
      * @return CAS 受影响行数（1=置 cancelling 成功；0=无活跃执行，取消空操作）
      */
@@ -391,12 +391,12 @@ public class SessionLifecycleService {
 
     /**
      * 归档会话：仅写 {@code archived_at} 时间戳（归档是正交维度，MUST NOT 改写 status / 相位，
-     * 也 MUST NOT 产生归档状态事件），中断在跑执行并释放订阅。
+     * 也 MUST NOT 产生归档状态事件），中断运行中的执行并释放订阅。
      * <pre>{@code
      *  archiveSession
      *    ├─ requireOwnedSession（不存在 / 越权 → 404；已归档 → 幂等忽略）
      *    ├─ [事务] archive(sessionId)（仅置 archived_at，守卫 archived_at IS NULL；0 行 = 并发归档竞态 → 409）
-     *    └─ cancel 在跑执行 + bindConnection(NoOpConnectionHandle) + 释放 turn 租约
+     *    └─ cancel 运行中的执行 + bindConnection(NoOpConnectionHandle) + 释放 turn 租约
      * }</pre>
      */
     public void archiveSession(String sessionId) {
@@ -409,7 +409,7 @@ public class SessionLifecycleService {
             // 0 行：读取后至 CAS 提交前已被并发请求归档（守卫 archived_at IS NULL 未命中）→ 409 冲突
             throw new ResourceConflictException("会话归档竞态，请重试: " + sessionId);
         }
-        // HITL 等待为 durable 驻留态：归档即会话级终局，账本未应答明细随终局合法收敛（无现场需释放）
+        // HITL 等待为 durable 驻留态：归档即会话级终局，事件表未应答明细随终局合法收敛（无现场需释放）
         sessionRegistry.get(sessionId).ifPresent(ctx -> ctx.cancel());
         sessionRegistry.get(sessionId).ifPresent(ctx -> ctx.bindConnection(NoOpConnectionHandle.INSTANCE));
         // 协调层清理：归档不经过终态唯一出口，显式释放 turn 租约（幂等）

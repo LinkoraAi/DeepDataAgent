@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>与 {@link ScheduledPoolLeaseRenewalScheduler} 互斥二选一（{@code app.coordination.lease-renewal
  * =virtual-thread} 才装配）。动机：平台续约池线程数固定，并发轮次上量且 Redis 变慢
  * （命令超时 2s）时续约任务会在池队列排队，长 turn 可能连续错过周期而逼近 TTL；
- * thread-per-round 的虚拟线程让「同时在跑的续约循环数」不再受池大小约束，
+ * thread-per-round 的虚拟线程让「同时在运行的续约循环数」不再受池大小约束，
  * {@code sleep} 期间让出载体线程（Java 21 Loom M:N），数千轮次的内存代价仅为数千个挂起的虚拟线程。</p>
  *
  * <p><b>语义对齐</b>：首次执行在 {@code interval} 之后（与 {@code scheduleAtFixedRate} 一致）；

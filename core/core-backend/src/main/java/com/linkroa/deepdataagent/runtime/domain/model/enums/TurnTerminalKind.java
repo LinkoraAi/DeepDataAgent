@@ -19,7 +19,7 @@ public enum TurnTerminalKind {
     /** 执行出错（流异常无中断标志 / 构建注册失败）：回 idle，伴随 {@code session.error} */
     EXECUTION_ERROR,
 
-    /** HITL 挂起（waiting_confirmation 驻留）：物理轮结束但<b>不收尾</b>——等待事实存事件账本 */
+    /** HITL 挂起（waiting_confirmation 驻留）：物理轮结束但<b>不收尾</b>——等待事实存事件表 */
     HITL_SUSPENDED,
 
     /**

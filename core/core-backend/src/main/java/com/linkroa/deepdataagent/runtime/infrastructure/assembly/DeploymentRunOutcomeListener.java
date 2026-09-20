@@ -17,7 +17,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * 打断 deployment → schedulerApi → 命令服务 → runLifecycleApi 的 Bean 循环边。</p>
  * <p>门槛与容错语义对齐原 {@code writeBackDeploymentRun}：{@code triggerType} 为空
  * （非调度触发）直接忽略；回写失败仅记 ERROR 不抛出——会话终态主链路不受影响，
- * run 悬挂由 agent BC 启动回填兜底收敛。监听器运行于事务提交后的调用栈内，
+ * run 悬空由 agent BC 启动回填兜底收敛。监听器运行于事务提交后的调用栈内，
  * MUST NOT 读取同事务未提交数据（回写为跨 BC 独立调用，无需事务上下文）。</p>
  */
 @Component
@@ -31,7 +31,7 @@ public class DeploymentRunOutcomeListener {
     /**
      * 事务提交后消费轮次终局事件，回写调度运行终态。
      * <p>非调度触发（{@code triggerType} 为空）直接忽略；回写失败仅记 ERROR 不抛出——会话终态主链路不受影响，
-     * run 悬挂由 agent BC 启动回填兜底收敛。</p>
+     * run 悬空由 agent BC 启动回填兜底收敛。</p>
      *
      * @param event 轮次终局事件
      */
@@ -43,7 +43,7 @@ public class DeploymentRunOutcomeListener {
         try {
             deploymentRunLifecycleApi.completeByTriggerSession(event.sessionId(), event.outcome());
         } catch (RuntimeException ex) {
-            log.error("调度运行终态回写失败（会话终态不受影响，run 悬挂由回填兜底）: sessionId={}, outcome={}",
+            log.error("调度运行终态回写失败（会话终态不受影响，run 悬空由回填兜底）: sessionId={}, outcome={}",
                     event.sessionId(), event.outcome(), ex);
         }
     }

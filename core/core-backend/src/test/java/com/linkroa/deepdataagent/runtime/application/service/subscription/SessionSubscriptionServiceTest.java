@@ -244,7 +244,7 @@ class SessionSubscriptionServiceTest {
 
     @Test
     void should_notWireInterruptCallback_when_open_given_boundContext() throws IOException {
-        // given（断连不取消：SSE 仅为观察 / 回放通道，连接断开 MUST NOT 触发在跑执行取消）
+        // given（断连不取消：SSE 仅为观察 / 回放通道，连接断开 MUST NOT 触发运行中的执行取消）
         ConnectionHandle handle = mock(ConnectionHandle.class);
         when(sessionRegistry.getOrCreate(session)).thenReturn(context);
         when(transportPort.acquireHandle(any())).thenReturn(handle);

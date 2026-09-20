@@ -39,7 +39,7 @@ class RedisLeaseGrayRoundTest extends RedisFullContextTestSupport {
         String sessionId = newSession();
         String owner = leaseService.instanceId();
 
-        // when：开跑抢占（D4：NX 先于 PG CAS）
+        // when：启动抢占（D4：NX 先于 PG CAS）
         assertTrue(leaseService.tryAcquireTurnLease(sessionId));
         assertTrue(sessionRepository.transition(sessionId, Transition.BEGIN_TURN) > 0);
 
@@ -56,7 +56,7 @@ class RedisLeaseGrayRoundTest extends RedisFullContextTestSupport {
                 "续约后 TTL 应接近 10min，实际: " + turnLeaseTtlMillis(sessionId));
         List<String> ownKeys = leaseService.listOwnActiveTurnKeys();
         assertTrue(ownKeys.contains(turnKey(sessionId)),
-                "恢复枚举应包含在跑租约，实际: " + ownKeys);
+                "恢复枚举应包含运行中的租约，实际: " + ownKeys);
         assertTrue(leaseService.hasActiveTurnLease(sessionId));
 
         // when：终态释放（轮终局唯一出口）
@@ -72,9 +72,9 @@ class RedisLeaseGrayRoundTest extends RedisFullContextTestSupport {
         assertTrue(leaseService.tryAcquireTurnLease(sessionId));
         assertTrue(leaseService.renewTurnLease(sessionId));
 
-        // then④：反例——租约在途时他实例既抢不到也续不动（fail-closed 判据不失真）
+        // then④：反例——租约进行中时他实例既抢不到也续不动（fail-closed 判据不失真）
         assertFalse(leaseStore.tryAcquire(CoordLeaseType.TURN, turnKey(sessionId),
-                "it-instance-late", Duration.ofMinutes(10)), "在途租约不得被他实例抢占");
+                "it-instance-late", Duration.ofMinutes(10)), "进行中的租约不得被他实例抢占");
         assertFalse(leaseStore.renew(CoordLeaseType.TURN, turnKey(sessionId),
                 "it-instance-late", Duration.ofMinutes(10)), "非持有者续约必须确证失败");
         assertEquals(owner, turnLeaseOwner(sessionId), "他实例的尝试不得改动持有者");

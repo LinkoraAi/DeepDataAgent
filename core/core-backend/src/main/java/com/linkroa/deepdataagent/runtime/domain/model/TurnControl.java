@@ -13,12 +13,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * 终态 CAS），进程内视图对极窄竞态窗口采 fail-open 显式取舍（见变更 design D5）。</p>
  * <ul>
  *   <li><b>完成信号</b>：{@link #awaitFinish()} 供虚拟线程阻塞等待事件流终局，{@link #finish()}
- *       由终态 / 挂起 / fail-closed 路径放行（替代仅作闸门使用、从不 {@code completeExceptionally} 的
+ *       由终态 / 挂起 / fail-closed 路径放行（替代仅作门控使用、从不 {@code completeExceptionally} 的
  *       {@code CompletableFuture}）；</li>
  *   <li><b>中断句柄登记</b>：{@link #activate(Runnable)} 注册 {@code BuiltAgent#interrupt} 定向句柄
  *       （装配完成后才登记，而取消可能先到）；</li>
  *   <li><b>activate / cancel 竞态补偿</b>：{@link #cancel()} 先到时置位 {@code cancelled}，
- *       {@link #activate(Runnable)} 命中已置位则注册即触发一次，防在飞模型流失去停止句柄。</li>
+ *       {@link #activate(Runnable)} 命中已置位则注册即触发一次，防止执行中的模型流失去停止句柄。</li>
  * </ul>
  * <p><b>取消语义</b>：{@link #cancel()} 仅触发已登记中断句柄令 agent 事件流自然收流，终局由
  * {@link #finish()} 收敛；不引入「执行异常」通道，以免把「中断」误判为「执行异常」。
@@ -27,7 +27,7 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 public final class TurnControl {
 
-    /** 本轮完成闸门（终态 / 挂起 / fail-closed 路径 {@link #countDown}，{@link #awaitFinish()} 放行）。 */
+    /** 本轮完成门控（终态 / 挂起 / fail-closed 路径 {@link #countDown}，{@link #awaitFinish()} 放行）。 */
     private final CountDownLatch finished = new CountDownLatch(1);
 
     /** 取消标志（cancel 先到时供 {@link #activate(Runnable)} 补偿触发；置位后 {@link #cancel()} 幂等）。 */
@@ -37,7 +37,7 @@ public final class TurnControl {
     private final AtomicReference<Runnable> interrupter = new AtomicReference<>();
 
     /**
-     * 注册定向中断句柄；若 cancel 已先到达（竞态），注册即立即触发一次，避免在飞模型流失去停止句柄。
+     * 注册定向中断句柄；若 cancel 已先到达（竞态），注册即立即触发一次，避免执行中的模型流失去停止句柄。
      *
      * @param handler 中断句柄（{@code () -> agent.interrupt(userId, sessionId)}——
      *                定向形式，槽位键须与执行下发运行时的会话身份同源）

@@ -85,7 +85,7 @@ public class HarnessAgentRunExecutor implements AgentRunExecutor {
         if (toolCalls == null || toolCalls.isEmpty()) {
             return Flux.error(new IllegalArgumentException("待确认工具调用批次明细不能为空"));
         }
-        // 由账本明细重建 SDK 工具调用块（id/name/input 三要素数据载体，无进程内暂存依赖）；
+        // 由事件表明细重建 SDK 工具调用块（id/name/input 三要素数据载体，无进程内暂存依赖）；
         // allow=true 注入允许结果继续执行；allow=false 注入拒绝结果（工具不执行，按拒绝结果续跑）
         List<ConfirmResult> results = toolCalls.stream()
                 .map(spec -> new ConfirmResult(allow, toToolUseBlock(spec)))
@@ -197,7 +197,7 @@ public class HarnessAgentRunExecutor implements AgentRunExecutor {
             case EXCEED_MAX_ITERS -> AgentStreamSignal.of(AgentStreamSignalType.EXCEED_MAX_ITERS, null, null);
             case REQUIRE_USER_CONFIRM -> {
                 RequireUserConfirmEvent require = (RequireUserConfirmEvent) event;
-                // 批次工具调用 id 透传应用层（挂起明细的账本锚点由应用层建立，本层不再暂存现场）
+                // 批次工具调用 id 透传应用层（挂起明细的事件表锚点由应用层建立，本层不再暂存现场）
                 yield AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, require.getReplyId(),
                         require.getToolCalls().stream().map(ToolUseBlock::getId).toList());
             }

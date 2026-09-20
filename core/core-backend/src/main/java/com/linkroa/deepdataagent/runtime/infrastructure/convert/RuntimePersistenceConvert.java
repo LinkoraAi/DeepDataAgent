@@ -53,7 +53,7 @@ public interface RuntimePersistenceConvert {
     // ===== ChatEvent =====
 
     // sessionThreadId（线程归属）显式声明双向映射，防止同名字段静默丢失（回归由
-    // RuntimePersistenceConvertTest 的 Domain→Entity→Domain 全分量往返钉死）
+    // RuntimePersistenceConvertTest 的 Domain→Entity→Domain 全分量往返固化）
     @Mapping(source = "sessionThreadId", target = "sessionThreadId")
     ChatEventEntity toEntity(ChatEvent event);
 

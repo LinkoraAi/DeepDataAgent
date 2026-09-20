@@ -8,7 +8,7 @@
 # 说明：数据卷 deepdataagent_redisdata 与全量编排共用，切换编排方式数据不丢失
 # 注意：单组件编排独立运行（不依赖共享网络），服务通信走宿主机网关 host.docker.internal
 # 部署红线（move-coordination-leases-to-redis D4）：appendonly yes + appendfsync everysec 持久化租约，
-#   maxmemory-policy noeviction 禁止内存压力下淘汰租约 key（否则在途轮次随机 fail-closed）
+#   maxmemory-policy noeviction 禁止内存压力下淘汰租约 key（否则进行中的轮次随机 fail-closed）
 # ===========================================================
 
 name: deepdataagent-redis

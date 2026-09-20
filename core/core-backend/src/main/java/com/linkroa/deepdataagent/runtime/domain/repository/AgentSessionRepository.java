@@ -73,12 +73,12 @@ public interface AgentSessionRepository {
     Optional<AgentSessionStatus> currentStatus(String sessionId);
 
     /**
-     * 会话当前是否处于取消中相位（持久化的在途取消痕迹）。
-     * <p>终态判定「在途取消」谓词的跨进程权威依据：取消侧 {@code PHASE_CANCEL} 迁移的 CAS
+     * 会话当前是否处于取消中相位（持久化的取消进行中痕迹）。
+     * <p>终态判定「进行中的取消」谓词的跨进程权威依据：取消侧 {@code PHASE_CANCEL} 迁移的 CAS
      * 提交于共享库，任意实例可读、不受短 TTL 协调凭证过期限制。</p>
      *
      * @param sessionId 会话 ID
-     * @return true=内部相位当前为 cancelling（取消在途，等待执行侧收敛）
+     * @return true=内部相位当前为 cancelling（取消进行中，等待执行侧收敛）
      */
     boolean isCancelling(String sessionId);
 

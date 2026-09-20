@@ -41,7 +41,7 @@ public enum FilePurpose {
 
     /**
      * Agent 最终输出文件（创建方：Agent）。公开契约中的终稿用途，不可下载
-     * （正文已由事件账本承载）。裁定口径（enforce-tool-visibility-execution D5）：
+     * （正文已由事件表承载）。裁定口径（enforce-tool-visibility-execution D5）：
      * 沙箱产物交付统一登记为 tool_output（见 register-sandbox-artifacts 裁定）；
      * 本值非欠账——登记通道已参数化就绪，agent_output 生产方待未来出现
      * 非交付工具产出的运行时能力时自然接入

@@ -235,7 +235,7 @@ class JdbcAgentSessionRepositoryTest {
 
     @Test
     void should_returnTrue_when_isCancelling_given_cancellingPhaseRow() {
-        // given（在途取消的持久痕迹：终态决策表跨进程判定「取消在途」的权威依据）
+        // given（进行中取消的持久痕迹：终态决策表跨进程判定「取消进行中」的权威依据）
         when(mapper.isCancelling("s-1")).thenReturn(true);
 
         // when / then

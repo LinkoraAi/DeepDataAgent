@@ -39,7 +39,7 @@ import java.util.Objects;
  *       （{@link TerminalNoOpReason#EXPLICIT_TERMINAL_WINS}）</td><td>无</td><td>无</td></tr>
  *   <tr><td>HITL 挂起</td><td>相位 awaiting_confirmation</td><td>no-op（不收尾，
  *       {@link TerminalNoOpReason#HITL_SUSPENDED}）</td>
- *       <td>挂起全程零状态事件（等待事实由账本既有 tool_use 明细承载）</td>
+ *       <td>挂起全程零状态事件（等待事实由事件表既有 tool_use 明细承载）</td>
  *       <td>轮未结束不回写</td></tr>
  * </table>
  *
@@ -76,7 +76,7 @@ public final class TurnFinalizationPolicy {
         if (kind == TurnTerminalKind.LEASE_LOST) {
             return Decision.noOp(TerminalNoOpReason.LEASE_LOST);
         }
-        // 第 8 行：HITL 挂起驻留——等待事实已随账本 tool_use 明细承载，收尾路径不参与
+        // 第 8 行：HITL 挂起驻留——等待事实已随事件表 tool_use 明细承载，收尾路径不参与
         if (kind == TurnTerminalKind.HITL_SUSPENDED) {
             return Decision.noOp(TerminalNoOpReason.HITL_SUSPENDED);
         }

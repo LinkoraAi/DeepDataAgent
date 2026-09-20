@@ -27,7 +27,7 @@ class TurnControlTest {
         // when（中断句柄迟到登记，竞态补偿须立即触发一次）
         turn.activate(() -> interrupted.set(true));
 
-        // then（activate 感知 cancel 已到，注册即触发，防在飞模型流失去停止句柄）
+        // then（activate 感知 cancel 已到，注册即触发，防止执行中的模型流失去停止句柄）
         assertTrue(interrupted.get(), "cancel 先到时 activate 须立即触发中断句柄");
     }
 

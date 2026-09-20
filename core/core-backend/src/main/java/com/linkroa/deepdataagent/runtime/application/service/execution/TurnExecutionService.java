@@ -45,7 +45,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
- * turn 执行链服务（decompose-command-facade 3.2）：消息发送入口 → 开跑抢占 → 启动事务 →
+ * turn 执行链服务（decompose-command-facade 3.2）：消息发送入口 → 启动抢占 → 启动事务 →
  * 单轮执行骨架装配 → 信号分发 → 收流 / 异常收流 → 收轮的自持服务。
  * <p>方法体自原命令门面（decompose-command-facade 4.4 已物理删除）纯搬移，事务边界、异常类型与包装、日志语义、
  * 求值次序（尤其 {@code onStreamComplete} 内两源取消谓词先于内存守卫）零变化。</p>
@@ -88,7 +88,7 @@ public class TurnExecutionService {
     private SessionRuntimeRegistry sessionRegistry;
     @Resource
     private TransactionTemplate transactionTemplate;
-    /** 落库端口：仅用于开跑清毒（design D1，旧轮故障不继承到新一轮）。 */
+    /** 落库端口：仅用于启动时清除落库失败标记（design D1，旧轮故障不继承到新一轮）。 */
     @Resource
     private ChatEventPersister chatEventPersister;
     @Resource
@@ -171,12 +171,12 @@ public class TurnExecutionService {
     }
 
     /**
-     * 抢占会话 turn 租约（move-coordination-leases-to-redis D4 开跑顺序：租约 NX 先于 PG 状态 CAS）。
+     * 抢占会话 turn 租约（move-coordination-leases-to-redis D4 启动顺序：租约 NX 先于 PG 状态 CAS）。
      * <p>确证失败（同键存在未过期租约）→ 409 冲突语义拒绝；存储不可用（Redis / DB 抛异常）
-     * 原样向上抛出，<b>MUST NOT 降级为无锁开跑</b>（降级即自废 fail-closed 互斥权威）。
+     * 原样向上抛出，<b>MUST NOT 降级为无锁启动</b>（降级即自废 fail-closed 互斥权威）。
      * 调用点保证：抢占成功但后续 PG 侧失败时经 {@link #releaseTurnLeaseQuietly} 归还。</p>
      *
-     * @param reason 冲突日志 / 错误消息后缀（区分开跑与 HITL 领取场景）
+     * @param reason 冲突日志 / 错误消息后缀（区分启动与 HITL 领取场景）
      */
     public void acquireTurnLeaseOrConflict(String sessionId, String reason) {
         if (!coordinationLeaseService.tryAcquireTurnLease(sessionId)) {
@@ -208,7 +208,7 @@ public class TurnExecutionService {
      *    ├─ [启动事务] CAS(idle→processing/running) + beginRound(DB max 抬升 seq 基准)
      *    │             └─ 失败 / 异常：owner-scoped 归还租约后原样抛出
      *    ├─ 广播 session.status_processing
-     *    └─ withTurn(runAgent)   // 开跑置入本轮控制面，finally 条件清除（进程内不再拒止）
+     *    └─ withTurn(runAgent)   // 启动时置入本轮控制面，finally 条件清除（进程内不再拒止）
      *          └─ 事件流阶段（见 runStream）+ 终态唯一出口（finalizeNormal / finalizeFailed / finalizeInterrupted）
      * }</pre>
      */
@@ -246,7 +246,7 @@ public class TurnExecutionService {
 
     /**
      * 启动一轮 turn 的同步前半段：门禁 → 租约抢占 → 启动事务（CAS 独占抢占 + 抬升 seq 基准 +
-     * 按权威顺序同步落库事件）→ 提交后清毒与广播。
+     * 按权威顺序同步落库事件）→ 提交后清除落库失败标记与广播。
      * <pre>{@code
      * startTurn
      *    ├─ requireSession（不存在/已归档 → 404；已终止 → 409；活跃执行 → 409 冲突拒绝）
@@ -254,7 +254,7 @@ public class TurnExecutionService {
      *    ├─ [启动事务] CAS(idle→running) + beginRound(DB max 抬升 seq 基准)
      *    │             + 落库 status_running → thread_status_running → 入站事件
      *    │             └─ 失败 / 异常：owner-scoped 归还租约后原样抛出
-     *    └─ 提交后：清毒 + 保序广播（执行由调用方紧接着触发）
+     *    └─ 提交后：清除落库失败标记 + 保序广播（执行由调用方紧接着触发）
      * }</pre>
      *
      * @param command        消息发送命令
@@ -279,10 +279,10 @@ public class TurnExecutionService {
                     + ": 会话存在活跃执行，请先取消当前轮或等待回到 idle: " + command.sessionId());
         }
 
-        // ===== 开跑抢占（move-coordination-leases-to-redis D4：协调租约 NX 先于 PG 状态 CAS） =====
+        // ===== 启动抢占（move-coordination-leases-to-redis D4：协调租约 NX 先于 PG 状态 CAS） =====
         // 租约确证已被占用 → 409 冲突；存储不可用（Redis / DB 异常）直接向上抛出——
-        // 不降级为无锁开跑（降级即自废 fail-closed 互斥权威），此时 PG 状态一字未动
-        acquireTurnLeaseOrConflict(command.sessionId(), "会话已有在跑租约，请稍后再试");
+        // 不降级为无锁启动（降级即自废 fail-closed 互斥权威），此时 PG 状态一字未动
+        acquireTurnLeaseOrConflict(command.sessionId(), "会话已有运行中的租约，请稍后再试");
 
         // ===== 启动事务：CAS 独占抢占 + 抬升事件 seq 基准 + 权威顺序落库（失败则归还租约） =====
         // 事件流 seq 以 DB 最大序号抬升一次，全 turn（含状态事件/终态事件）由会话级计数器内存分配，
@@ -319,9 +319,9 @@ public class TurnExecutionService {
             releaseTurnLeaseQuietly(command.sessionId(), "启动事务");
             throw new DeepDataAgentException(DEEP_AGENT_RUN_ERROR + ": 创建执行现场失败");
         }
-        // 开跑清毒（design D1）：本轮 CAS 已提交（status → running），旧轮遗留的持久化失败标志
+        // 启动时清除落库失败标记（design D1）：本轮 CAS 已提交（status → running），旧轮遗留的持久化失败标志
         // 不得继承到新一轮（旧轮丢行属已回滚旧轮，事实已在 ERROR 留痕）。非事务内存操作，
-        // 置于提交之后执行——避免「CAS 失败归还租约」路径上清毒早于回滚的语义歧义
+        // 置于提交之后执行——避免「CAS 失败归还租约」路径上清除落库失败标记早于回滚的语义歧义
         chatEventPersister.clearPoisonFlag(command.sessionId());
         // 提交后按落库次序广播（实时订阅者与历史回放同源同序）
         started.persistedEvents().forEach(event ->
@@ -440,7 +440,7 @@ public class TurnExecutionService {
         // fail-closed 静默中止：续约失败已确立执行权丧失，后续到达信号一律丢弃
         //（不落库 / 不广播 / 不迁移状态；续约任务负责取消订阅，此守卫为边界竞态兜底）
         if (runState.leaseLost()) {
-            log.warn("turn 租约已丢失，丢弃在途信号（fail-closed）: sessionId={}, signalType={}",
+            log.warn("turn 租约已丢失，丢弃进行中的信号（fail-closed）: sessionId={}, signalType={}",
                     sessionId, signal.type());
             return;
         }
@@ -500,8 +500,8 @@ public class TurnExecutionService {
      * 流正常结束（onComplete）：EXCEED_MAX_ITERS 的 defer 终态、AGENT_END 缺失兜底、
      * 以及断连 / 终止中断后 SDK 正常收流的收尾入口。
      * <p>收流终态分类交领域纯函数 {@code TurnResult.classifyStreamClose}
-     * （在途取消 &gt; HITL 挂起驻留 &gt; 迭代上限 &gt; 正常结束）；
-     * 在途取消（{@link #isCancelRequested} 两源谓词）优先于迭代上限终止：
+     * （进行中的取消 &gt; HITL 挂起驻留 &gt; 迭代上限 &gt; 正常结束）；
+     * 进行中的取消（{@link #isCancelRequested} 两源谓词）优先于迭代上限终止：
      * 取消与 maxIters 竞态时经中断终态出口收敛回 idle，不落 terminated。</p>
      */
     private void onStreamComplete(ExecutionContext context, TurnControl turn) {
@@ -519,14 +519,14 @@ public class TurnExecutionService {
                 context.runState().confirmationPending(), context.runState().exceededMaxIters());
         switch (result.kind()) {
             case INTERRUPTED -> {
-                // 决策表第 4 行：断连 / 终止 / user.interrupt 在途——走中断终态（回 idle + session.interrupted）
-                log.warn("在途取消后 SDK 正常收流，执行置中断（取消优先）: sessionId={}", sessionId);
+                // 决策表第 4 行：断连 / 终止 / user.interrupt 进行中——走中断终态（回 idle + session.interrupted）
+                log.warn("进行中的取消后 SDK 正常收流，执行置中断（取消优先）: sessionId={}", sessionId);
                 turnFinalizer.finalizeInterrupted(context);
                 turn.finish();
             }
             case HITL_SUSPENDED ->
                     // 决策表第 8 行：HITL 挂起收轮（enterWaitingConfirm 已放行完成信号并释放租约）——
-                    // SDK 流随后收流，不再终态化，等待事实已存账本，续跑由确认/拒绝指令经领取事务重建现场驱动
+                    // SDK 流随后收流，不再终态化，等待事实已存事件表，续跑由确认/拒绝指令经领取事务重建现场驱动
                     log.info("HITL 挂起已收轮，SDK 流收流不终态: sessionId={}", sessionId);
             default -> {
                 // 决策表第 1 / 2 / 3 行：正常结束（COMPLETED）或迭代上限（MAX_ITERATIONS）
@@ -537,14 +537,14 @@ public class TurnExecutionService {
     }
 
     /**
-     * 在途取消谓词（两源求值，不提前缓存、不在流开始处固化）：
+     * 进行中的取消谓词（两源求值，不提前缓存、不在流开始处固化）：
      * <ol>
      *   <li>进程内中断标志——同进程快速路径（{@code interruptCurrentRun} 置位后可靠，
      *       亦承载 SSE 最后连接断开的瞬态中断）；</li>
      *   <li>{@code canceling} 持久状态痕迹——取消侧 CAS 提交于共享库，跨进程可见、
      *       不随长轮次过期、重启后仍可见，为跨进程取消的权威依据。</li>
      * </ol>
-     * <p>两个求值点语义不变：订阅建立后复检点据此判断「取消是否在途」以补触发定向中断
+     * <p>两个求值点语义不变：订阅建立后复检点据此判断「取消是否进行中」以补触发定向中断
      * （保留一次 DB 读）；收流终态判定点据此决定按中断（idle/stop）还是正常语义收敛。</p>
      */
     private boolean isCancelRequested(ExecutionContext context) {

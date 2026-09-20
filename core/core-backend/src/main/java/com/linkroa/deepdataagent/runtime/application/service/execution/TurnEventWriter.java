@@ -41,10 +41,10 @@ public class TurnEventWriter {
      * 事件推送与异步落库（流内事件与合成事件共用，用于最终事件）：seq 统一由
      * {@link AgentSessionContext#nextSequence()} 会话级计数器分配（DB 唯一索引兜底）。
      * <p>顺序：先经连接层推送（SSE 不被落库 I/O 阻塞），再入异步批量队列落库；
-     * 落库失败由后台重试耗尽后记结构化 ERROR 并<b>置该会话持久化失败毒标志</b>——事件已推送、
+     * 落库失败由后台重试耗尽后记结构化 ERROR 并<b>置该会话持久化失败标记</b>——事件已推送、
      * 断线重连回放兜底，但该会话后续终态 / 挂起的严格排空协议（事务前 {@code flush} 整队排空 +
-     * 事务首行 {@code isPoisoned} 查毒）会因此拒绝状态迁移、整事务回滚，
-     * 杜绝「账本缺行却已迁状态」。</p>
+     * 事务首行 {@code isPoisoned} 校验落库失败标记）会因此拒绝状态迁移、整事务回滚，
+     * 杜绝「事件表缺行却已迁状态」。</p>
      */
     public void persistAndBroadcast(ExecutionContext context, AssembledEvent assembled) {
         persistAndBroadcast(context, assembled, null);

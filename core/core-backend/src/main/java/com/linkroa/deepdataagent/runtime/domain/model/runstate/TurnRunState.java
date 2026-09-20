@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 单轮运行态门面（组合五件并发组件 + 散点字段），替代原 785 行 {@code AgentRunState} 大类。
- * <p>本类只承载<b>单轮</b>内可变状态，会话级跨轮状态（身份 / 事件序列号计数器 / 在跑执行句柄）
+ * <p>本类只承载<b>单轮</b>内可变状态，会话级跨轮状态（身份 / 事件序列号计数器 / 运行中的执行句柄）
  * 收敛于 {@code AgentSessionContext}，每轮经 {@code AgentSessionContext.beginRound} 新建本门面：</p>
  * <table>
  *   <caption>五组件 + 散点分工（变更 decompose-turn-pipeline D3）</caption>
@@ -51,7 +51,7 @@ public final class TurnRunState {
     /** 本轮模型调用开始事件的 evt_ ID（span.model_request_end 的配对键；惰性生成） */
     private String modelStartEventId;
     /**
-     * 本轮挂载保管库凭证的解密明文集合（开跑前装配一次性登记，信号线程只读；并发集合保证安全发布）。
+     * 本轮挂载保管库凭证的解密明文集合（启动前装配一次性登记，信号线程只读；并发集合保证安全发布）。
      * <p>唯一用途：工具结果落库 / SSE 广播与错误终态前，经 {@code SecretMasker.maskExactValues}
      * 把已知秘密的回显精确掩码（形态正则覆盖不了任意字节 token 的兜底）。
      * <b>MUST NOT 进日志 / toString / 任何序列化面</b>——仅内存瞬态，随本轮对象作废。</p>
@@ -286,7 +286,7 @@ public final class TurnRunState {
 
     /**
      * HITL 挂起时无条件丢弃进行中流快照与未刷完的尾部增量。
-     * <p>挂起即物理轮终局：在途块不会再收到收尾事件，快照残留会导致重连回补一条永远等不到收尾的 event_start 帧。</p>
+     * <p>挂起即物理轮终局：未收尾的块不会再收到收尾事件，快照残留会导致重连回补一条永远等不到收尾的 event_start 帧。</p>
      */
     public void clearInFlightStreamOnSuspend() {
         text.clearInFlightStreamOnSuspend();
@@ -413,17 +413,17 @@ public final class TurnRunState {
         return toolCalls.takeToolEventId(toolCallId);
     }
 
-    /** 登记在飞工具调用（TOOL_CALL_END 落库 tool_use 后调用）。 */
+    /** 登记执行中的工具调用（TOOL_CALL_END 落库 tool_use 后调用）。 */
     public void registerPendingToolUse(String toolCallId, String toolName) {
         toolCalls.registerPendingToolUse(toolCallId, toolName);
     }
 
-    /** 摘除在飞工具调用（TOOL_RESULT_END 落库配对结果后调用）。 */
+    /** 摘除执行中的工具调用（TOOL_RESULT_END 落库配对结果后调用）。 */
     public void removePendingToolUse(String toolCallId) {
         toolCalls.removePendingToolUse(toolCallId);
     }
 
-    /** 在飞工具调用快照（中断配对补偿输入）。 */
+    /** 执行中的工具调用快照（中断配对补偿输入）。 */
     public List<ToolCallAggregator.PendingToolUse> pendingToolUses() {
         return toolCalls.pendingToolUses();
     }

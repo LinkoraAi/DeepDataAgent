@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p><b>owner 二级索引侧不变量</b>（2026-09 原子性审查补充）：抢占脚本「SET NX 成功才 SADD」的
  * 同脚本原子面是启动恢复「按本实例槽位枚举崩溃残留」成立的前提；并发拒绝分支 MUST NOT 污染
- * 败者索引；迟到释放（F11）MUST NOT 误摘接管者索引成员。三向各有一条钉桩守护脚本回归。</p>
+ * 败者索引；迟到释放（F11）MUST NOT 误摘接管者索引成员。三向各有一条固化断言守护脚本回归。</p>
  */
 class RedisCoordLeaseLuaTest extends RedisRepositoryTestSupport {
 
@@ -148,7 +148,7 @@ class RedisCoordLeaseLuaTest extends RedisRepositoryTestSupport {
         assertTrue(leaseStore.findActive(CoordLeaseType.TURN, turnKey(sessionId)));
         assertTrue(ownerIndexContains(OWNER_B, sessionId), "迟到释放 MUST NOT 误摘接管者 owner 索引");
         assertTrue(ownerIndexContains(OWNER_A, sessionId),
-                "失权方的残留成员应保留（等惰性对账剔除，脚本不得越权清他人在途事实之外的成员）");
+                "失权方的残留成员应保留（等惰性对账剔除，脚本不得越权清除他人进行中事实之外的成员）");
     }
 
     @Test
@@ -161,7 +161,7 @@ class RedisCoordLeaseLuaTest extends RedisRepositoryTestSupport {
                 OWNER_A, Duration.ofMinutes(10)));
 
         // then：抢占成功必须同脚本写入 owner 二级索引——若 SADD 被挪出脚本或挪出成功分支，
-        // 崩溃残留将无法按本实例槽位枚举（启动恢复漏回收，只能等 10min TTL），此处钉死
+        // 崩溃残留将无法按本实例槽位枚举（启动恢复漏回收，只能等 10min TTL），此处固化
         assertEquals(OWNER_A, currentTurnValue(sessionId));
         assertTrue(ownerIndexContains(OWNER_A, sessionId), "SET NX 与 SADD 必须单脚本原子完成");
     }

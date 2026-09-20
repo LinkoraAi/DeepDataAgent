@@ -32,7 +32,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * {@link BatchChatEventPersister} 异步批量落库单测（不启动后台线程，靠 {@code flush} 确定性排空、
- * {@code isPoisoned} 查毒，验证「事务外排空 + 事务内查毒」严格排空协议的落库器侧行为）。
+ * {@code isPoisoned} 校验落库失败标记，验证「事务外排空 + 事务内校验落库失败标记」严格排空协议的落库器侧行为）。
  * <p>断言一律以「入队时的同一实例」为比对基准：{@link ChatEvent} 为含时间戳的 record，
  * 另建同字段实例不相等。</p>
  */
@@ -106,11 +106,11 @@ class BatchChatEventPersisterTest {
         verify(repository, never()).save(any(ChatEvent.class));
     }
 
-    // ==================== 会话级毒标志 + 严格排空协议（flush 排空 + isPoisoned 查毒） ====================
+    // ==================== 会话级落库失败标记 + 严格排空协议（flush 排空 + isPoisoned 校验落库失败标记） ====================
 
     @Test
     void should_markPoisonedAndDrainOthers_when_flush_given_sessionPersistExhausted() {
-        // given（队列内本会话一条事件写库必失败：重试耗尽置毒后仍须排空其余事件）
+        // given（队列内本会话一条事件写库必失败：重试耗尽标记落库失败后仍须排空其余事件）
         BatchChatEventPersister persister = new BatchChatEventPersister(repository);
         ChatEvent failing = event("s-1", 1L);
         ChatEvent following = event("s-1", 2L);
@@ -121,14 +121,14 @@ class BatchChatEventPersisterTest {
         // when（协议·事务前段：尽力而为整队排空，本方法不抛异常）
         persister.flush();
 
-        // then（队列已排空——同批后继事件照常落库；失败事件按重试上限写 2 次后丢弃并置毒，
-        //       调用方据此在事务首行查毒命中抛异常回滚状态迁移事务）
+        // then（队列已排空——同批后继事件照常落库；失败事件按重试上限写 2 次后丢弃并标记落库失败，
+        //       调用方据此在事务首行校验落库失败标记命中抛异常回滚状态迁移事务）
         verify(repository, times(2)).save(failing);
         verify(repository).save(following);
         assertTrue(persister.isPoisoned("s-1"));
         // when（再次排空：已出队事件不重复写）
         persister.flush();
-        // then（毒标志持续至显式清除：再次查毒仍命中，防悬挂协议不因重试窗口松动）
+        // then（落库失败标记持续至显式清除：再次校验落库失败标记仍命中，防永久阻塞协议不因重试窗口松动）
         assertTrue(persister.isPoisoned("s-1"));
         verify(repository, times(2)).save(failing);
         verify(repository, times(1)).save(following);
@@ -136,17 +136,17 @@ class BatchChatEventPersisterTest {
 
     @Test
     void should_reportNoPoison_when_flush_given_allEventsPersisted() {
-        // given（无毒标志：全部事件可正常落库）
+        // given（无落库失败标记：全部事件可正常落库）
         BatchChatEventPersister persister = new BatchChatEventPersister(repository);
         ChatEvent first = event("s-1", 1L);
         ChatEvent second = event("s-2", 1L);
         persister.enqueue(first);
         persister.enqueue(second);
 
-        // when（协议·事务前段排空 + 首行查毒段）
+        // when（协议·事务前段排空 + 首行校验落库失败标记段）
         persister.flush();
 
-        // then（两会话事件均落库、查毒均为假，队列已清空——再次排空不重复写）
+        // then（两会话事件均落库、校验落库失败标记均为假，队列已清空——再次排空不重复写）
         verify(repository).save(first);
         verify(repository).save(second);
         assertFalse(persister.isPoisoned("s-1"));
@@ -168,17 +168,17 @@ class BatchChatEventPersisterTest {
         // when（事务前整队排空：逐条独立提交，语义与改造前一致）
         persister.flush();
 
-        // then（失败事件不中断 drain：他会话事件照常落库、s-2 查毒为假——毒集合按 sessionId
-        //       隔离，本会话毒发不波及他会话已落库事实）
+        // then（失败事件不中断 drain：他会话事件照常落库、s-2 校验落库失败标记为假——落库失败标记集合按 sessionId
+        //       隔离，本会话落库失败不波及他会话已落库事实）
         verify(repository).save(otherSession);
         assertFalse(persister.isPoisoned("s-2"));
-        // then（毒仅属故障会话：s-1 查毒命中，调用方据此拒绝其状态迁移）
+        // then（落库失败标记仅属故障会话：s-1 校验落库失败标记命中，调用方据此拒绝其状态迁移）
         assertTrue(persister.isPoisoned("s-1"));
     }
 
     @Test
     void should_passNextRoundPoisonCheck_when_clearPoisonFlag_given_sessionPreviouslyPoisoned() {
-        // given（上一轮某事件写失败 → 会话被置毒，查毒命中）
+        // given（上一轮某事件写失败 → 会话被标记落库失败，校验落库失败标记命中）
         BatchChatEventPersister persister = new BatchChatEventPersister(repository);
         ChatEvent broken = event("s-1", 1L);
         doThrow(new RuntimeException("db down")).when(repository).save(broken);
@@ -186,13 +186,13 @@ class BatchChatEventPersisterTest {
         persister.flush();
         assertTrue(persister.isPoisoned("s-1"));
 
-        // when（新一轮开跑 CAS 提交成功后清毒，并排入新一轮事件后排空）
+        // when（新一轮启动 CAS 提交成功后清除落库失败标记，并排入新一轮事件后排空）
         persister.clearPoisonFlag("s-1");
         ChatEvent nextRound = event("s-1", 2L);
         persister.enqueue(nextRound);
         persister.flush();
 
-        // then（旧轮故障不继承：新一轮查毒通过，新事件正常落库）
+        // then（旧轮故障不继承：新一轮校验落库失败标记通过，新事件正常落库）
         assertFalse(persister.isPoisoned("s-1"));
         verify(repository, times(2)).save(broken);
         verify(repository).save(nextRound);
@@ -204,14 +204,14 @@ class BatchChatEventPersisterTest {
         BatchChatEventPersister persister = new BatchChatEventPersister(repository);
         ChatEvent event = event("s-9", 1L);
 
-        // when（清毒幂等：未置毒会话重复清除 / 空 ID 清除均无副作用）
+        // when（清除落库失败标记幂等：未标记落库失败的会话重复清除 / 空 ID 清除均无副作用）
         persister.clearPoisonFlag("s-9");
         assertDoesNotThrow(() -> persister.clearPoisonFlag("s-9"));
         assertDoesNotThrow(() -> persister.clearPoisonFlag(null));
         persister.enqueue(event);
         persister.flush();
 
-        // then（查毒为假、事件正常落库；空 ID 查询同样返回假不抛异常）
+        // then（校验落库失败标记为假、事件正常落库；空 ID 查询同样返回假不抛异常）
         assertFalse(persister.isPoisoned("s-9"));
         assertFalse(persister.isPoisoned(null));
         verify(repository).save(event);
@@ -221,7 +221,7 @@ class BatchChatEventPersisterTest {
     void should_keepStrictFlushProtocolLatencyBounded_when_flush_given_50SessionsDraining()
             throws Exception {
         // given（50 会话并发入队 + 各自执行严格排空协议「事务外 flush + 事务首行 isPoisoned」；
-        //       账本单行写入固定 20µs 忙等以暴露 persistLock 争用面
+        //       事件表单行写入固定 20µs 忙等以暴露 persistLock 争用面
         //       ——不用 parkNanos：Windows 时钟粒度会把亚毫秒 park 放大到毫秒级，测到的是调度器而非锁）
         int sessions = 50;
         int eventsPerSession = 20;
@@ -246,7 +246,7 @@ class BatchChatEventPersisterTest {
                 for (int j = 1; j <= eventsPerSession; j++) {
                     persister.enqueue(event(sessionId, j));
                 }
-                // 模拟终态路径严格排空协议：事务前整队排空 + 事务首行查毒
+                // 模拟终态路径严格排空协议：事务前整队排空 + 事务首行校验落库失败标记
                 // （全局队列 → 每次排空仍与他会话争 persistLock，但排空段已不在 JDBC 事务内）
                 persister.flush();
                 assertFalse(persister.isPoisoned(sessionId));
@@ -256,17 +256,17 @@ class BatchChatEventPersisterTest {
         ready.await();
         start.countDown();
 
-        // when（全部排空 + 查毒收敛：无死锁、无毒标志误置）
+        // when（全部排空 + 校验落库失败标记收敛：无死锁、无落库失败标记误置）
         long maxLatencyMicros = 0L;
         for (Future<Long> latency : latencies) {
             maxLatencyMicros = Math.max(maxLatencyMicros, latency.get(30, TimeUnit.SECONDS));
         }
         pool.shutdownNow();
 
-        // then（1000 条事件全部落库：并发排空不丢事件、不误置毒标志）
+        // then（1000 条事件全部落库：并发排空不丢事件、不误置落库失败标记）
         assertEquals(sessions * eventsPerSession, persisted.get());
         // then（压测结论：50 并发轮次 × 单轮 20 条在队事件（合计 1000 行）+ 单行写入 20µs 的口径下，
-        //       persistLock 串行的理论写入总量仅 20ms，实测最差单次「入队 + 排空 + 查毒」协议时延
+        //       persistLock 串行的理论写入总量仅 20ms，实测最差单次「入队 + 排空 + 校验落库失败标记」协议时延
         //       仍为几十毫秒级（余量为 50 线程争用与调度开销），远低于 500ms 门槛——排空移至事务外后
         //       时延结论不变，且事务持锁时长不再包含排空段 → 全局单队列 + persistLock 不构成
         //       50 并发下的显著放大项，per-session 分区队列维持计划后续项登记，本变更不扩大范围）

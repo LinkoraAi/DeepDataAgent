@@ -3,7 +3,7 @@
 -- KEYS[1] = fire lease key（runtime:fire:<deploymentId>）
 -- ARGV[1] = owner 实例标识
 -- ARGV[2] = TTL 毫秒
--- 返回 1=获取成功；0=窗口内已有触发在途
+-- 返回 1=获取成功；0=窗口内已有触发进行中
 if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[2]) then
     return 1
 end

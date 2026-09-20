@@ -169,13 +169,13 @@ public class CoordinationLeaseService {
     /**
      * 尝试获取会话的 turn 租约（会话级独占）。
      *
-     * @return true=获取成功；false=会话已有未过期的在跑租约（并发拒绝）
+     * @return true=获取成功；false=会话已有未过期的运行中的租约（并发拒绝）
      */
     public boolean tryAcquireTurnLease(String sessionId) {
         boolean acquired = leaseStore.tryAcquire(CoordLeaseType.TURN, CoordLeaseType.TURN.keyOf(sessionId),
                 instanceId, TURN_LEASE_TTL);
         if (!acquired) {
-            log.info("turn 租约获取失败（会话已有在跑租约）: sessionId={}", sessionId);
+            log.info("turn 租约获取失败（会话已有运行中的租约）: sessionId={}", sessionId);
         }
         return acquired;
     }
@@ -185,7 +185,7 @@ public class CoordinationLeaseService {
      *
      * <p>续约以本实例 {@link #instanceId} 为持有者条件：仅当租约仍由本实例持有且未过期时
      * 成功；返回 false 即确证执行权丧失（租约过期被回收或已被他实例接管），调用方 MUST
-     * 据此 fail-closed 中止在途执行，MUST NOT 再续期 / 写终态。存储连接 / 命令异常以运行时
+     * 据此 fail-closed 中止进行中的执行，MUST NOT 再续期 / 写终态。存储连接 / 命令异常以运行时
      * 异常抛出（区别于确证失权，调用方按 design D5 二分类容忍重试）。</p>
      *
      * @return true=续期成功；false=执行权已失效（不存在 / 已过期 / 已易主）
@@ -203,7 +203,7 @@ public class CoordinationLeaseService {
     }
 
     /**
-     * 会话是否存在有效 turn 租约（任意持有者；启动恢复兜底复位据此跳过存活实例在跑的会话）。
+     * 会话是否存在有效 turn 租约（任意持有者；启动恢复兜底复位据此跳过存活实例运行中的会话）。
      */
     public boolean hasActiveTurnLease(String sessionId) {
         return leaseStore.findActive(CoordLeaseType.TURN, CoordLeaseType.TURN.keyOf(sessionId));
@@ -226,12 +226,12 @@ public class CoordinationLeaseService {
     /**
      * 尝试获取调度器的触发防重租约（窗口内仅一个触发可进入执行编排）。
      *
-     * @return true=获取成功；false=窗口内已有触发在途（重复触发被拒）
+     * @return true=获取成功；false=窗口内已有触发进行中（重复触发被拒）
      */
     public boolean tryAcquireFireLease(String schedulerId) {
         boolean acquired = leaseStore.fireTryAcquire(schedulerId, instanceId);
         if (!acquired) {
-            log.info("调度触发被防重租约拒绝（窗口内已有触发在途）: schedulerId={}", schedulerId);
+            log.info("调度触发被防重租约拒绝（窗口内已有触发进行中）: schedulerId={}", schedulerId);
         }
         return acquired;
     }

@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * PG 状态 CAS 与 Redis 租约交错集成测试（move-coordination-leases-to-redis tasks 2.4 与
  * tasks 2.5 的 HITL 段，真连 Redis + PostgreSQL）。
  *
- * <p>复现开跑时序（design D4）：<b>turn 租约 NX 先于 PG {@code BEGIN_TURN} CAS</b>，CAS 失败 /
+ * <p>复现启动时序（design D4）：<b>turn 租约 NX 先于 PG {@code BEGIN_TURN} CAS</b>，CAS 失败 /
  * 异常经 owner-scoped 释放归还租约；互斥权威仍落在 DB CAS（Redis 重启丢锁只造成误杀，不造成双跑）。</p>
  */
 class TurnLeasePgCasInterleavingTest extends RedisFullContextTestSupport {
@@ -44,7 +44,7 @@ class TurnLeasePgCasInterleavingTest extends RedisFullContextTestSupport {
         CountDownLatch start = new CountDownLatch(1);
         AtomicInteger turnsStarted = new AtomicInteger();
 
-        // when：两实例按 D4 时序（Redis NX → PG BEGIN_TURN CAS）并发开跑同一会话
+        // when：两实例按 D4 时序（Redis NX → PG BEGIN_TURN CAS）并发启动同一会话
         try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
             for (String owner : List.of(OWNER_A, OWNER_B)) {
                 pool.submit(() -> {
@@ -62,7 +62,7 @@ class TurnLeasePgCasInterleavingTest extends RedisFullContextTestSupport {
         }
 
         // then：双 turn 无双跑——租约与 DB CAS 合起来只放行一轮，会话落在 processing
-        assertEquals(1, turnsStarted.get(), "同一会话并发开跑必须只有一轮进入执行");
+        assertEquals(1, turnsStarted.get(), "同一会话并发启动必须只有一轮进入执行");
         assertEquals(1, countSessionsIn(sessionId, "processing"));
         assertEquals(1, countTurnKeyOwners(sessionId), "同一 turn key 全库只应有唯一持有者");
     }
@@ -82,7 +82,7 @@ class TurnLeasePgCasInterleavingTest extends RedisFullContextTestSupport {
             leaseStore.releaseOwned(CoordLeaseType.TURN, turnKey(sessionId), OWNER_A);
         }
 
-        // then：CAS 失败即归还，租约不悬挂（免等 TTL）
+        // then：CAS 失败即归还，租约不悬空（免等 TTL）
         assertEquals(0, casRows, "非 idle 会话的 BEGIN_TURN CAS 必须 0 行");
         assertFalse(leaseStore.findActive(CoordLeaseType.TURN, turnKey(sessionId)),
                 "CAS 失败后租约应已被 owner-scoped 释放");
@@ -90,7 +90,7 @@ class TurnLeasePgCasInterleavingTest extends RedisFullContextTestSupport {
 
     @Test
     void should_requireReAcquire_when_hitlSuspendThenResume_given_turnLeaseLifecycle() {
-        // given：一轮开跑（NX + CAS）
+        // given：一轮启动（NX + CAS）
         String sessionId = newSession();
         assertTrue(startTurn(OWNER_A, sessionId));
 
@@ -99,7 +99,7 @@ class TurnLeasePgCasInterleavingTest extends RedisFullContextTestSupport {
                 sessionRepository.transition(sessionId, Transition.PHASE_AWAIT)) > 0);
         assertTrue(leaseStore.releaseOwned(CoordLeaseType.TURN, turnKey(sessionId), OWNER_A));
 
-        // then①：挂起期间无租约悬挂，其他实例可抢占
+        // then①：挂起期间无租约悬空，其他实例可抢占
         assertFalse(leaseStore.findActive(CoordLeaseType.TURN, turnKey(sessionId)));
         assertTrue(leaseStore.tryAcquire(CoordLeaseType.TURN, turnKey(sessionId),
                 OWNER_B, Duration.ofMinutes(10)), "确认领取须重新 NX");
@@ -111,9 +111,9 @@ class TurnLeasePgCasInterleavingTest extends RedisFullContextTestSupport {
     }
 
     /**
-     * 按 design D4 的开跑时序抢占一轮执行权：先 Redis NX，后 PG CAS；CAS 失败归还租约。
+     * 按 design D4 的启动时序抢占一轮执行权：先 Redis NX，后 PG CAS；CAS 失败归还租约。
      *
-     * @return true=本轮开跑成功
+     * @return true=本轮启动成功
      */
     private boolean startTurn(String owner, String sessionId) {
         if (!leaseStore.tryAcquire(CoordLeaseType.TURN, turnKey(sessionId),

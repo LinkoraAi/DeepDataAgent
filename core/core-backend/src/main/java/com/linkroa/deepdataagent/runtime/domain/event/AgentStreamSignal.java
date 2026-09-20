@@ -58,7 +58,7 @@ public record AgentStreamSignal(
     /**
      * 便捷构造：HITL 挂起事件（关联 reply_id + 待确认工具调用批次 id 列表）。
      * <p>SDK {@code REQUIRE_*} 事件按 reply 整批携带待确认工具调用，批次 id 透传给
-     * 应用层装配 {@code session.requires_action} 明细（账本锚点即由此建立），
+     * 应用层装配 {@code session.requires_action} 明细（事件表锚点即由此建立），
      * durable 确认解析据此重建整批现场。</p>
      */
     public static AgentStreamSignal hitl(AgentStreamSignalType type, String replyId,

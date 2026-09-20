@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <ul>
  *   <li><b>本实例残留</b>：owner set 枚举出的残留 turn 租约 → 释放租约 + 会话
  *       {@code processing → idle}（F13 只回收本实例槽位）；</li>
- *   <li><b>他实例在跑</b>：租约由其他实例持有时既不释放也不复位会话；</li>
+ *   <li><b>他实例运行中</b>：租约由其他实例持有时既不释放也不复位会话；</li>
  *   <li><b>过期残留成员</b>：索引成员对应的 key 已 TTL 过期 → 扫描时惰性 SREM；</li>
  *   <li><b>durable 等待</b>：{@code waiting_confirmation} 仅释放租约、状态不动。</li>
  * </ul>
@@ -67,7 +67,7 @@ class StartupRecoveryRedisLeaseTest extends RedisFullContextTestSupport {
 
     @Test
     void should_notTouchSession_when_startupRecovery_given_leaseHeldByOtherInstance() {
-        // given：会话在跑，但执行权由<b>其他实例</b>持有（滚动发布期间的存活实例）
+        // given：会话运行中，但执行权由<b>其他实例</b>持有（滚动发布期间的存活实例）
         String sessionId = newSession();
         assertTrue(leaseStore.tryAcquire(CoordLeaseType.TURN, CoordLeaseType.TURN.keyOf(sessionId),
                 OTHER_INSTANCE, Duration.ofMinutes(10)));
@@ -79,7 +79,7 @@ class StartupRecoveryRedisLeaseTest extends RedisFullContextTestSupport {
         // then（F13：既不摘他实例租约，也不兜底复位其正在执行的会话）
         assertTrue(leaseService.hasActiveTurnLease(sessionId), "他实例租约 MUST NOT 被本实例回收");
         assertEquals(OTHER_INSTANCE, turnLeaseOwner(sessionId));
-        assertEquals(1, countSessionsIn(sessionId, "processing"), "他实例在跑的会话不得被复位");
+        assertEquals(1, countSessionsIn(sessionId, "processing"), "他实例运行中的会话不得被复位");
     }
 
     @Test
@@ -111,7 +111,7 @@ class StartupRecoveryRedisLeaseTest extends RedisFullContextTestSupport {
         // when
         runRecovery();
 
-        // then：只归还执行权，等待事实存事件账本，状态不作废（确认 / 拒绝可重启后续跑）
+        // then：只归还执行权，等待事实存事件表，状态不作废（确认 / 拒绝可重启后续跑）
         assertFalse(leaseService.hasActiveTurnLease(sessionId));
         assertEquals(1, countSessionsIn(sessionId, "waiting_confirmation"),
                 "waiting_confirmation 为 durable 等待驻留态，重启不复位");

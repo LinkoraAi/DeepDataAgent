@@ -212,7 +212,7 @@ class RoundExecutionTemplateTest {
         template.run(ctx, a -> Flux.just(sig(AgentStreamSignalType.AGENT_END)));
 
         // then 失败出口携带 setup=true，订阅 / 释放均不发生（agent 未产出）；
-        // 续约在装配前已启动，并在出口统一停止（不泄漏虚续约）
+        // 续约在装配前已启动，并在出口统一停止（不残留多余续约）
         assertTrue(runFailureCalled.get());
         assertSame(boom, runFailureEx.get());
         assertTrue(runFailureSetup.get());
@@ -305,7 +305,7 @@ class RoundExecutionTemplateTest {
                 }
             }
             // then 收轮完成：流未正常收流（无 onComplete），句柄仍释放、续约停止
-            assertTrue(done.await(2_000, TimeUnit.MILLISECONDS), "fail-closed 中止未收轮（awaitFinish 悬挂）");
+            assertTrue(done.await(2_000, TimeUnit.MILLISECONDS), "fail-closed 中止未收轮（awaitFinish 永久阻塞）");
         } finally {
             worker.interrupt();
         }
@@ -381,7 +381,7 @@ class RoundExecutionTemplateTest {
         Runnable task = captureRenewalTask(runState, new TurnControl());
         task.run();
 
-        // then（当周期重试一次即恢复，故障计数归零，绝不误杀在途轮次）
+        // then（当周期重试一次即恢复，故障计数归零，绝不误判进行中的轮次）
         verify(leaseService, times(2)).renewTurnLease(SESSION_ID);
         assertFalse(runState.leaseLost());
         // 下一周期正常续约 → 仍不失权
@@ -406,14 +406,14 @@ class RoundExecutionTemplateTest {
         // when 第二个连续故障周期
         task.run();
 
-        // then（连续 2 周期取不到确证成功 → fail-closed 中止在途执行）
+        // then（连续 2 周期取不到确证成功 → fail-closed 中止进行中的执行）
         assertTrue(runState.leaseLost());
         verify(leaseService, times(4)).renewTurnLease(SESSION_ID);
     }
 
     @Test
     void should_skipRenewal_when_leaseRenewal_given_leaseAlreadyLost() {
-        // given（已 fail-closed：后续周期不再打存储，避免毒续约）
+        // given（已 fail-closed：后续周期不再打存储，避免多余续约）
         TurnRunState runState = new TurnRunState();
         runState.markLeaseLost();
 

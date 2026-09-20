@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *       （idle / running / rescheduling / terminated）与内部 {@code turn_phase} 四态
  *       （idle / running / awaiting_confirmation / cancelling，经 {@code active()} 判定「存在活跃执行」，
  *       相位 MUST NOT 出现在任何响应或状态事件中），本聚合不保留
- *       内存状态机副本——HITL 挂起为 durable 事实（事件账本批次明细 + 会话状态），
+ *       内存状态机副本——HITL 挂起为 durable 事实（事件表批次明细 + 会话状态），
  *       轮内守卫经 {@link TurnRunState#confirmationPending()} 判定，进程内
  *       无跨轮驻留现场。</li>
  * </ul>
@@ -41,7 +41,7 @@ public final class AgentSessionContext {
 
     // ==================== 执行层 Execution ====================
 
-    /** 当前轮执行控制面（null=空闲；开跑事务成功后经 {@link #beginTurn} 置入，轮终局 finally 经 {@link #endTurn} 条件清除） */
+    /** 当前轮执行控制面（null=空闲；启动事务成功后经 {@link #beginTurn} 置入，轮终局 finally 经 {@link #endTurn} 条件清除） */
     private volatile TurnControl currentTurn;
 
     /** 当前 turn 事件流累积态（每轮经 {@link #beginRound} 替换） */
@@ -133,7 +133,7 @@ public final class AgentSessionContext {
      * 开启本轮控制面：置入 {@code currentTurn}。
      * <p>置位时发现槽位非空<b>不拒止</b>（跨进程互斥权威在 DB {@code BEGIN_TURN} CAS），仅记结构化
      * ERROR 告警后照常执行——撞「上轮 finally 清槽前」毫秒窗双跑，由 Redis turn 租约 owner-scoped Lua、
-     * 事件 {@code (session_id, seq)} 全序与终态 CAS 共同保证账本不错乱、终态不双写。</p>
+     * 事件 {@code (session_id, seq)} 全序与终态 CAS 共同保证事件表不错乱、终态不双写。</p>
      *
      * @param turn 本轮执行控制面（不可为 null）
      */
@@ -151,7 +151,7 @@ public final class AgentSessionContext {
      * 清除本轮控制面：仅当槽位仍指向本轮对象时置空，防毫秒窗内误清新一轮控制面
      * （新轮已 {@link #beginTurn} 覆盖时旧轮 finally 不得摘除新轮）。
      *
-     * @param turn 本轮执行控制面（开跑时同一对象）
+     * @param turn 本轮执行控制面（启动时同一对象）
      */
     public void endTurn(TurnControl turn) {
         if (this.currentTurn == turn) {

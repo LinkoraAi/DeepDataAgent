@@ -41,7 +41,7 @@ services:
     restart: unless-stopped
 
   # Redis 8：Schema 缓存、限流与协调租约（move-coordination-leases-to-redis D4 部署红线）
-  #   appendonly yes + appendfsync everysec：租约持久化，进程重启不丢在跑锁；
+  #   appendonly yes + appendfsync everysec：租约持久化，进程重启不丢运行中的锁；
   #   maxmemory-policy noeviction：租约 key 只由 TTL 过期，禁止内存压力淘汰（否则随机 fail-closed）
   redis:
     image: redis:8.10.0-alpine

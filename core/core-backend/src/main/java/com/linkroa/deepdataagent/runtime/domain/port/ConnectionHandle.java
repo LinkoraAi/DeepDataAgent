@@ -61,7 +61,7 @@ public interface ConnectionHandle {
 
     /**
      * 注册断连回调（端口形状兼容保留，语义已收敛为无副作用）。
-     * <p><b>断连不取消</b>：SSE 连接只是观察 / 回放通道，连接断开 MUST NOT 触发在跑执行取消
+     * <p><b>断连不取消</b>：SSE 连接只是观察 / 回放通道，连接断开 MUST NOT 触发运行中的执行取消
      * （取消只能由显式 {@code POST /cancel} 或 {@code user.interrupt} 发起，客户端断线重连凭
      * {@code Last-Event-ID} 回放即可）。实现方 SHOULD 将其视为无绑定空操作，MUST NOT 借该回调
      * 触发任何执行副作用。</p>

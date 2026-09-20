@@ -16,7 +16,7 @@ import java.util.Map;
  *
  * <p>启动时经 Redisson 节点管理面回显 {@code maxmemory-policy}：租约 key 的语义是「服务端 TTL
  * 自过期」，一旦内存压力触发淘汰（allkeys-lru / volatile-* 等策略），锁会在 TTL 之前随机消失，
- * 表现为<b>随机 fail-closed 中止在途轮次</b>——运维侧必须配置 {@code noeviction}。
+ * 表现为<b>随机 fail-closed 中止进行中的轮次</b>——运维侧必须配置 {@code noeviction}。
  * 非 {@code noeviction} 时 MUST WARN（只告警不阻断启动：策略可能由托管 Redis 平台统一治理）。</p>
  *
  * <p>读取失败（受限实例禁用 {@code CONFIG} 命令等）同样降级为 WARN 并跳过自检，
@@ -65,7 +65,7 @@ public class RedisCoordLeaseStoreProbe {
             return;
         }
         log.warn("协调租约 Redis 部署红线不满足: {}={}，期望 {}——内存压力下租约 key 会被随机淘汰，"
-                + "表现为在途轮次随机 fail-closed 中止，请尽快改为 noeviction 并开启 appendfsync everysec",
+                + "表现为进行中的轮次随机 fail-closed 中止，请尽快改为 noeviction 并开启 appendfsync everysec",
                 CONFIG_MAXMEMORY_POLICY, policy, REQUIRED_POLICY);
     }
 

@@ -15,7 +15,7 @@ public interface CoordinationLeaseApi {
      * 尝试获取调度器触发防重租约（窗口内仅一个触发可进入执行编排）。
      *
      * @param schedulerId 调度器业务 ID
-     * @return true=获取成功；false=窗口内已有触发在途（重复触发应被拒绝）
+     * @return true=获取成功；false=窗口内已有触发进行中（重复触发应被拒绝）
      */
     boolean tryAcquireFireLease(String schedulerId);
 

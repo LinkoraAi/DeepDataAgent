@@ -40,7 +40,7 @@ services:
 
   # ---------- Redis 8：Schema 缓存、限流与协调租约 ----------
   # 部署红线（move-coordination-leases-to-redis D4）：AOF everysec 持久化租约；
-  #   noeviction 禁止内存压力下淘汰租约 key（否则在途轮次随机 fail-closed）
+  #   noeviction 禁止内存压力下淘汰租约 key（否则进行中的轮次随机 fail-closed）
   redis:
     image: redis:8.10.0-alpine
     command: [ "redis-server", "--requirepass", "${REDIS_PASSWORD:-redis}", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction" ]

@@ -57,7 +57,7 @@ public interface CoordinationLeaseStore {
 
     /**
      * 只读存在性（等价现状 {@code findActive}）：是否存在指定键的<b>有效</b>（未过期）租约。
-     * 启动恢复兜底复位据此跳过他实例在跑的会话。
+     * 启动恢复兜底复位据此跳过他实例运行中的会话。
      */
     boolean findActive(CoordLeaseType leaseType, String leaseKey);
 
@@ -74,7 +74,7 @@ public interface CoordinationLeaseStore {
      *
      * @param deploymentId 调度器业务 ID
      * @param owner        持有者实例标识
-     * @return true=获取成功；false=窗口内已有触发在途
+     * @return true=获取成功；false=窗口内已有触发进行中
      */
     boolean fireTryAcquire(String deploymentId, String owner);
 

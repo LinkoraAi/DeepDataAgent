@@ -23,13 +23,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * {@link PendingBatchResolver} 账本解析单测（decompose-command-facade 2.2 自命令服务 HITL 分区外迁）。
- * <p>新形态等待现场完全由账本承载：工具调用集合（{@code agent.tool_use} / {@code agent.mcp_tool_use}）
+ * {@link PendingBatchResolver} 事件表解析单测（decompose-command-facade 2.2 自命令服务 HITL 分区外迁）。
+ * <p>新形态等待现场完全由事件表承载：工具调用集合（{@code agent.tool_use} / {@code agent.mcp_tool_use}）
  * 减去已配对工具结果集合（{@code agent.tool_result} / {@code agent.mcp_tool_result}）即「未应答批次」，
  * 不存在 {@code session.requires_action} 旁路事件。两类方法的分支语义（未应答判定 / 锚点成员判定 /
  * 解析失败降级 / 非法明细行跳过）原先仅能经 {@code resolveHumanConfirmation} 端到端用例间接触达，
  * 本类将其直断；领取事务、租约与续跑注入等编排红线由 {@code hitl.HumanConfirmationServiceTest}
- * 的 {@code resolveHumanConfirmation} 用例簇留守钉桩。</p>
+ * 的 {@code resolveHumanConfirmation} 用例簇留守固化断言。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class PendingBatchResolverTest {
@@ -67,7 +67,7 @@ class PendingBatchResolverTest {
         return ChatEvent.create(SESSION_ID, ChatEventType.AGENT_MCP_TOOL_RESULT, payloadJson, 6L);
     }
 
-    /** 桩：账本内工具调用集合 + 工具结果集合（未应答批次的唯一判据来源）。 */
+    /** 桩：事件表内工具调用集合 + 工具结果集合（未应答批次的唯一判据来源）。 */
     private void wireLedger(List<ChatEvent> toolUses, List<ChatEvent> toolResults) {
         when(chatEventRepository.findByTypes(SESSION_ID, ChatEventType.TOOL_USE_TYPES)).thenReturn(toolUses);
         if (!toolUses.isEmpty()) {
@@ -85,7 +85,7 @@ class PendingBatchResolverTest {
 
     @Test
     void should_returnEmpty_when_locatePendingBatch_given_noToolUseInLedger() {
-        // given（账本无任何工具调用行：会话未在等待）
+        // given（事件表无任何工具调用行：会话未在等待）
         when(chatEventRepository.findByTypes(SESSION_ID, ChatEventType.TOOL_USE_TYPES)).thenReturn(List.of());
 
         // when & then（空集合 = 无待确认项，由调用方映射 404；工具结果集合无需读取）
@@ -160,7 +160,7 @@ class PendingBatchResolverTest {
         // when
         List<String> batch = resolver.locatePendingBatch(SESSION_ID, null);
 
-        // then（账本损坏降级为仍待确认，确认入口不因单行损坏抛技术异常）
+        // then（事件表数据损坏降级为仍待确认，确认入口不因单行损坏抛技术异常）
         assertEquals(List.of("evt_broken"), batch);
     }
 
@@ -199,7 +199,7 @@ class PendingBatchResolverTest {
         // when
         List<PendingToolCallSpec> specs = resolver.rebuildPendingBatch(SESSION_ID, List.of("evt_a", "evt_b"));
 
-        // then（SDK id / 工具名 / 入参 JSON 均取自账本 payload，保序整批重建）
+        // then（SDK id / 工具名 / 入参 JSON 均取自事件表 payload，保序整批重建）
         assertEquals(2, specs.size());
         assertEquals("tc-1", specs.get(0).toolCallId());
         assertEquals("search", specs.get(0).toolName());
@@ -209,7 +209,7 @@ class PendingBatchResolverTest {
 
     @Test
     void should_rebuildMcpToolRow_when_rebuildPendingBatch_given_mcpToolUseEventRow() {
-        // given（D15：MCP 工具调用行与内置同形承载暂停现场，账本类型为 agent.mcp_tool_use）
+        // given（D15：MCP 工具调用行与内置同形承载暂停现场，事件表类型为 agent.mcp_tool_use）
         when(chatEventRepository.findToolUsesByEventIds(SESSION_ID, List.of("evt_mcp")))
                 .thenReturn(List.of(mcpToolUse("evt_mcp",
                         payload("tc-mcp", "mcp__weather__get_weather", "{\"city\":\"SH\"}"))));
@@ -273,7 +273,7 @@ class PendingBatchResolverTest {
 
     @Test
     void should_returnEmpty_when_rebuildPendingBatch_given_noToolUseRowsAtAll() {
-        // given（批查未命中：账本缺工具调用行）
+        // given（批查未命中：事件表缺工具调用行）
         when(chatEventRepository.findToolUsesByEventIds(anyString(), anyList())).thenReturn(List.of());
 
         // when & then（空批由调用方映射为「明细重建失败」运行错误，本类不抛）

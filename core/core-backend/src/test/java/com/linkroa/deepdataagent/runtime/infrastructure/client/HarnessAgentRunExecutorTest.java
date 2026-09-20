@@ -160,7 +160,7 @@ class HarnessAgentRunExecutorTest {
         List<AgentStreamSignal> signals = executor.streamEvents(agent, "你好", "s-1", "u-1")
                 .collectList().block();
 
-        // then（REQUIRE_* 按 reply 整批透传待确认工具调用 id，挂起明细账本锚点由应用层建立）
+        // then（REQUIRE_* 按 reply 整批透传待确认工具调用 id，挂起明细事件表锚点由应用层建立）
         assertNotNull(signals);
         assertEquals(3, signals.size());
         assertEquals(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, signals.get(0).type());
@@ -175,7 +175,7 @@ class HarnessAgentRunExecutorTest {
 
     @Test
     void should_resumeWholeBatch_when_resumeConfirmation_given_rebuiltLedgerSpecs() {
-        // given：无任何进程内暂存，仅账本重建的整批明细（两个待确认工具调用）
+        // given：无任何进程内暂存，仅事件表重建的整批明细（两个待确认工具调用）
         HarnessAgent harness = mock(HarnessAgent.class);
         HarnessBuiltAgent agent = new HarnessBuiltAgent(harness);
         when(harness.getModel()).thenReturn(null);
@@ -247,7 +247,7 @@ class HarnessAgentRunExecutorTest {
         HarnessAgentRunExecutor executor = new HarnessAgentRunExecutor();
         HarnessBuiltAgent agent = new HarnessBuiltAgent(mock(HarnessAgent.class));
 
-        // when & then：空批次属编程错误（账本明细缺失），流内直接报错不外呼 SDK
+        // when & then：空批次属编程错误（事件表明细缺失），流内直接报错不外呼 SDK
         assertThrows(IllegalArgumentException.class,
                 () -> executor.resumeConfirmation(agent, List.of(), "s-1", "u-1", true, null).blockFirst());
     }

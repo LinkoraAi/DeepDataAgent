@@ -741,7 +741,7 @@ class VaultApplicationServiceTest {
         assertEquals("sk-plain", encryptionUtil.decrypt(saved.ciphertext()));
     }
 
-    // ==================== search（design D13：total 仅首页 + 在途并发上限） ====================
+    // ==================== search（design D13：total 仅首页 + 进行中并发上限） ====================
 
     @Test
     void should_returnTotal_when_search_given_firstPage() {
@@ -779,7 +779,7 @@ class VaultApplicationServiceTest {
 
     @Test
     void should_throwTooManyRequests_when_search_given_inFlightOverLimit() throws Exception {
-        // given（10 个搜索占满在途许可：每个请求阻塞在库调用上，第 11 个请求进不来）
+        // given（10 个搜索占满进行中许可：每个请求阻塞在库调用上，第 11 个请求进不来）
         CountDownLatch inFlight = new CountDownLatch(10);
         CountDownLatch release = new CountDownLatch(1);
         when(vaultRepository.findByCursor(eq(1L), any(VaultListFilter.class), eq(21)))
@@ -795,7 +795,7 @@ class VaultApplicationServiceTest {
             for (int i = 0; i < 10; i++) {
                 pool.submit(() -> service.search(query));
             }
-            assertTrue(inFlight.await(5, TimeUnit.SECONDS), "10 个在途搜索应当全部进入库调用");
+            assertTrue(inFlight.await(5, TimeUnit.SECONDS), "10 个进行中搜索应当全部进入库调用");
 
             // when & then（许可耗尽 → 快速失败 429，不进入查询）
             assertThrows(TooManyRequestsException.class, () -> service.search(query));

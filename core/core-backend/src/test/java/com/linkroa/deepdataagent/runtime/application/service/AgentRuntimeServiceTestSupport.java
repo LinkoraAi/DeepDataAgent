@@ -76,7 +76,7 @@ import static org.mockito.Mockito.mock;
  * 4.3 {@code SessionLifecycleService}）与其协作件（{@link TurnExecutionService} /
  * {@link TurnFinalizer} / {@link TurnEventWriter} / {@link PendingBatchResolver} /
  * {@link SessionMountValidator}）以<b>真实实例 + 同一组替身端口</b>装配成一张协作网，令「哪些事件
- * 按何序落库 / 推送」「领取事务前后次序」等跨服务红线在子包镜像测试类里仍可端到端钉桩。</p>
+ * 按何序落库 / 推送」「领取事务前后次序」等跨服务红线在子包镜像测试类里仍可端到端固化断言。</p>
  * <p>夹具口径与壳测试一致：真实 {@link InMemorySessionRegistry} + 真实
  * {@code Schedulers.immediate()}（令 {@code doOnNext} 在测试线程同步跑完）+ 同步直跑虚拟执行器，
  * 仓储 / 装配 / 租约 / 事务 / 跨 BC 契约为替身。</p>
@@ -154,7 +154,7 @@ public abstract class AgentRuntimeServiceTestSupport {
 
     /**
      * 装配 runtime 应用服务协作网（@Resource 字段全部注入测试替身 / 真实协作件）。
-     * <p>落库端口三处同步（执行侧开跑清毒 + Writer 入队 + 收口器排空 / 查毒），
+     * <p>落库端口三处同步（执行侧启动时清除落库失败标记 + Writer 入队 + 收口器排空 / 校验落库失败标记），
      * 与 {@link #wirePersister} 一致的故障注入点保持「注入即全链路生效」语义。</p>
      */
     protected void assembleRuntimeServices() {
@@ -193,7 +193,7 @@ public abstract class AgentRuntimeServiceTestSupport {
         return finalizer;
     }
 
-    /** 反射装配真实执行链服务（3.2：开跑抢占 → 启动事务 → 骨架装配 → 信号分发 → 收流 / 收轮）。 */
+    /** 反射装配真实执行链服务（3.2：启动抢占 → 启动事务 → 骨架装配 → 信号分发 → 收流 / 收轮）。 */
     protected TurnExecutionService newTurnExecutionService(TurnEventWriter writer, TurnFinalizer finalizer,
                                                            ChatEventPersister persister) {
         TurnExecutionService exec = new TurnExecutionService();
@@ -216,7 +216,7 @@ public abstract class AgentRuntimeServiceTestSupport {
         return exec;
     }
 
-    /** 反射装配真实批次解析器（2.2：账本锚点定位与整批明细重建）。 */
+    /** 反射装配真实批次解析器（2.2：事件表锚点定位与整批明细重建）。 */
     protected PendingBatchResolver newPendingBatchResolver() {
         PendingBatchResolver resolver = new PendingBatchResolver();
         ReflectionTestUtils.setField(resolver, "chatEventRepository", chatEventRepository);
@@ -287,7 +287,7 @@ public abstract class AgentRuntimeServiceTestSupport {
      * <p>三个驱动目标复用协作网内同一批真实实例（{@link TurnExecutionService} /
      * {@link HumanConfirmationService} / {@link SessionLifecycleService}），故
      * 「user.message 驱动跑 turn」「user.interrupt 驱动取消链落 session.status_canceling」
-     * 「user.tool_confirmation 驱动领取续跑」三类端到端红线仍可钉桩；
+     * 「user.tool_confirmation 驱动领取续跑」三类端到端红线仍可固化断言；
      * 装配面与主源 {@code InboundEventService} 的 11 个 {@code @Resource} 一一对应。</p>
      */
     protected InboundEventService newInboundEventService() {
@@ -307,8 +307,8 @@ public abstract class AgentRuntimeServiceTestSupport {
     }
 
     /**
-     * 落库端口替身三处同步替换（严格排空协议与开跑清毒的故障注入点）：执行侧仅承载开跑清毒
-     * （design D1），入队与排空 / 查毒分别经 {@link TurnEventWriter} 与 {@link TurnFinalizer}。
+     * 落库端口替身三处同步替换（严格排空协议与启动时清除落库失败标记的故障注入点）：执行侧仅承载启动时清除落库失败标记
+     * （design D1），入队与排空 / 校验落库失败标记分别经 {@link TurnEventWriter} 与 {@link TurnFinalizer}。
      */
     protected void wirePersister(ChatEventPersister persister) {
         ReflectionTestUtils.setField(turnExecutionService, "chatEventPersister", persister);
@@ -319,7 +319,7 @@ public abstract class AgentRuntimeServiceTestSupport {
 
     // ==================== 通用桩 ====================
 
-    /** 同步落库的测试替身：enqueue 即 save、flush 无操作、查毒恒为假（无持久化故障的常态）。 */
+    /** 同步落库的测试替身：enqueue 即 save、flush 无操作、校验落库失败标记恒为假（无持久化故障的常态）。 */
     protected ChatEventPersister synchronousPersister() {
         return new ChatEventPersister() {
             @Override
@@ -329,12 +329,12 @@ public abstract class AgentRuntimeServiceTestSupport {
 
             @Override
             public void flush() {
-                // 默认无落库故障：协议·事务前段排空即等同宽松排空（置毒场景由专用替身注入）
+                // 默认无落库故障：协议·事务前段排空即等同宽松排空（标记落库失败场景由专用替身注入）
             }
 
             @Override
             public boolean isPoisoned(String sessionId) {
-                // 账本可信：事务首行查毒恒为假，状态迁移放行
+                // 事件表可信：事务首行校验落库失败标记恒为假，状态迁移放行
                 return false;
             }
 
@@ -358,7 +358,7 @@ public abstract class AgentRuntimeServiceTestSupport {
     }
 
     /**
-     * 装配事件流成功路径的公共桩（开跑抢占 + 启动事务 + 构建 + 注册 + 会话状态迁移 CAS）。
+     * 装配事件流成功路径的公共桩（启动抢占 + 启动事务 + 构建 + 注册 + 会话状态迁移 CAS）。
      * <p>公共桩以 {@code lenient} 注册避免 UnnecessaryStubbing 误报（各用例只消费其中一部分）；
      * {@code TO_IDLE} 迁移按真实 CAS 语义返回 {@code (1, 0)}：AGENT_END 提前终态已迁移成功后，
      * onComplete 兜底再次迁移受影响行数为 0（不再重复落库终态事件）。</p>
@@ -409,8 +409,8 @@ public abstract class AgentRuntimeServiceTestSupport {
     }
 
     /**
-     * 账本反查动态桩：从落库记录反查工具调用 / 工具结果两类行，模拟 durable HITL 等待现场的
-     * 账本读取（等待事实由「未应答 tool_use」承载，无 requires_action 旁路事件）。
+     * 事件表反查动态桩：从落库记录反查工具调用 / 工具结果两类行，模拟 durable HITL 等待现场的
+     * 事件表读取（等待事实由「未应答 tool_use」承载，无 requires_action 旁路事件）。
      */
     protected void wireLedgerQueries() {
         lenient().when(chatEventRepository.findByTypes(anyString(), eq(ChatEventType.TOOL_USE_TYPES)))
@@ -453,14 +453,14 @@ public abstract class AgentRuntimeServiceTestSupport {
                 AgentStreamSignal.of(AgentStreamSignalType.AGENT_END, null, null));
     }
 
-    /** 构造 {@code agent.tool_use} 账本行（payload.tool_use_id 为 SDK 调用 id，账本反查桩 / 明细重建输入）。 */
+    /** 构造 {@code agent.tool_use} 事件表行（payload.tool_use_id 为 SDK 调用 id，事件表反查桩 / 明细重建输入）。 */
     protected ChatEvent toolUseEvent(String sessionId, String sdkId, String name, String inputJson, long seq) {
         return ChatEvent.create(sessionId, ChatEventType.AGENT_TOOL_USE,
                 "{\"tool_use_id\":\"" + sdkId + "\",\"name\":\"" + name + "\",\"input\":" + inputJson + "}", seq);
     }
 
     /**
-     * 构造批次工具调用账本行（保留给未迁移的外部调用方；等待事实现由未应答 {@code agent.tool_use} 承载）。
+     * 构造批次工具调用事件表行（保留给未迁移的外部调用方；等待事实现由未应答 {@code agent.tool_use} 承载）。
      *
      * @param sessionId 会话 ID
      * @param eventIds  批次公开事件 id（取首位作 SDK 工具调用键）

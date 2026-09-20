@@ -60,7 +60,7 @@ import static org.mockito.Mockito.when;
  * <p>夹具口径与壳测试一致（装配见 {@link AgentRuntimeServiceTestSupport}）：真实
  * {@link SessionLifecycleService} + 真实 {@code SessionMountValidator} / {@code TurnEventWriter}
  * + 仓储 / 跨 BC 契约 / 物化编排 / 事务模板为替身，令「校验全前置即零物化零落库」「入库失败补偿」
- * 「中断经 DB CAS + 本地推流收敛」三条会话侧红线保持端到端可钉桩。</p>
+ * 「中断经 DB CAS + 本地推流收敛」三条会话侧红线由端到端固化断言守护。</p>
  * <p><b>中断路径不依赖执行链</b>（design D3 无边）：本类用例对 {@code coordinationLeaseService}
  * 的断言仅覆盖「无活跃执行时零触碰协调层」，取消信号一律经 {@code sessionRegistry} 的进程内
  * 会话上下文与持久 {@code canceling} 痕迹表达。</p>
@@ -176,7 +176,7 @@ class SessionLifecycleServiceTest extends AgentRuntimeServiceTestSupport {
     @Test
     void should_skipMaterializeAndPersist_when_createSession_given_mountValidationFailure() {
         // given（挂载校验失败（未就绪文件）：decompose-command-facade 2.1 后，判重 / 就绪 / 配额
-        //       的判定与异常语义由 SessionMountValidatorTest 逐条钉桩，本用例留守创建会话的
+        //       的判定与异常语义由 SessionMountValidatorTest 逐条固化，本用例留守创建会话的
         //       编排红线——校验 MUST 早于任何物化落盘与入库，非法批 MUST NOT 留下宿主副本）
         wireTransactionTemplate();
         when(fileApi.findReadyMountMeta("file_1", 1L)).thenReturn(Optional.empty());
@@ -192,7 +192,7 @@ class SessionLifecycleServiceTest extends AgentRuntimeServiceTestSupport {
     @Test
     void should_skipMaterializeAndPersist_when_createSession_given_illegalEnvironmentVariables() {
         // given（环境变量名不匹配 [A-Za-z_][A-Za-z0-9_]*：判定项本体由
-        //       SessionEnvironmentVariablesValidatorTest 逐条钉桩，本用例只留守创建路径的编排红线
+        //       SessionEnvironmentVariablesValidatorTest 逐条固化，本用例只留守创建路径的编排红线
         //       ——环境变量形态校验与挂载校验同层同序，非法值 MUST 早于物化落盘与入库）
         wireTransactionTemplate();
         CreateSessionCommand command = new CreateSessionCommand("1", "agent-a", "1.0.0", "会话", "{}",
@@ -787,7 +787,7 @@ class SessionLifecycleServiceTest extends AgentRuntimeServiceTestSupport {
     @Test
     void should_interrupt_in_process_when_interruptSession_given_canceling_committed() {
         // given：一轮活跃执行中（beginTurn 置入控制面 + beginRound 置入累积态），取消在流处理期间到达；
-        //        MARK_CANCELING 迁移 CAS 命中 1 行（回归钉桩前置：本变更不重排踢流时机，踢流本就在事务提交之后）
+        //        MARK_CANCELING 迁移 CAS 命中 1 行（回归固化断言前置：本变更不重排踢流时机，踢流本就在事务提交之后）
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         BuiltAgent agent = wireHappyPathForExecution();
@@ -813,7 +813,7 @@ class SessionLifecycleServiceTest extends AgentRuntimeServiceTestSupport {
     void should_returnToIdle_when_interruptSession_given_waitingConfirmation() {
         // given：HITL 等待期间中断（durable 等待：无流可中断，作废等待直接回 idle，不经 canceling）
         // 注（D19）：等待须由「批次 id 命中已登记候选」合法确立——TOOL_CALL_END 登记 tc-1 候选，
-        // REQUIRE 批次携带 tc-1，enterWaitingConfirm 据完整信号迁入等待相位（等待事实＝未应答工具调用账本行）
+        // REQUIRE 批次携带 tc-1，enterWaitingConfirm 据完整信号迁入等待相位（等待事实＝未应答工具调用事件表行）
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         wireHappyPathForExecution();
@@ -831,10 +831,10 @@ class SessionLifecycleServiceTest extends AgentRuntimeServiceTestSupport {
 
         // when：同步执行器挂起收轮进入等待确认态后提交 user.interrupt
         turnExecutionService.sendMessageAsync(new SendMessageCommand(session.sessionId(), "你好"));
-        // 前置：应已挂起进入等待确认态（durable 挂起即物理轮终局）——相位迁入等待 + 未应答工具调用账本入账
+        // 前置：应已挂起进入等待确认态（durable 挂起即物理轮终局）——相位迁入等待 + 未应答工具调用入事件表
         verify(sessionRepository).transition(session.sessionId(), Transition.PHASE_AWAIT);
         assertTrue(savedChatEvents().stream().anyMatch(e -> e.type() == ChatEventType.AGENT_TOOL_USE),
-                "前置：挂起现场须有未应答的工具调用账本行");
+                "前置：挂起现场须有未应答的工具调用事件表行");
         sessionLifecycleService.interruptSession(session.sessionId());
 
         // then：durable 作废（ABANDON_WAITING_CONFIRMATION CAS）+ 收场二事件留痕，不续跑不经 canceling
@@ -942,10 +942,10 @@ class SessionLifecycleServiceTest extends AgentRuntimeServiceTestSupport {
         // when：挂起收轮
         turnExecutionService.sendMessageAsync(new SendMessageCommand(session.sessionId(), "执行"));
 
-        // then：挂起驻留不是运行终局——只做相位 CAS + 未应答工具调用账本入账，零终局事件
+        // then：挂起驻留不是运行终局——只做相位 CAS + 未应答工具调用入事件表，零终局事件
         verify(sessionRepository).transition(session.sessionId(), Transition.PHASE_AWAIT);
         assertTrue(savedChatEvents().stream().anyMatch(e -> e.type() == ChatEventType.AGENT_TOOL_USE),
-                "挂起现场须有未应答的工具调用账本行");
+                "挂起现场须有未应答的工具调用事件表行");
         verify(applicationEventPublisher, never()).publishEvent(any(TurnFinished.class));
 
         // when：等待期间中断作废（waiting → idle CAS 命中）

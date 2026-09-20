@@ -43,12 +43,12 @@ import java.util.List;
  * <ol>
  *   <li><b>严格排空协议</b>（{@code saveAndBroadcastTerminal} / {@code enterWaitingConfirm}）：
  *       事务<b>外</b> {@code chatEventPersister.flush()} 整队排空 + 事务<b>首行</b>
- *       {@code requireLedgerDurable} 按会话查毒，毒发整批回滚、会话状态不迁移；
+ *       {@code requireLedgerDurable} 按会话校验落库失败标记，落库失败整批回滚、会话状态不迁移；
  *       排空 MUST NOT 置于事务内（否则本会话回滚波及他会话已落库事实）；</li>
  *   <li><b>D19 拒绝挂起</b>：批次 / 候选错配抛点（{@code enterWaitingConfirm} 首段）位于 flush
  *       与事务<b>之前</b>，两条对称分支归一为「空批次」拒绝，异常沿 {@code onStreamError →
  *       finalizeFailed} 收敛为执行错误终态，MUST NOT 落任何等待事件；</li>
- *   <li><b>防悬挂收尾</b>：查毒命中在 catch 内就地消化（真 no-op + {@code turn.finish()} +
+ *   <li><b>防止永久阻塞的收尾</b>：落库失败标记命中时在 catch 内捕获处理（真 no-op + {@code turn.finish()} +
  *       释放租约），不写终态、不发 {@code TurnFinished}，MUST NOT 让异常穿透流回调线程；</li>
  *   <li><b>挂起即物理轮终局</b>：{@code clearInFlightStreamOnSuspend} →
  *       {@code markConfirmationPending} → {@code turn.finish()} → 释放租约的先后顺序不变。</li>
@@ -86,17 +86,17 @@ public class TurnFinalizer {
 
     /**
      * 进入 HITL 等待确认态（durable）：挂起事务<b>前</b>先在事务外整队排空（design D1 严格排空
-     * 协议），事务首行按会话查毒——通过后（本会在队明细均已确认落库）才执行状态迁移 + 批次明细 /
+     * 协议），事务首行按会话校验落库失败标记——通过后（本会在队明细均已确认落库）才执行状态迁移 + 批次明细 /
      * 状态事件同事务落库，<b>挂起即物理轮终局</b>——标记等待守卫后放行完成信号（释放阻塞虚拟线程、
-     * 收轮并释放 turn 租约），等待事实只存事件账本与会话状态，进程内零驻留。
-     * <p><b>持久化原子性</b>：任一待确认明细无法确认落库（事务前已排空、首行查毒命中）时抛异常，
-     * 整事务回滚、会话保持 {@code processing}（宁可不挂起，也不留下「状态已等待而账本缺明细、
+     * 收轮并释放 turn 租约），等待事实只存事件表与会话状态，进程内零驻留。
+     * <p><b>持久化原子性</b>：任一待确认明细无法确认落库（事务前已排空、首行命中落库失败标记）时抛异常，
+     * 整事务回滚、会话保持 {@code processing}（宁可不挂起，也不留下「状态已等待而事件表缺明细、
      * 确认永久 404」的会话）；排空在事务外独立提交，他会话事件行不随本会话回滚丢失。
-     * 查毒异常在本方法就地消化（design D2 防悬挂）：仍必达收轮信号与租约释放，MUST NOT 让流回调线程
+     * 落库失败标记校验异常在本方法内捕获处理（design D2 防止永久阻塞）：仍必达收轮信号与租约释放，MUST NOT 让流回调线程
      * 携带该异常上抛而令 {@code awaitFinish()} 永久阻塞、续约永不停止。</p>
      * <p><b>批次对齐门禁（D19）</b>：状态迁移<b>之前</b>先定位候选批次，批次与登记无法对齐到任何候选
      * （空批次）时抛 {@link DeepDataAgentException} 拒绝挂起——此路径在事务之前抛出、不涉及回滚，
-     * 与上方就地消化的查毒异常不同，沿 {@code doOnNext → onStreamError → finalizeFailed} 收敛为执行错误终态
+     * 与上方在本方法内捕获处理的落库失败标记校验异常不同，沿 {@code doOnNext → onStreamError → finalizeFailed} 收敛为执行错误终态
      * （回 {@code idle} + {@code session.error}），不落任何等待事件（见 {@code runtime/hitl} 规格「挂起侧批次对齐」）。</p>
      */
     public void enterWaitingConfirm(ExecutionContext context, AgentStreamSignal signal,
@@ -124,12 +124,12 @@ public class TurnFinalizer {
                     + ", registeredCandidateIds=" + candidates.registeredIds());
         }
         // 命中候选必带 TOOL_CALL_START 惰性分配的 evt_ 锚点，故 batch 非空时 eventIds 必非空；
-        // 批次部分命中时明细仅含已对齐候选的公开事件 id（等待现场由账本这些工具调用行承载）
+        // 批次部分命中时明细仅含已对齐候选的公开事件 id（等待现场由事件表这些工具调用行承载）
         List<String> eventIds = batch.stream()
                 .map(ConfirmCandidateBatch.ConfirmCandidate::toolEventId)
                 .filter(StringUtils::isNotBlank)
                 .toList();
-        // 等待现场完全由账本承载：候选工具调用事件（agent.tool_use / agent.mcp_tool_use）已随轮内落库，
+        // 等待现场完全由事件表承载：候选工具调用事件（agent.tool_use / agent.mcp_tool_use）已随轮内落库，
         // 挂起只做相位迁移（running → awaiting_confirmation，对外 status 恒为 running），
         // MUST NOT 落 session.status_waiting_confirmation / session.requires_action 等状态事件。
         // CAS 仅当 phase running → awaiting_confirmation 成功时写入；失败（并发取消 / 归档已离开
@@ -139,15 +139,15 @@ public class TurnFinalizer {
             // 严格排空协议·事务前段：整队排空（事务外逐条独立提交，他会话事件行不进入本会话事务）
             chatEventPersister.flush();
             casSuccess = transactionTemplate.execute(status -> {
-                // 事务首行查毒：待确认明细（agent.tool_use 等低 seq 流内事件）已随事务前 flush 排空，
-                // 本会话若命中毒标志则整事务回滚——杜绝「相位已等待而账本缺明细、确认永久 404」的会话
+                // 事务首行校验落库失败标记：待确认明细（agent.tool_use 等低 seq 流内事件）已随事务前 flush 排空，
+                // 本会话若命中落库失败标记则整事务回滚——杜绝「相位已等待而事件表缺明细、确认永久 404」的会话
                 requireLedgerDurable(sessionId);
                 return sessionRepository.transition(sessionId, Transition.PHASE_AWAIT) > 0;
             });
         } catch (DeepDataAgentException ex) {
-            // 编排层防悬挂收尾（design D2）：不落等待事件、不置等待守卫，但本轮仍必达收轮信号与
+            // 编排层防止永久阻塞的收尾（design D2）：不落等待事件、不置等待守卫，但本轮仍必达收轮信号与
             // 租约释放——会话保持 processing，由租约失效与启动复位路径收敛，用户可重新发起
-            log.error("HITL 挂起事务严格排空协议失败（事务前已排空、首行查毒命中），整批回滚且不进入"
+            log.error("HITL 挂起事务严格排空协议失败（事务前已排空、首行命中落库失败标记），整批回滚且不进入"
                     + "等待确认态（明细不可信时宁不挂起）: sessionId={}, replyId={}",
                     sessionId, signal.replyId(), ex);
             turn.finish();
@@ -246,8 +246,8 @@ public class TurnFinalizer {
      * 中断终态（决策表第 4 行）：会话回 idle + 收场二事件（{@code thread_status_idle} +
      * {@code status_idle}，{@code stop_reason.type=interrupted}）同事务落库并广播。
      * <p>经前置含 canceling 的 {@code TO_IDLE} 迁移收敛，取消链 {@code processing → canceling → idle} 由此闭环。</p>
-     * <p><b>中断配对补偿</b>：收场前先对本轮仍在飞的内置 / MCP 工具调用补合成错误结果
-     * （{@code agent.tool_result} / {@code agent.mcp_tool_result}），保证事件账本无悬空 tool_use；
+     * <p><b>中断配对补偿</b>：收场前先对本轮仍执行中的内置 / MCP 工具调用补合成错误结果
+     * （{@code agent.tool_result} / {@code agent.mcp_tool_result}），保证事件表无悬空 tool_use；
      * 合成结果不落 {@code session.error}、不改写中断终态语义（终态仍为收场二事件
      * {@code stop_reason=interrupted}）。</p>
      */
@@ -268,7 +268,7 @@ public class TurnFinalizer {
 
     /**
      * 中断配对补偿（见 runtime/events 规格「中断不留下悬空 tool_use」）：对本轮 TOOL_CALL_END
-     * 已落库 tool_use 但结果未到的在飞工具调用，逐条补落合成错误结果（MCP 实名走
+     * 已落库 tool_use 但结果未到的执行中工具调用，逐条补落合成错误结果（MCP 实名走
      * {@code agent.mcp_tool_result}，其余走 {@code agent.tool_result}）。合成结果经写入底座
      * 落库并在收场事务前随严格排空协议整队排空，seq 恒低于收场二事件（先于终态可见）。
      */
@@ -280,7 +280,7 @@ public class TurnFinalizer {
         for (ToolCallAggregator.PendingToolUse call : pending) {
             turnEventWriter.persistAndBroadcast(context, syntheticInterruptedResult(call));
         }
-        log.info("中断配对补偿：为 {} 个在飞工具调用补落合成错误结果: sessionId={}",
+        log.info("中断配对补偿：为 {} 个执行中工具调用补落合成错误结果: sessionId={}",
                 pending.size(), context.sessionId());
     }
 
@@ -329,20 +329,20 @@ public class TurnFinalizer {
 
     /**
      * 终态唯一编排（决策表落地）：终态事务<b>前</b>先整队排空该会话在队事件（事务外独立提交，
-     * design D1 严格排空协议），事务首行按会话查毒——存在未落库事件即抛异常令整事务回滚；
+     * design D1 严格排空协议），事务首行按会话校验落库失败标记——存在未落库事件即抛异常令整事务回滚；
      * 随后窄读当前状态 → 调 {@code TurnFinalizationPolicy} 决策 → 按尝试链执行状态迁移 →
      * <b>按实际迁入结果构造</b>终态事件并逐条同事务落库（回放必见终态）→ 发终局事件，
      * 提交后按序广播<b>同一事件对象</b>（回放 + 实时订阅重合窗口按 id 去重），最后释放 turn 租约。
-     * <p>排空 MUST 置于事务外：他会话事件行不进入本会话 JDBC 事务，本会话毒发回滚
-     * 不波及他会话已落库事实（事务内排空会跨会话静默丢账本，design D1 被否决项）。</p>
+     * <p>排空 MUST 置于事务外：他会话事件行不进入本会话 JDBC 事务，本会话落库失败回滚
+     * 不波及他会话已落库事实（事务内排空会跨会话静默丢事件表，design D1 被否决项）。</p>
      * <p>决策为 no-op（显式指令胜出）或迁移全链未命中时不落不广播任何终态事件，
      * 避免与显式终态语义冲突；迁移与事件构造同事务，事件集与实际状态不可能错位。</p>
-     * <p><b>编排层防悬挂收尾（design D2）</b>：严格排空协议异常（事务首行查毒命中）在本方法
-     * 就地消化——记结构化 ERROR、不重试任何状态迁移、按真 no-op 处理，令调用方
+     * <p><b>编排层防止永久阻塞的收尾（design D2）</b>：严格排空协议异常（事务首行命中落库失败标记）在本方法
+     * 内捕获处理——记结构化 ERROR、不重试任何状态迁移、按真 no-op 处理，令调用方
      * （{@code finalizeNormal} / {@code finalizeFailed} / {@code finalizeInterrupted}）尾部的
      * {@code turn.finish()} 必达、方法尾部既有的 {@code releaseTurnLease} 照常执行。
      * MUST NOT 让该异常穿透到流回调线程——否则 {@code runStream} 将永久阻塞在
-     * {@code awaitFinish()}、续约任务永不停止，会话被自己的续约钉死在 {@code processing}
+     * {@code awaitFinish()}、续约任务永不停止，会话被自己的续约卡死在 {@code processing}
      * （比缺行更糟）。</p>
      *
      * @param context 执行现场
@@ -355,10 +355,10 @@ public class TurnFinalizer {
         boolean ledgerDurable = true;
         try {
             // 严格排空协议·事务前段：整队排空（事务外逐条独立提交，他会话事件行不进入本事务、
-            // 不随本会话毒发回滚丢失），排空完整性由事务首行查毒判定
+            // 不随本会话落库失败回滚丢失），排空完整性由事务首行校验落库失败标记判定
             chatEventPersister.flush();
             List<ChatEvent> committed = transactionTemplate.execute(status -> {
-                // 事务首行查毒：flush 已排空全部在队事件，本会话若命中毒标志则整事务回滚，
+                // 事务首行校验落库失败标记：flush 已排空全部在队事件，本会话若命中落库失败标记则整事务回滚，
                 // 杜绝「无终局事件的终态会话」
                 requireLedgerDurable(sessionId);
                 Decision decision = TurnFinalizationPolicy.decide(result,
@@ -392,10 +392,10 @@ public class TurnFinalizer {
             });
             toBroadcast = committed == null ? List.of() : committed;
         } catch (DeepDataAgentException ex) {
-            // 账本不可信（事务首行查毒命中：存在重试耗尽未落库事件）：终态权让渡给复位路径，
+            // 事件表不可信（事务首行命中落库失败标记：存在重试耗尽未落库事件）：终态权移交给复位路径，
             // fail-closed 语义同 leaseLost
             ledgerDurable = false;
-            log.error("终态事务严格排空协议失败（事务前已排空、首行查毒命中），整批回滚且不迁移会话状态"
+            log.error("终态事务严格排空协议失败（事务前已排空、首行命中落库失败标记），整批回滚且不迁移会话状态"
                     + "（保持 processing，由租约失效与启动复位收敛；本轮仍照常收轮）: sessionId={}",
                     sessionId, ex);
         }
@@ -411,15 +411,15 @@ public class TurnFinalizer {
     }
 
     /**
-     * 严格排空协议·事务首行查毒栅栏（design D1）：本会话存在「重试耗尽仍未落库」事件时抛
+     * 严格排空协议·事务首行校验落库失败标记（前置校验，design D1）：本会话存在「重试耗尽仍未落库」事件时抛
      * 业务异常，令外层状态迁移事务（终态 / HITL 挂起）整批回滚、会话状态不迁移。
      * <p>调用前提：已在本会话事务开启<b>前</b>经 {@code chatEventPersister.flush()} 整队排空
-     * （独立提交）——毒标志仅在落库线程持锁写失败瞬间置位，排空完成后查毒结果即与排空结果一致；
-     * 毒集合按 sessionId 隔离，他会话置毒不影响本会话判定。</p>
+     * （独立提交）——落库失败标记仅在落库线程持锁写失败瞬间置位，排空完成后校验结果即与排空结果一致；
+     * 落库失败标记集合按 sessionId 隔离，他会话标记落库失败不影响本会话判定。</p>
      */
     private void requireLedgerDurable(String sessionId) {
         if (chatEventPersister.isPoisoned(sessionId)) {
-            throw new DeepDataAgentException("事件账本存在重试耗尽未落库事件（严格排空协议查毒命中），"
+            throw new DeepDataAgentException("事件表存在重试耗尽未落库事件（严格排空协议命中落库失败标记），"
                     + "拒绝状态迁移: sessionId=" + sessionId);
         }
     }

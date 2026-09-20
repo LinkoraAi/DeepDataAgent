@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * {@link ChatEventType} 权威事件目录单测。
  * <p>验证公开契约事件类型全集（{@code {域}.{动作}} 小写点分）的反解、入站白名单与
- * 已知类型判别，并钉死已废止词汇（六态旧状态事件 / requires_action / interrupted /
+ * 已知类型判别，并固化已废止词汇（六态旧状态事件 / requires_action / interrupted /
  * define_outcome / outcome_evaluation）不得被反解或标记为已知。</p>
  */
 class ChatEventTypeTest {
@@ -217,7 +217,7 @@ class ChatEventTypeTest {
 
     @Test
     void should_coverBuiltinAndMcp_when_toolTypes_given_customToolUseExcluded() {
-        // when（平台侧工具调用账本仅内置与 MCP 两类：客户端 agent.custom_tool_use 不参与
+        // when（平台侧工具调用事件表仅内置与 MCP 两类：客户端 agent.custom_tool_use 不参与
         // 权限求值、也不进 HITL 批次重建集合）
         List<String> useTypes = ChatEventType.TOOL_USE_TYPES;
         List<String> resultTypes = ChatEventType.TOOL_RESULT_TYPES;

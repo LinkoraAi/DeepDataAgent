@@ -107,7 +107,7 @@ class AgentSessionContextTest {
 
     @Test
     void should_beNoop_when_interruptCurrentRun_given_noActiveRun() {
-        // when（无在跑轮次时中断为空操作，不抛出）
+        // when（无运行中的轮次时中断为空操作，不抛出）
         context.interruptCurrentRun();
     }
 
@@ -135,7 +135,7 @@ class AgentSessionContextTest {
 
     @Test
     void should_clearCurrentTurn_when_endTurn_given_matchingTurn() {
-        // given（开跑置入本轮控制面）
+        // given（启动时置入本轮控制面）
         TurnControl turn = new TurnControl();
         context.beginTurn(turn);
 

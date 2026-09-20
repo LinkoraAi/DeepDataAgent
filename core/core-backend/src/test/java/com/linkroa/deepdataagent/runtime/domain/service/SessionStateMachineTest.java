@@ -160,7 +160,7 @@ class SessionStateMachineTest {
 
     @Test
     void should_reportReachableStatuses_when_reachableFrom_given_idleIdle() {
-        // given / when：idle/idle 仅可开跑一轮
+        // given / when：idle/idle 仅可启动一轮
         Collection<AgentSessionStatus> reachable = SessionStateMachine.reachableFrom(
                 AgentSessionStatus.IDLE, TurnPhase.IDLE);
 

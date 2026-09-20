@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 进程内会话上下文注册表实现（{@link SessionRuntimeRegistry}）。
  * <p>基于 {@link ConcurrentHashMap#computeIfAbsent} 原子创建：同会话并发取
  * {@link AgentSessionContext} 时仅首个请求创建实例，其余复用既有实例。
- * 仅承载「会话 → 逻辑线程组」的映射与生命周期；在跑执行 / 断连中断的语义
+ * 仅承载「会话 → 逻辑线程组」的映射与生命周期；运行中的执行 / 断连中断的语义
  * 全部收敛在 {@link AgentSessionContext} 实例内。</p>
  */
 @Component

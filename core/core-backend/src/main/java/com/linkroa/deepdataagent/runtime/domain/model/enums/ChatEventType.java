@@ -121,7 +121,7 @@ public enum ChatEventType {
     /**
      * 工具调用事件类型全集（内置 {@code agent.tool_use} 与 MCP {@code agent.mcp_tool_use}）。
      * <p>两类事件载荷同形（{@code tool_use_id} / {@code name} / {@code input}），故 HITL 待确认现场
-     * （durable 续跑明细重建与旧锚点次匹配）的账本查询 MUST 按本集合匹配，
+     * （durable 续跑明细重建与旧锚点次匹配）的事件表查询 MUST 按本集合匹配，
      * 否则 MCP 工具暂停的批次无法被解析。</p>
      */
     public static final List<String> TOOL_USE_TYPES = List.of(

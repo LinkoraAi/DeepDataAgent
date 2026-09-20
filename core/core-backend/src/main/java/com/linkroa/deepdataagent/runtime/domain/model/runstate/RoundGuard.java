@@ -14,7 +14,7 @@ public final class RoundGuard {
 
     /** 外部中断标记（取消 / 定向中断收敛时置位） */
     private final AtomicBoolean interrupted = new AtomicBoolean(false);
-    /** 租约丢失标记（续约失败即 fail-closed 中止在途执行，不写终态 / 不迁移状态 / 不广播） */
+    /** 租约丢失标记（续约失败即 fail-closed 中止进行中的执行，不写终态 / 不迁移状态 / 不广播） */
     private final AtomicBoolean leaseLost = new AtomicBoolean(false);
     /** 终态化资格（{@link #tryAcquireFinalization()} 领取成功即本轮生成结束，防重复终态） */
     private final AtomicBoolean finalized = new AtomicBoolean(false);
@@ -105,7 +105,7 @@ public final class RoundGuard {
         try {
             abort.run();
         } catch (RuntimeException ignored) {
-            // 中止句柄内部已带 finally 收口；此处吞异常防续约线程被反噬
+            // 中止句柄内部已带 finally 收口；此处吞异常防止续约线程被波及
         }
     }
 }

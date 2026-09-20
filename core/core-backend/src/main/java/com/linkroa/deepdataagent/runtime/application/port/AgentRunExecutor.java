@@ -40,7 +40,7 @@ public interface AgentRunExecutor {
      * 以携带确认结果元数据的新用户消息重新驱动一轮 agent 事件流（HITL 续流，确认 / 拒绝语义）。
      * <p>AgentScope v2 的 HITL 恢复不是通过外部事件注入，而是以「携带
      * {@code agentscope_confirm_results} 元数据的新用户消息」重新驱动 {@code streamEvents}。
-     * 待确认工具调用明细由应用层从事件账本（{@code agent.tool_use} 行）重建为领域中性的
+     * 待确认工具调用明细由应用层从事件表（{@code agent.tool_use} 行）重建为领域中性的
      * {@link PendingToolCallSpec} 批次传入，基础设施层据此重建 SDK 工具调用块并构造确认
      * 结果——<b>不依赖任何按 replyId 暂存的进程内现场</b>，任意实例、任意时刻（跨重启）
      * 均可续跑同一逻辑轮。</p>

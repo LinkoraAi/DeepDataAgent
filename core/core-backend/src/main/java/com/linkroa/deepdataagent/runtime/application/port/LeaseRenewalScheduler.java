@@ -26,9 +26,9 @@ public interface LeaseRenewalScheduler {
     /**
      * 以固定周期启动续约任务（首次执行在 {@code interval} 之后，与 {@code scheduleAtFixedRate} 一致）。
      *
-     * @param task     续约任务体（调用方 MUST 内部消化异常——两种承载均不保证异常后的调度存续）
+     * @param task     续约任务体（调用方 MUST 自行捕获处理异常——两种承载均不保证异常后的调度存续）
      * @param interval 续约周期（{@code turn 租约 TTL / 3}）
-     * @return 可停止句柄（轮次全部出口统一 {@code cancel}，杜绝毒续约）
+     * @return 可停止句柄（轮次全部出口统一 {@code cancel}，杜绝多余续约）
      */
     LeaseRenewalHandle schedule(Runnable task, Duration interval);
 }

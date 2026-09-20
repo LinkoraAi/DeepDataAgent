@@ -36,9 +36,9 @@ import java.util.concurrent.Executor;
  * HITL 人工确认入口服务（decompose-command-facade 4.1）：确认 / 拒绝指令的领取编排与
  * durable 续跑轮驱动（自原命令门面（decompose-command-facade 4.4 已物理删除）的 HITL 分区纯搬移，事务边界、
  * 异常类型与包装、日志语义、调用次序零变化）。
- * <p>durable 语义：等待现场完全由事件账本承载（最新 {@code session.requires_action} 批次明细 +
+ * <p>durable 语义：等待现场完全由事件表承载（最新 {@code session.requires_action} 批次明细 +
  * 等待状态），确认解析不依赖任何进程内存对象——任意实例（含服务重启后）、任意等待时长均可完成
- * 裁决并续跑同一逻辑轮。账本定位 / 明细重建规则在 {@link PendingBatchResolver}（2.2），
+ * 裁决并续跑同一逻辑轮。事件表定位 / 明细重建规则在 {@link PendingBatchResolver}（2.2），
  * 挂起收尾（{@code enterWaitingConfirm}）在 {@code execution.TurnFinalizer}（3.1），
  * 续跑轮骨架经 {@link TurnExecutionService} 的 public 执行入口（3.2）。</p>
  * <p><b>依赖方向（design D3）</b>：{@code HumanConfirmationService → TurnExecutionService} 单向成立
@@ -64,13 +64,13 @@ public class HumanConfirmationService {
     private SessionRuntimeRegistry sessionRegistry;
     @Resource
     private TransactionTemplate transactionTemplate;
-    /** 落库端口：仅用于续跑轮开跑清毒（design D1，挂起轮的持久化失败标志不带入续跑轮）。 */
+    /** 落库端口：仅用于续跑轮启动时清除落库失败标记（design D1，挂起轮的持久化失败标志不带入续跑轮）。 */
     @Resource
     private ChatEventPersister chatEventPersister;
     /** 线程仓储：领取事务内解析主线程归属，续跑轮事件随执行现场挂接归属。 */
     @Resource
     private SessionThreadRepository sessionThreadRepository;
-    /** HITL 待确认批次解析器（decompose-command-facade 2.2）：锚点定位等待批次与账本明细重建。 */
+    /** HITL 待确认批次解析器（decompose-command-facade 2.2）：锚点定位等待批次与事件表明细重建。 */
     @Resource
     private PendingBatchResolver pendingBatchResolver;
     /** turn 事件写入器（decompose-command-facade 2.3）：续跑轮恢复状态事件的落库 + 广播。 */
@@ -83,11 +83,11 @@ public class HumanConfirmationService {
     @Resource(name = "agentVirtualExecutor")
     private Executor virtualExecutor;
 
-    // ==================== HITL：人工确认 / 拒绝（durable：账本事实 + 重建续跑） ====================
+    // ==================== HITL：人工确认 / 拒绝（durable：事件表事实 + 重建续跑） ====================
 
     /**
      * 处理人工确认指令（确认 / 拒绝，对应入站 {@code user.tool_confirmation}）。
-     * <p>durable 语义：等待现场完全由事件账本承载（最新 {@code session.requires_action}
+     * <p>durable 语义：等待现场完全由事件表承载（最新 {@code session.requires_action}
      * 批次明细 + 等待状态），确认解析不依赖任何进程内存对象——任意实例（含服务重启后）、
      * 任意等待时长均可完成裁决并续跑同一逻辑轮。</p>
      * <pre>{@code
@@ -95,7 +95,7 @@ public class HumanConfirmationService {
      *    ├─ requireOwnedSession + 锚点定位等待批次（批次成员判定，存量旧形态双键兼容；未命中 → 404）
      *    ├─ turn 租约 NX 抢占（先于 PG CAS；确证占用 → 409）
      *    ├─ [领取事务] CAS(waiting_confirmation→processing)（0 行 → 409，失败归还租约）
-     *    ├─ 按 event_ids 批查 agent.tool_use 行重建整批明细（id/name/input 取自账本 payload）
+     *    ├─ 按 event_ids 批查 agent.tool_use 行重建整批明细（id/name/input 取自事件表 payload）
      *    └─ 虚拟线程 → resumeRound：装配重建 Agent + 注入确认/拒绝结果续跑直至终态
      * }</pre>
      */
@@ -130,13 +130,13 @@ public class HumanConfirmationService {
             turnExecutionService.releaseTurnLeaseQuietly(sessionId, "领取事务");
             throw new DeepDataAgentException(DEEP_AGENT_RUN_ERROR + ": 创建人工确认续跑现场失败");
         }
-        // 开跑清毒（design D1）：续跑轮领取事务（租约 CAS + waiting→processing CAS）已提交，
+        // 启动时清除落库失败标记（design D1）：续跑轮领取事务（租约 CAS + waiting→processing CAS）已提交，
         // 挂起轮的持久化失败标志不带入续跑轮；提交后执行，非事务内存操作且幂等
         chatEventPersister.clearPoisonFlag(sessionId);
-        // 3. 整批明细重建（只读账本查询，领取事务提交后执行）
+        // 3. 整批明细重建（只读事件表查询，领取事务提交后执行）
         List<PendingToolCallSpec> specs = pendingBatchResolver.rebuildPendingBatch(sessionId, batchEventIds);
         if (specs.isEmpty()) {
-            throw new DeepDataAgentException(DEEP_AGENT_RUN_ERROR + ": 待确认明细重建失败（账本缺失工具调用行）");
+            throw new DeepDataAgentException(DEEP_AGENT_RUN_ERROR + ": 待确认明细重建失败（事件表缺失工具调用行）");
         }
         virtualExecutor.execute(() -> resumeRound(context, session, specs, command.confirmed(),
                 command.denyMessage()));
@@ -144,7 +144,7 @@ public class HumanConfirmationService {
 
     /**
      * durable 续跑轮（确认 / 拒绝共用）：领取事务已置 processing，本轮按 {@code executeRound}
-     * 同构骨架执行——广播恢复状态事件 → 装配重建 Agent（会话钉定版本）→ 订阅续流复用
+     * 同构骨架执行——广播恢复状态事件 → 装配重建 Agent（会话固定版本）→ 订阅续流复用
      * 轮次编排（handleSignal / 终态唯一出口 / 租约终态释放）。
      */
     private void resumeRound(ExecutionContext context, AgentSession session, List<PendingToolCallSpec> specs,

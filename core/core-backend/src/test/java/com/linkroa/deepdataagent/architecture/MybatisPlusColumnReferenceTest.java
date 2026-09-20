@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 单测不走列解析，只有强制渲染 {@code getSqlSegment()} 的用例才暴露该问题——全仓 25 个实体中
  * 仅少数有此类用例。故此处以源码扫描补一条全量强制断言。</p>
  *
- * <p><b>豁免（不得误伤）</b>：{@code and / or / nested / not} 的入参是 {@code Consumer<Param>}
+ * <p><b>豁免（不得误判）</b>：{@code and / or / nested / not} 的入参是 {@code Consumer<Param>}
  * （嵌套条件块，如 {@code wrapper.and(w -> w.eq(Entity::getX, v))}），其 lambda 必须保留，
  * 故不在扫描方法清单内；stream 的 {@code map / filter / forEach} 等非本清单方法同样不在范围内。</p>
  */

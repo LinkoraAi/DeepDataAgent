@@ -832,7 +832,7 @@ class DeploymentApplicationServiceTest {
 
     @Test
     void should_rejectDuplicateFire_when_run_given_fireLeaseHeld() {
-        // given（窗口内已有触发在途：协调层防重拒绝）
+        // given（窗口内已有触发进行中：协调层防重拒绝）
         when(deploymentRepository.findByDeploymentId("dep-1")).thenReturn(Optional.of(buildManualDeployment(DeploymentStatus.ACTIVE, 1L)));
         when(coordinationLeaseApi.tryAcquireFireLease("dep-1")).thenReturn(false);
 

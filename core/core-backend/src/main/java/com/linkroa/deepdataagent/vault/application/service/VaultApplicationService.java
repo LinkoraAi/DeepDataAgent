@@ -71,7 +71,7 @@ public class VaultApplicationService {
     /** 单个保管库活跃凭证数上限（对齐公开契约：一个 Vault 最多 20 个 active 凭证） */
     private static final int MAX_ACTIVE_CREDENTIALS = 20;
     /**
-     * 搜索在途并发上限（design D13）：超限<b>快速失败</b>返回 429 而非排队——搜索由用户交互触发，
+     * 搜索进行中并发上限（design D13）：超限<b>快速失败</b>返回 429 而非排队——搜索由用户交互触发，
      * 排队会让延迟不可预期。
      * <p>以进程内许可计数承载（实例级，非全局）：搜索是短时只读查询，本机限流已足够保护库连接；
      * 许可在 {@code finally} 释放，异常路径不泄漏。</p>
@@ -97,7 +97,7 @@ public class VaultApplicationService {
     @Resource
     private TransactionTemplate transactionTemplate;
 
-    /** 搜索在途许可池（{@link #MAX_SEARCH_IN_FLIGHT} 枚；见该常量说明）。 */
+    /** 搜索进行中许可池（{@link #MAX_SEARCH_IN_FLIGHT} 枚；见该常量说明）。 */
     private final Semaphore searchInFlight = new Semaphore(MAX_SEARCH_IN_FLIGHT);
 
     /**
@@ -128,7 +128,7 @@ public class VaultApplicationService {
      * 搜索保管库（design D13）：筛选与游标语义与列表完全一致，
      * <b>首页</b>额外返回满足筛选条件的总数（翻页请求不回计数：计数与游标位点无关，
      * 只在首页有意义且避免每次翻页多打一次库）。
-     * <p>在途并发受 {@link #MAX_SEARCH_IN_FLIGHT} 约束：许可耗尽即快速失败
+     * <p>进行中并发受 {@link #MAX_SEARCH_IN_FLIGHT} 约束：许可耗尽即快速失败
      * （{@link TooManyRequestsException} → 429 {@code rate_limit_error}），不进入查询。</p>
      */
     public VaultSearchResult search(ListVaultQuery query) {

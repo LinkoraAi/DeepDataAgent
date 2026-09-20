@@ -37,7 +37,7 @@ final class ToolCallSignalHandler implements SignalHandler {
                 ctx.sink().persistAndBroadcast(
                         toolUseEvent(runState, signal.toolCallId(), toolName,
                                 ctx.sink().parsePayload(argsJson)), eventId);
-                // 在飞登记：tool_use 已落库、结果未到，中断收流时据此补合成错误结果（无悬空 tool_use）
+                // 登记执行中的调用：tool_use 已落库、结果未到，中断收流时据此补合成错误结果（无悬空 tool_use）
                 runState.registerPendingToolUse(signal.toolCallId(), toolName);
             }
             default -> throw new IllegalStateException("ToolCallSignalHandler 收到非工具调用信号: " + signal.type());

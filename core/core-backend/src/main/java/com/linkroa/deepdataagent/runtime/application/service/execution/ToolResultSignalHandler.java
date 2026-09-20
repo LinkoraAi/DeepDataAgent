@@ -33,7 +33,7 @@ final class ToolResultSignalHandler implements SignalHandler {
                 output = SecretMasker.maskExactValues(output, runState.mountedVaultSecrets());
                 ctx.sink().persistAndBroadcast(toolResultEvent(signal, output,
                         runState.toolResultTruncated(toolCallId)));
-                // 配对达成：摘除在飞登记，中断收流不再补合成结果
+                // 配对达成：摘除执行中调用登记，中断收流不再补合成结果
                 runState.removePendingToolUse(toolCallId);
             }
             default -> throw new IllegalStateException("ToolResultSignalHandler 收到非工具结果信号: " + signal.type());

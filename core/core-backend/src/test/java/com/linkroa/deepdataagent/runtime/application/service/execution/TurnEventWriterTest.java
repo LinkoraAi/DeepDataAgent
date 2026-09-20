@@ -39,11 +39,11 @@ import static org.mockito.Mockito.when;
 
 /**
  * {@link TurnEventWriter} 直测（decompose-command-facade 2.3）：
- * 钉死自门面纯搬移的三条红线语义——<b>先推后入队</b>（SSE 不被落库 I/O 阻塞）、
+ * 固化自门面纯搬移的三条红线语义——<b>先推后入队</b>（SSE 不被落库 I/O 阻塞）、
  * <b>推送失败吞异常仅记 WARN</b>（不向编排层上抛）、<b>seq 会话级计数器分配 / 冷启动回落 DB max</b>；
  * 另覆盖流式帧（不落库、不消耗 seq）与 delta 缓冲排空的静默分支。
- * <p>编排侧端到端钉桩（哪些事件按何序提交）随门面拆分迁至
- * {@code execution.TurnExecutionServiceTest} 与 {@code execution.TurnFinalizerTest}，以真实 Writer + 替身端口钉桩。</p>
+ * <p>编排侧端到端固化断言（哪些事件按何序提交）随门面拆分迁至
+ * {@code execution.TurnExecutionServiceTest} 与 {@code execution.TurnFinalizerTest}，以真实 Writer + 替身端口固化断言。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class TurnEventWriterTest {

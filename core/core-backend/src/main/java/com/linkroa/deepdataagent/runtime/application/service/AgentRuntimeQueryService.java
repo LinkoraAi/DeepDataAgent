@@ -52,7 +52,7 @@ public class AgentRuntimeQueryService {
 
     private static final String DEEP_AGENT_SESSION_NOT_FOUND = "DEEP_AGENT_SESSION_NOT_FOUND";
 
-    /** 线程作用域回放的分批读取上限（穷尽式回放，避免单次全量拉满账本）。 */
+    /** 线程作用域回放的分批读取上限（穷尽式回放，避免单次全量拉满事件表）。 */
     private static final int THREAD_REPLAY_BATCH_SIZE = 500;
 
     @Resource
@@ -134,7 +134,7 @@ public class AgentRuntimeQueryService {
      * 事件历史分页（协议面用例）：按公开契约过滤集合读取会话（或线程作用域）事件，
      * 装配为扁平 Event 游标页 {@code {data, first_id, last_id, has_more, next_page}}。
      * <p>游标一律为 {@code evt_} 事件 ID：{@code after_id} / {@code before_id} 经
-     * {@link #findEventSeq} 换算为账本 seq 位点（未命中 → 400，属请求非法）；
+     * {@link #findEventSeq} 换算为事件表 seq 位点（未命中 → 400，属请求非法）；
      * {@code order} 决定读取与展示方向（升序缺省）；{@code limit+1} 探针判 {@code has_more}，
      * 有下一页时 {@code next_page} 回传当页末条事件 ID（不透明游标）。</p>
      * <p>{@code types} 已由协议层静默剔除未知类型（列表路径不因未知类型报错）。</p>
@@ -189,7 +189,7 @@ public class AgentRuntimeQueryService {
 
     /**
      * 线程作用域事件回放（SSE 线程流回放用）：按线程归属过滤、自 {@code afterSeq} 起
-     * 分批升序读取至穷尽（账本内部过滤键，不扩张对外扁平 Event 公开字段）。
+     * 分批升序读取至穷尽（事件表内部过滤键，不扩张对外扁平 Event 公开字段）。
      *
      * @param sessionId 会话业务 ID
      * @param threadId  线程业务 ID（调用方已完成存在性校验）

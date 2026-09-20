@@ -41,15 +41,15 @@ import static org.mockito.Mockito.when;
 /**
  * {@link HumanConfirmationService} 单测（decompose-command-facade 4.1：HITL 簇用例自
  * 门面壳测试类整体迁移，断言与桩一字未减）。
- * <p>用例经真实协作网端到端钉桩（装配见 {@link AgentRuntimeServiceTestSupport}）：
+ * <p>用例经真实协作网端到端固化断言（装配见 {@link AgentRuntimeServiceTestSupport}）：
  * 挂起轮由 {@code turnExecutionService.sendMessageAsync} 真实执行进入等待确认态，
- * 确认 / 拒绝由本服务领取并续跑，令「账本定位 → 租约抢占 → 领取 CAS → 明细重建 → 续跑收敛」
- * 的四条红线（严格排空 / D19 抛点 / 防悬挂 / 挂起即轮终局）在子包镜像类里仍可整链断言。</p>
+ * 确认 / 拒绝由本服务领取并续跑，令「事件表定位 → 租约抢占 → 领取 CAS → 明细重建 → 续跑收敛」
+ * 的四条红线（严格排空 / D19 抛点 / 防止永久阻塞 / 挂起即轮终局）在子包镜像类里仍可整链断言。</p>
  */
 class HumanConfirmationServiceTest extends AgentRuntimeServiceTestSupport {
 
     /**
-     * 桩：HITL 账本的工具调用集合与工具结果集合（durable 等待事实＝未应答工具调用行，
+     * 桩：HITL 事件表的工具调用集合与工具结果集合（durable 等待事实＝未应答工具调用行，
      * 「工具调用集合 − 已配对工具结果集合」即当前待确认批次，无 requires_action 旁路事件）。
      */
     private void stubsLedger(String sessionId, List<ChatEvent> toolUses, List<ChatEvent> toolResults) {
@@ -57,11 +57,11 @@ class HumanConfirmationServiceTest extends AgentRuntimeServiceTestSupport {
         when(chatEventRepository.findByTypes(sessionId, ChatEventType.TOOL_RESULT_TYPES)).thenReturn(toolResults);
     }
 
-    // ==================== HITL 人工确认 / 拒绝（durable：账本事实 + 重建续跑） ====================
+    // ==================== HITL 人工确认 / 拒绝（durable：事件表事实 + 重建续跑） ====================
 
     @Test
     void should_throwNotFound_when_resolveHumanConfirmation_given_noPendingBatchInLedger() {
-        // given（账本无任何未应答工具调用行：无待确认项）
+        // given（事件表无任何未应答工具调用行：无待确认项）
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
 
@@ -75,7 +75,7 @@ class HumanConfirmationServiceTest extends AgentRuntimeServiceTestSupport {
 
     @Test
     void should_rejectWithoutConsuming_when_resolveHumanConfirmation_given_anchorNotInCurrentBatch() {
-        // given：账本存在当前等待批次（一行未应答工具调用），指令携带不属于批次的越界锚点
+        // given：事件表存在当前等待批次（一行未应答工具调用），指令携带不属于批次的越界锚点
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         wireHappyPathForExecution();
@@ -112,7 +112,7 @@ class HumanConfirmationServiceTest extends AgentRuntimeServiceTestSupport {
 
     @Test
     void should_resolveWholeBatchAndResume_when_resolveHumanConfirmation_given_multiToolCallPendingBatch() {
-        // given：先真实挂起（批次两成员入账本），账本反查桩就位后提交确认
+        // given：先真实挂起（批次两成员入事件表），事件表反查桩就位后提交确认
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         wireHappyPathForExecution();
@@ -132,7 +132,7 @@ class HumanConfirmationServiceTest extends AgentRuntimeServiceTestSupport {
         humanConfirmationService.resolveHumanConfirmation(new ResolveHumanConfirmationCommand(
                 session.sessionId(), true, headEventId, null));
 
-        // then：整批明细由账本重建（SDK id / 工具名 / 入参），一次续跑注入全部结果
+        // then：整批明细由事件表重建（SDK id / 工具名 / 入参），一次续跑注入全部结果
         ArgumentCaptor<List<PendingToolCallSpec>> specsCaptor = ArgumentCaptor.captor();
         verify(agentRunExecutor).resumeConfirmation(any(BuiltAgent.class), specsCaptor.capture(),
                 eq(session.sessionId()), eq("1"), eq(true), isNull());
@@ -178,12 +178,12 @@ class HumanConfirmationServiceTest extends AgentRuntimeServiceTestSupport {
                 "一轮执行全部事件应带主线程归属");
         assertTrue(saved.stream().anyMatch(e -> e.type() == ChatEventType.AGENT_TOOL_USE
                 && main.threadId().equals(e.sessionThreadId())), "工具事件应带归属");
-        // HITL 挂起在新契约下无状态事件：等待事实＝未应答工具调用账本行（上一条已断言其归属），
+        // HITL 挂起在新契约下无状态事件：等待事实＝未应答工具调用事件表行（上一条已断言其归属），
         // 挂起只做内部相位迁移，故除 running / idle 外不得出现任何中间态会话状态事件
         assertTrue(saved.stream().noneMatch(e -> e.type().value().startsWith(ChatEventType.SESSION_STATUS_PREFIX)
                         && e.type() != ChatEventType.SESSION_STATUS_RUNNING
                         && e.type() != ChatEventType.SESSION_STATUS_IDLE),
-                "挂起不得落任何中间态会话状态事件（等待事实由账本承载）");
+                "挂起不得落任何中间态会话状态事件（等待事实由事件表承载）");
         verify(sessionRepository).transition(session.sessionId(), Transition.PHASE_AWAIT);
         assertTrue(saved.stream().anyMatch(e -> e.type() == ChatEventType.SESSION_STATUS_IDLE
                 && main.threadId().equals(e.sessionThreadId())), "终态事件应带归属");
@@ -191,7 +191,7 @@ class HumanConfirmationServiceTest extends AgentRuntimeServiceTestSupport {
 
     @Test
     void should_resolveFromLedgerAndResume_when_resolveHumanConfirmation_given_pendingPersistedButNoInMemoryState() {
-        // given（模拟重启 / 跨实例同形：服务实例无任何挂起轮执行历史，等待事实仅存账本 + 内部相位）
+        // given（模拟重启 / 跨实例同形：服务实例无任何挂起轮执行历史，等待事实仅存事件表 + 内部相位）
         AgentSession session = idleSession().withPhase(TurnPhase.AWAITING_CONFIRMATION);
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         BuiltAgent agent = wireHappyPathForExecution();
@@ -210,7 +210,7 @@ class HumanConfirmationServiceTest extends AgentRuntimeServiceTestSupport {
         humanConfirmationService.resolveHumanConfirmation(new ResolveHumanConfirmationCommand(
                 session.sessionId(), true, toolUse.eventId(), null));
 
-        // then：领取 CAS → 账本重建明细 → 续跑轮重新装配并收敛
+        // then：领取 CAS → 事件表重建明细 → 续跑轮重新装配并收敛
         ArgumentCaptor<List<PendingToolCallSpec>> specsCaptor = ArgumentCaptor.captor();
         verify(agentRunExecutor).resumeConfirmation(any(BuiltAgent.class), specsCaptor.capture(),
                 eq(session.sessionId()), eq("1"), eq(true), isNull());
@@ -281,7 +281,7 @@ class HumanConfirmationServiceTest extends AgentRuntimeServiceTestSupport {
 
     @Test
     void should_injectDenyWithMessage_when_resolveHumanConfirmation_given_denyCommand() {
-        // given（账本等待项；拒绝指令携带拒绝说明）
+        // given（事件表等待项；拒绝指令携带拒绝说明）
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         BuiltAgent agent = wireHappyPathForExecution();
@@ -307,7 +307,7 @@ class HumanConfirmationServiceTest extends AgentRuntimeServiceTestSupport {
     @Test
     void should_resolveWholeBatch_when_resolveHumanConfirmation_given_noAnchorToolUseId() {
         // given（等价于存量旧形态「批次无精确锚点」：确认指令不携带 tool_use_id 定位锚点，
-        //        账本当前未应答批次仍须整批解析——新契约锚点恒为公开 evt_ 事件 id，
+        //        事件表当前未应答批次仍须整批解析——新契约锚点恒为公开 evt_ 事件 id，
         //        空锚点按「取当前未应答整批」处置，不再有旧 SDK 双键换算）
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
@@ -324,7 +324,7 @@ class HumanConfirmationServiceTest extends AgentRuntimeServiceTestSupport {
         humanConfirmationService.resolveHumanConfirmation(
                 new ResolveHumanConfirmationCommand(session.sessionId(), true));
 
-        // then：整批明细由账本重建（SDK id / 工具名取自 payload），续跑正常收敛
+        // then：整批明细由事件表重建（SDK id / 工具名取自 payload），续跑正常收敛
         ArgumentCaptor<List<PendingToolCallSpec>> specsCaptor = ArgumentCaptor.captor();
         verify(agentRunExecutor).resumeConfirmation(any(BuiltAgent.class), specsCaptor.capture(),
                 eq(session.sessionId()), eq("1"), eq(true), isNull());
@@ -334,7 +334,7 @@ class HumanConfirmationServiceTest extends AgentRuntimeServiceTestSupport {
 
     @Test
     void should_publishSucceededTurnFinishedOnce_when_resolveHumanConfirmation_given_suspendThenResumeEpisode() {
-        // given：调度会话触发轮真实挂起（批次两成员入账本）
+        // given：调度会话触发轮真实挂起（批次两成员入事件表）
         AgentSession session = scheduledIdleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         wireHappyPathForExecution();

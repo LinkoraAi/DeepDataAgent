@@ -170,7 +170,7 @@ public class AgentSessionController {
     /**
      * 归档会话（对齐 {@code POST /sessions/{session_id}/archive}）：仅写入 {@code archived_at}
      * 时间戳（{@code status} 保持原值，归档为正交维度、不产生归档状态事件），
-     * 并中断在跑执行、释放订阅与租约。
+     * 并中断运行中的执行、释放订阅与租约。
      */
     @PostMapping("/{sessionId}/archive")
     public ApiResponse<SessionResponse> archiveSession(@PathVariable String sessionId) {

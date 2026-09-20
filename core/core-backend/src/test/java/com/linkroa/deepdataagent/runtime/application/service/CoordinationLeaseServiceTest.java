@@ -65,7 +65,7 @@ class CoordinationLeaseServiceTest {
 
     @Test
     void should_returnFalse_when_tryAcquireTurnLease_given_leaseHeld() {
-        // given（会话已有未过期在跑租约）
+        // given（会话已有未过期运行中的租约）
         when(leaseStore.tryAcquire(eq(CoordLeaseType.TURN), eq("turn:session:s-1"), any(), any()))
                 .thenReturn(false);
 
@@ -119,7 +119,7 @@ class CoordinationLeaseServiceTest {
 
     @Test
     void should_reportLeasePresence_when_hasActiveTurnLease_given_activeLookup() {
-        // given（任意持有者的有效租约：启动恢复兜底据此跳过存活实例在跑的会话）
+        // given（任意持有者的有效租约：启动恢复兜底据此跳过存活实例运行中的会话）
         when(leaseStore.findActive(CoordLeaseType.TURN, "turn:session:s-1")).thenReturn(true);
 
         // when // then
@@ -150,7 +150,7 @@ class CoordinationLeaseServiceTest {
 
     @Test
     void should_rejectDuplicateFire_when_tryAcquireFireLease_given_windowOccupied() {
-        // given（窗口内已有触发在途）
+        // given（窗口内已有触发进行中）
         when(leaseStore.fireTryAcquire("dep-1", service.instanceId())).thenReturn(false);
 
         // when // then

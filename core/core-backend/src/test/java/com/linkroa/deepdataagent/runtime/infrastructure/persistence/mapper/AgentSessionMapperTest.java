@@ -308,7 +308,7 @@ class AgentSessionMapperTest {
 
     @Test
     void should_queryCancellingPhase_when_isCancelling_given_sessionId() {
-        // given（在途取消的持久痕迹：按内部相位 cancelling 等值判定）
+        // given（进行中取消的持久痕迹：按内部相位 cancelling 等值判定）
         AgentSessionMapper mapper = mock(AgentSessionMapper.class);
         when(mapper.selectCount(any(Wrapper.class))).thenReturn(1L);
         doCallRealMethod().when(mapper).isCancelling(anyString());
@@ -331,7 +331,7 @@ class AgentSessionMapperTest {
 
     @Test
     void should_returnFalse_when_isCancelling_given_noRow() {
-        // given（无 cancelling 行 ⇒ 取消不在途）
+        // given（无 cancelling 行 ⇒ 取消未进行中）
         AgentSessionMapper mapper = mock(AgentSessionMapper.class);
         when(mapper.selectCount(any(Wrapper.class))).thenReturn(0L);
         doCallRealMethod().when(mapper).isCancelling(anyString());

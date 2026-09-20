@@ -494,7 +494,7 @@ export const EVENT_DELTA_TYPES = ['agent.message', 'agent.thinking'] as const;
  * 实时事件订阅句柄（close 语义兼容原 EventSource，调用侧仅 `.close()` 用法不变）。
  */
 export interface EventStreamHandle {
-  /** 主动关闭订阅：abort 在途 fetch 并取消待重连定时器。 */
+  /** 主动关闭订阅：abort 进行中的 fetch 并取消待重连定时器。 */
   close(): void;
 }
 

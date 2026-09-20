@@ -83,19 +83,19 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * {@link TurnExecutionService} 直测（decompose-command-facade 3.2）：钉死自门面纯搬移的执行链红线
+ * {@link TurnExecutionService} 直测（decompose-command-facade 3.2）：固化自门面纯搬移的执行链红线
  * （design Context 硬约束，红线用例自门面壳测试类逐名迁入，
  * 迁移前后对照登记于 {@code openspec/changes/decompose-command-facade/tasks.md} 3.2 注记）。
  * <ul>
- *   <li><b>开跑顺序（D4）</b>：turn 租约 NX 抢占先于 PG 状态 CAS；CAS 提交后才清毒；
- *       CAS 落空 / 抛异常必经 owner-scoped 归还租约后原样抛出（不降级为无锁开跑）；</li>
+ *   <li><b>启动顺序（D4）</b>：turn 租约 NX 抢占先于 PG 状态 CAS；CAS 提交后才清除落库失败标记；
+ *       CAS 落空 / 抛异常必经 owner-scoped 归还租约后原样抛出（不降级为无锁启动）；</li>
  *   <li><b>挂起即物理轮终局</b>：durable 挂起收尾后 agent 释放 + 停续约 + 释放租约，
  *       MUST NOT 经终态出口落 idle 终态（红线④）；</li>
  *   <li><b>D19 批次 / 候选错配</b>：拒绝挂起后沿 {@code onStreamError → finalizeFailed}
  *       收敛为执行错误终态并照常收轮（编排侧半边红线）；</li>
- *   <li><b>防悬挂收尾</b>：严格排空协议毒发时收轮信号必达、终态事件不落（红线③）；</li>
+ *   <li><b>防止永久阻塞的收尾处理</b>：严格排空协议落库失败时收轮信号必达、终态事件不落（红线③）；</li>
  *   <li><b>RoundSink 回接点</b>：轮内写经 {@link TurnEventWriter}、终局与挂起经
- *       {@link TurnFinalizer}（本类以真实两服务实例接入，令落库 / 广播顺序断言端到端可钉）。</li>
+ *       {@link TurnFinalizer}（本类以真实两服务实例接入，令落库 / 广播顺序断言端到端可固化）。</li>
  * </ul>
  * <p>夹具口径与壳测试一致：真实 {@link InMemorySessionRegistry} + 真实 {@link Scheduler}
  * （{@code Schedulers.immediate()}，令 {@code doOnNext} 在测试线程同步跑完）+ 同步直跑虚拟执行器
@@ -121,14 +121,14 @@ class TurnExecutionServiceTest {
     @Mock private LeaseRenewalScheduler leaseRenewalScheduler;
     @Mock private LeaseRenewalHandle leaseRenewalHandle;
 
-    /** 真实会话级聚合注册表：seq 计数器 / 执行控制面槽位 / 在途流快照按真实实现执行。 */
+    /** 真实会话级聚合注册表：seq 计数器 / 执行控制面槽位 / 进行中的流快照按真实实现执行。 */
     private final InMemorySessionRegistry sessionRegistry = new InMemorySessionRegistry();
 
     /** 真实同步调度器：publishOn 后在调用线程同步执行 doOnNext（断言确定性强）。 */
     private final Scheduler blockingScheduler = Schedulers.immediate();
 
     /**
-     * 同步直跑执行器：开跑即在调用线程走完一轮，异常收口全部落在测试线程。
+     * 同步直跑执行器：启动即在调用线程走完一轮，异常收口全部落在测试线程。
      * <p>非 final：异步入口用例（decompose-command-facade 4.4 自壳类迁入）单独替换为 mock 执行器。</p>
      */
     private Executor virtualExecutor = task -> task.run();
@@ -165,15 +165,15 @@ class TurnExecutionServiceTest {
         ReflectionTestUtils.setField(service, "sessionThreadRepository", sessionThreadRepository);
         ReflectionTestUtils.setField(service, "turnEventWriter", turnEventWriter);
         ReflectionTestUtils.setField(service, "turnFinalizer", turnFinalizer);
-        // 落库端口三处同步（执行侧开跑清毒 + Writer 入队 + 收口器排空 / 查毒）
+        // 落库端口三处同步（执行侧启动时清除落库失败标记 + Writer 入队 + 收口器排空 / 校验落库失败标记）
         wirePersister(synchronousPersister());
     }
 
     // ==================== 夹具 ====================
 
     /**
-     * 落库端口替身三处同步替换（严格排空协议与开跑清毒的故障注入点）：
-     * 执行侧 {@code chatEventPersister} 仅承载开跑清毒（design D1），入队与排空 / 查毒
+     * 落库端口替身三处同步替换（严格排空协议与启动时清除落库失败标记的故障注入点）：
+     * 执行侧 {@code chatEventPersister} 仅承载启动时清除落库失败标记（design D1），入队与排空 / 校验落库失败标记
      * 分别经 {@link TurnEventWriter} 与 {@link TurnFinalizer}，三处同注入保持
      * 「注入即全链路生效」语义。
      */
@@ -183,7 +183,7 @@ class TurnExecutionServiceTest {
         ReflectionTestUtils.setField(turnFinalizer, "chatEventPersister", persister);
     }
 
-    /** 同步落库替身：enqueue 即 save、flush 无操作、查毒恒为假（无持久化故障的常态）。 */
+    /** 同步落库替身：enqueue 即 save、flush 无操作、校验落库失败标记恒为假（无持久化故障的常态）。 */
     private ChatEventPersister synchronousPersister() {
         return new ChatEventPersister() {
             @Override
@@ -207,7 +207,7 @@ class TurnExecutionServiceTest {
     }
 
     /**
-     * 账本不可信（恒已置毒）替身：事务前 flush 无操作、事务首行查毒恒为真，
+     * 事件表不可信（恒已标记落库失败）替身：事务前 flush 无操作、事务首行校验落库失败标记恒为真，
      * 由收口器在事务 lambda 首行抛业务异常触发整批回滚（红线③的故障源）。
      */
     private ChatEventPersister strictFlushFailingPersister() {
@@ -246,7 +246,7 @@ class TurnExecutionServiceTest {
     }
 
     /**
-     * 装配事件流成功路径的公共桩（开跑抢占 + 启动事务 + 构建 + 注册 + 会话状态迁移 CAS）。
+     * 装配事件流成功路径的公共桩（启动抢占 + 启动事务 + 构建 + 注册 + 会话状态迁移 CAS）。
      * <p>公共桩以 {@code lenient} 注册避免 UnnecessaryStubbing 误报（各用例只消费其中一部分）；
      * {@code TO_IDLE} 按真实 CAS 语义返回 {@code (1, 0)}：AGENT_END 提前终态成功后，
      * onComplete 兜底再次迁移影响行数为 0（不重复落终态事件）。</p> */
@@ -362,7 +362,7 @@ class TurnExecutionServiceTest {
         // when（同步执行器：挂起轮在调用内完成收尾）
         service.sendMessageAsync(new SendMessageCommand(session.sessionId(), "执行"));
 
-        // then：等待现场只由账本既有工具调用行承载（两条 agent.tool_use，载荷以 tool_use_id 承载身份），
+        // then：等待现场只由事件表既有工具调用行承载（两条 agent.tool_use，载荷以 tool_use_id 承载身份），
         // 不再有 requires_action / waiting_confirmation 旁路事件
         List<ChatEvent> saved = savedChatEvents();
         List<ChatEvent> toolUses = saved.stream()
@@ -383,14 +383,14 @@ class TurnExecutionServiceTest {
         verify(agent).close();
         verify(coordinationLeaseService).releaseTurnLease(session.sessionId());
         verify(sessionRepository, never()).transition(anyString(), eq(Transition.FINISH_TURN));
-        // then（挂起收轮同样取消续约任务：等待横跨用户思考时间，不得虚续约）
+        // then（挂起收轮同样取消续约任务：等待横跨用户思考时间，不得有多余续约）
         verify(leaseRenewalHandle).cancel();
     }
 
     // ==================== 红线②：D19 批次 / 候选错配的编排侧收敛 ====================
 
     /**
-     * D19 挂起侧批次对齐的<b>端到端收敛</b>钉桩（拒绝挂起的判定与抛点次序已迁
+     * D19 挂起侧批次对齐的<b>端到端收敛</b>固化（拒绝挂起的判定与抛点次序已迁
      * {@code TurnFinalizerTest} 直测，本用例承接其编排侧半边红线——拒绝挂起后 MUST 沿
      * {@code onStreamError → finalizeFailed} 收敛为执行错误终态并照常收轮）。
      */
@@ -432,7 +432,7 @@ class TurnExecutionServiceTest {
     }
 
     /**
-     * D19 对称分支②的端到端收敛钉桩（本轮候选登记为空：MUST NOT 以仅状态事件确立残缺等待）。
+     * D19 对称分支②的端到端收敛固化（本轮候选登记为空：MUST NOT 以仅状态事件确立残缺等待）。
      */
     @Test
     void should_convergeToErrorTerminal_when_sendMessageAsync_given_suspendWithoutCandidateRegistered() {
@@ -459,11 +459,11 @@ class TurnExecutionServiceTest {
         verify(agent).close();
     }
 
-    // ==================== 红线③：防悬挂收尾（毒发仍收轮） ====================
+    // ==================== 红线③：防止永久阻塞的收尾处理（落库失败仍收轮） ====================
 
     @Test
     void should_completeFutureAndSkipTerminalEvents_when_onStreamError_given_strictFlushFails() {
-        // given（流异常走 finalizeFailed → 终态事务首行查毒命中抛异常）
+        // given（流异常走 finalizeFailed → 终态事务首行命中落库失败标记抛异常）
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         BuiltAgent agent = wireHappyPathForExecution();
@@ -488,11 +488,11 @@ class TurnExecutionServiceTest {
         verify(agent).close();
     }
 
-    // ==================== 开跑顺序与快速失败（D4） ====================
+    // ==================== 启动顺序与快速失败（D4） ====================
 
     @Test
     void should_acquireLeaseBeforeCasAndClearPoisonAfterCommit_when_sendMessageAsync_given_roundStart() {
-        // given（落库端口以 mock 承载，逐方法观察清毒与入队的先后次序）
+        // given（落库端口以 mock 承载，逐方法观察清除落库失败标记与入队的先后次序）
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         wireHappyPathForExecution();
@@ -505,8 +505,8 @@ class TurnExecutionServiceTest {
         // when
         service.sendMessageAsync(new SendMessageCommand(session.sessionId(), "你好"));
 
-        // then（D4 开跑顺序：租约 NX 先于 PG CAS；两个 running 状态事件在启动事务内按权威次序落库；
-        //        CAS 提交后才清旧轮毒标志并广播）
+        // then（D4 启动顺序：租约 NX 先于 PG CAS；两个 running 状态事件在启动事务内按权威次序落库；
+        //        CAS 提交后才清除旧轮落库失败标记并广播）
         InOrder startOrder = inOrder(coordinationLeaseService, sessionRepository, chatEventRepository, persister);
         startOrder.verify(coordinationLeaseService).tryAcquireTurnLease(session.sessionId());
         startOrder.verify(sessionRepository).transition(session.sessionId(), Transition.BEGIN_TURN);
@@ -545,7 +545,7 @@ class TurnExecutionServiceTest {
         // when
         assertDoesNotThrow(() -> service.sendMessageAsync(new SendMessageCommand(session.sessionId(), "你好")));
 
-        // then（PG 状态一字未动：未开跑即无 CAS、无事件、无归还——未曾持有不得归还）
+        // then（PG 状态一字未动：未启动即无 CAS、无事件、无归还——未曾持有不得归还）
         verify(sessionRepository, never()).transition(anyString(), any(Transition.class));
         verify(chatEventRepository, never()).save(any(ChatEvent.class));
         verify(coordinationLeaseService, never()).releaseTurnLease(anyString());
@@ -559,7 +559,7 @@ class TurnExecutionServiceTest {
         // when（异常被异步路径隔离为日志）
         assertDoesNotThrow(() -> service.sendMessageAsync(new SendMessageCommand("sess_ghost", "你好")));
 
-        // then（不抢占租约、不写账本）
+        // then（不抢占租约、不写事件表）
         verify(sessionRepository).findBySessionId("sess_ghost");
         verify(coordinationLeaseService, never()).tryAcquireTurnLease(anyString());
         verify(chatEventRepository, never()).save(any(ChatEvent.class));
@@ -739,7 +739,7 @@ class TurnExecutionServiceTest {
         // when
         service.sendMessageAsync(new SendMessageCommand(session.sessionId(), "你好"));
 
-        // then（启动事务 CAS + 开跑双状态事件 + 源码事件按序落库 + 终态回 idle）
+        // then（启动事务 CAS + 启动双状态事件 + 源码事件按序落库 + 终态回 idle）
         verify(sessionRepository).transition(session.sessionId(), Transition.BEGIN_TURN);
         List<ChatEvent> saved = savedChatEvents();
         assertEquals(6, saved.size());
@@ -785,7 +785,7 @@ class TurnExecutionServiceTest {
         // then（续约任务以 TTL/3 为周期启动（首轮延迟一个周期后开始），覆盖长静默工具调用窗口）
         long expectedPeriodMs = CoordinationLeaseService.TURN_LEASE_TTL.toMillis() / 3;
         verify(leaseRenewalScheduler).schedule(any(Runnable.class), eq(Duration.ofMillis(expectedPeriodMs)));
-        // then（轮次终态出口统一 cancel：无虚续约）
+        // then（轮次终态出口统一 cancel：无多余续约）
         verify(leaseRenewalHandle).cancel();
     }
 
@@ -823,7 +823,7 @@ class TurnExecutionServiceTest {
 
         // then（续约任务确实被触发且确证失败）
         verify(coordinationLeaseService).renewTurnLease(session.sessionId());
-        // then（不写终态事件：仅启动事务的开跑双状态事件落库，流内 / 终态事件一律不产生）
+        // then（不写终态事件：仅启动事务的启动双状态事件落库，流内 / 终态事件一律不产生）
         List<ChatEvent> saved = savedChatEvents();
         assertTrue(saved.stream().allMatch(e -> e.type() == ChatEventType.SESSION_STATUS_RUNNING
                         || e.type() == ChatEventType.SESSION_THREAD_STATUS_RUNNING),
@@ -832,14 +832,14 @@ class TurnExecutionServiceTest {
         // then（不做会话状态 CAS：不回 idle / 不进 terminated）
         verify(sessionRepository, never()).transition(anyString(), eq(Transition.FINISH_TURN));
         verify(sessionRepository, never()).transition(anyString(), eq(Transition.TERMINATE));
-        // then（不广播终态帧 / 流内增量帧：开跑状态事件之外的推送一律不得发生）
+        // then（不广播终态帧 / 流内增量帧：启动状态事件之外的推送一律不得发生）
         ArgumentCaptor<ChatEvent> pushed = ArgumentCaptor.forClass(ChatEvent.class);
         verify(connectionHandle, never()).pushFrame(any(StreamFrame.class));
         verify(connectionHandle, atLeastOnce()).push(pushed.capture());
         assertTrue(pushed.getAllValues().stream()
                         .allMatch(e -> e.type() == ChatEventType.SESSION_STATUS_RUNNING
                                 || e.type() == ChatEventType.SESSION_THREAD_STATUS_RUNNING),
-                "fail-closed 后仅允许开跑状态事件广播，终态 / 流内事件不得广播");
+                "fail-closed 后仅允许启动状态事件广播，终态 / 流内事件不得广播");
         // then（不释放租约：终态权不归本实例，租约自然过期由复位路径 / 新持有者接管）
         verify(coordinationLeaseService, never()).releaseTurnLease(anyString());
         // then（进程内资源释放：续约任务取消 + SDK 句柄关闭）
@@ -863,7 +863,7 @@ class TurnExecutionServiceTest {
         // when
         service.sendMessageAsync(new SendMessageCommand(session.sessionId(), "你好"));
 
-        // then（事件账本与数据面只见原始输入，不含文件正文；会话归属用户透传）
+        // then（事件表与数据面只见原始输入，不含文件正文；会话归属用户透传）
         verify(agentRunExecutor).streamEvents(any(BuiltAgent.class),
                 eq("你好"), eq(session.sessionId()), eq("1"));
     }
@@ -1017,7 +1017,7 @@ class TurnExecutionServiceTest {
     @Test
     void should_logBusy_when_sendMessageAsync_given_sessionAlreadyProcessing() {
         // given（会话已被其他执行抢占 processing：CAS 失败 → 异步路径记录日志且不产生任何事件；
-        // 开跑顺序为租约 NX 先于 PG CAS，故租约先拿到、CAS 落空后必须归还）
+        // 启动顺序为租约 NX 先于 PG CAS，故租约先拿到、CAS 落空后必须归还）
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         wireTransactionTemplate();
@@ -1035,7 +1035,7 @@ class TurnExecutionServiceTest {
 
     @Test
     void should_logBusy_when_sendMessageAsync_given_turnLeaseHeld() {
-        // given（会话已有在跑租约：协调层获取失败 → 异步路径记录日志且不产生任何事件）
+        // given（会话已有运行中的租约：协调层获取失败 → 异步路径记录日志且不产生任何事件）
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         when(coordinationLeaseService.tryAcquireTurnLease(session.sessionId())).thenReturn(false);
@@ -1083,7 +1083,7 @@ class TurnExecutionServiceTest {
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         BuiltAgent agent = wireHappyPathForExecution();
         bindConnection(session);
-        // 执行失败时仍在跑注册（非断连，真实注册表），onError 走 error 终止而非 interrupted
+        // 执行失败时仍注册为运行中（非断连，真实注册表），onError 走 error 终止而非 interrupted
         when(agentRunExecutor.streamEvents(any(BuiltAgent.class), anyString(), anyString(), anyString()))
                 .thenReturn(Flux.error(new RuntimeException("model 调用失败")));
 
@@ -1112,7 +1112,7 @@ class TurnExecutionServiceTest {
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         wireHappyPathForExecution();
         bindConnection(session);
-        // 运行装配成功，但工厂构建失败（事件流启动前，会话级未注册在跑句柄）：推导为 error 而非 interrupted
+        // 运行装配成功，但工厂构建失败（事件流启动前，会话级未注册运行中的句柄）：推导为 error 而非 interrupted
         when(agentFactory.build(any(AgentAssemblySpec.class)))
                 .thenThrow(new DeepDataAgentException("DEEP_AGENT_BUILD_FAILED"));
 
@@ -1185,7 +1185,7 @@ class TurnExecutionServiceTest {
 
     @Test
     void should_convergeToIdle_when_finalizeTurn_given_cancelingAndExceedMaxIters() {
-        // given：取消已同进程生效（进程内中断标志置位、canceling 持久痕迹在途），迭代上限随流收流
+        // given：取消已同进程生效（进程内中断标志置位、canceling 持久痕迹已提交），迭代上限随流收流
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         BuiltAgent agent = wireHappyPathForExecution();
@@ -1208,7 +1208,7 @@ class TurnExecutionServiceTest {
         assertEquals(ChatEventType.SESSION_STATUS_IDLE, last.type());
         assertTrue(last.payload().contains("\"stop_reason\":{\"type\":\"interrupted\"}"));
         assertTrue(captured.stream().noneMatch(e -> e.type() == ChatEventType.SESSION_STATUS_TERMINATED),
-                "取消在途不得产生 terminated 终态事件");
+                "取消进行中不得产生 terminated 终态事件");
         verify(sessionRepository, never()).transition(anyString(), eq(Transition.TERMINATE));
         verify(sessionRepository).transition(session.sessionId(), Transition.FINISH_TURN);
         verify(agent).close();
@@ -1231,7 +1231,7 @@ class TurnExecutionServiceTest {
         // when
         service.sendMessageAsync(new SendMessageCommand(session.sessionId(), "你好"));
 
-        // then：经持久取消痕迹感知在途取消，取消优先收敛 idle，TO_TERMINATED 迁移零调用
+        // then：经持久取消痕迹感知进行中的取消，取消优先收敛 idle，TO_TERMINATED 迁移零调用
         List<ChatEvent> captured = savedChatEvents();
         ChatEvent last = captured.get(captured.size() - 1);
         assertEquals(ChatEventType.SESSION_STATUS_IDLE, last.type());
@@ -1288,7 +1288,7 @@ class TurnExecutionServiceTest {
         // when
         service.sendMessageAsync(new SendMessageCommand(session.sessionId(), "你好"));
 
-        // then：仍进 terminated（max_iterations），谓词两源均被查询（钉住两源求值口径；
+        // then：仍进 terminated（max_iterations），谓词两源均被查询（固化两源求值口径；
         // D8 竞态补触发使订阅后复检 + 终态判定点各求值一次，计数放宽为至少一次）
         List<ChatEvent> captured = savedChatEvents();
         ChatEvent last = captured.get(captured.size() - 1);

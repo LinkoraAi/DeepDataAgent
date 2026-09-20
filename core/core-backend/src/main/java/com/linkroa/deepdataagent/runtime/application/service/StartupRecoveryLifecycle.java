@@ -22,17 +22,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <ol>
  *   <li><b>释放本实例残留租约</b>：枚举本实例 owner 索引中的 turn 租约键并 owner-scoped 释放
  *       （本实例槽位上一进程崩溃前未归还的执行权）；<b>其他存活实例持有的租约不枚举、不释放</b>
- *       （多实例滚动重启不互踢在途轮次，审查修复 F13）；</li>
+ *       （多实例滚动重启不互踢进行中的轮次，审查修复 F13）；</li>
  *   <li><b>复位孤儿执行</b>：仅对「对外 {@code status ∈ {running, rescheduling}} 且内部
  *       {@code turn_phase ∈ {running, cancelling}} 且不存在任何存活实例持有的有效 turn 租约」
  *       的会话，CAS 复位为 {@code idle / idle}。相位选择性由
  *       {@link Transition#ABANDON_ORPHAN_EXECUTION} 的相位前置守卫在 SQL 层强制：
  *       {@code turn_phase=awaiting_confirmation}（durable HITL 合法可恢复等待）<b>MUST NOT
- *       被复位</b>——其现场完全由事件账本承载，任意实例可经 {@code user.tool_confirmation}
+ *       被复位</b>——其现场完全由事件表承载，任意实例可经 {@code user.tool_confirmation}
  *       续跑。存量 {@code rescheduling} 行（本期无生产者）按孤儿执行一并复位 idle，
  *       且不补发任何 {@code *.rescheduled} 事件。</li>
  * </ol>
- * <p>幂等执行：复位仅改会话双列，不产生新事件（崩溃轮次的事实以事件账本既有事件为准）。</p>
+ * <p>幂等执行：复位仅改会话双列，不产生新事件（崩溃轮次的事实以事件表既有事件为准）。</p>
  *
  * <p><b>不包 DB 事务（Redis 化收尾，2026-09 迭代）</b>：编排半数为 Redis 动作
  * （枚举 / 释放 / 探活租约），不受 PG 事务管辖、不随回滚撤销——外层事务对「释放租约 +
@@ -127,7 +127,7 @@ public class StartupRecoveryLifecycle implements SmartLifecycle {
     /**
      * 相位选择性复位孤儿执行：候选来自「对外 running/rescheduling 且内部相位 running/cancelling」
      * 的会话（{@code awaiting_confirmation} 不在候选内），逐条以
-     * {@link CoordinationLeaseService#hasActiveTurnLease} 排除任何存活实例持有的在跑会话后，
+     * {@link CoordinationLeaseService#hasActiveTurnLease} 排除任何存活实例持有的运行中的会话后，
      * 经 {@link Transition#ABANDON_ORPHAN_EXECUTION} 原子 CAS 复位 {@code idle / idle}
      * （相位守卫在 SQL 层二次兜底，复位不补发事件）。
      *

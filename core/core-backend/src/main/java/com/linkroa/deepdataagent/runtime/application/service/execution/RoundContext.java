@@ -47,7 +47,7 @@ import java.util.function.Function;
  * @param signalHandler        单信号消费回调（绑定 {@code handleSignal}）
  * @param onStreamComplete     流正常收流回调（绑定 {@code onStreamComplete}）
  * @param onStreamError        流异常收流回调（绑定 {@code onStreamError}）
- * @param cancelRequested      在途取消两源谓词（绑定 {@code isCancelRequested}）
+ * @param cancelRequested      进行中的取消两源谓词（绑定 {@code isCancelRequested}）
  * @param onAwaitInterrupted   阻塞等待被外部中断出口（记日志 + {@code finalizeInterrupted}）
  * @param onRunFailure         执行体抛出运行时异常出口（记日志 + {@code finalizeAsFailure}，入参含 setup 失败标记）
  * @param onAgentCloseFailure  Agent 句柄释放异常出口（记日志）

@@ -41,7 +41,7 @@ import java.util.function.Function;
  * }</pre>
  * <p><b>出口顺序保持</b>：{@code runStream} 的 finally（停止续约）先于 {@code run} 的
  * InterruptedException catch（中断出口）执行，与拆分前 {@code runAgent → runStream} 嵌套 finally
- * 语义逐字一致——续约取消严格发生在终态化之前，杜绝毒续约。</p>
+ * 语义逐字一致——续约取消严格发生在终态化之前，杜绝多余续约。</p>
  * <p>模板无状态、不持有 Spring 组件（{@code RoundContext} 显式注入依赖面），由执行链服务静态持有单例复用。</p>
  * <p><b>可见性</b>：包私有——模板的唯一持有者是同包的 {@code TurnExecutionService}（静态单例），
  * 不出现在任何子包外的签名上（5.1 归位复核后由 public 收紧回包私有）。</p>
@@ -53,7 +53,7 @@ final class RoundExecutionTemplate {
     /**
      * 续约存储故障的容忍周期数（design D5①）：连续达到该数量的续约周期始终取不到成功确证，
      * 才按失权处理（每周期 {@code TTL/3}，两个周期约 6.7min，仍短于 10min TTL 的安全余量内）——
-     * 既不让瞬断误杀在途轮次，也不让长期失联的实例越过 TTL 继续执行。
+     * 既不让瞬断误判进行中的轮次，也不让长期失联的实例越过 TTL 继续执行。
      */
     static final int LEASE_FAULT_TOLERANT_CYCLES = 2;
 
@@ -74,7 +74,7 @@ final class RoundExecutionTemplate {
         LeaseRenewalHandle leaseRenewal = startLeaseRenewal(ctx);
         try {
             AgentAssemblySpec spec = ctx.assembler().apply(ctx.session());
-            // 开跑前登记本轮挂载保管库凭据明文至轮次运行态：工具结果落库 / SSE 广播与错误终态前
+            // 启动前登记本轮挂载保管库凭据明文至轮次运行态：工具结果落库 / SSE 广播与错误终态前
             // 经 SecretMasker.maskExactValues 精确掩码已知秘密回显（明文仅内存瞬态，不进日志 / 沙箱）
             ctx.runState().registerMountedVaultSecrets(spec.vaultCredentials());
             // MCP 工具权限策略登记（D15 事件投影）：agent.mcp_tool_use 载荷的 evaluated_permission
@@ -98,7 +98,7 @@ final class RoundExecutionTemplate {
             log.error("{}执行异常: sessionId={}", ctx.roundLabel(), ctx.sessionId(), ex);
             ctx.onRunFailure().accept(ex, !built);
         } finally {
-            // 轮次全部出口（正常 / 异常 / 中断 / HITL 挂起 / fail-closed / 装配失败）统一停止续约，杜绝虚续约
+            // 轮次全部出口（正常 / 异常 / 中断 / HITL 挂起 / fail-closed / 装配失败）统一停止续约，杜绝多余续约
             leaseRenewal.cancel();
             if (agent != null) {
                 try {
@@ -133,10 +133,10 @@ final class RoundExecutionTemplate {
         if (ctx.cancelRequested().getAsBoolean()) {
             fireInterrupterQuietly(ctx, interrupter, "订阅建立后补触发");
         }
-        // 注册 fail-closed 中止句柄：续约失败 → 取消流订阅切断在途执行 + 放行完成信号收轮；
+        // 注册 fail-closed 中止句柄：续约失败 → 取消流订阅切断进行中的执行 + 放行完成信号收轮；
         // 标记已先置位（续约失败早于订阅建立）时句柄立即触发，中止信号不丢失。
         // finish 置 finally：dispose 异常被 runLeaseLostAbort 吞掉时收轮信号仍必达，
-        // 避免 awaitFinish() 永久悬挂（控制面 / agent 句柄泄漏）
+        // 避免 awaitFinish() 永久阻塞（控制面 / agent 句柄泄漏）
         ctx.runState().attachLeaseLostAbort(() -> {
             try {
                 subscription.dispose();
@@ -190,11 +190,11 @@ final class RoundExecutionTemplate {
                                 sessionId, faultCycles.get(), LEASE_FAULT_TOLERANT_CYCLES);
                         return;
                     }
-                    log.warn("turn 租约续约连续 {} 周期存储故障，fail-closed 中止在途执行"
+                    log.warn("turn 租约续约连续 {} 周期存储故障，fail-closed 中止进行中的执行"
                             + "（不写终态 / 不迁移状态 / 不广播）: sessionId={}", faultCycles.get(), sessionId);
                 } else {
                     log.warn("turn 租约续约失败（执行权已丧失：过期被回收或已被他实例接管），"
-                            + "fail-closed 中止在途执行（不写终态 / 不迁移状态 / 不广播）: sessionId={}", sessionId);
+                            + "fail-closed 中止进行中的执行（不写终态 / 不迁移状态 / 不广播）: sessionId={}", sessionId);
                 }
                 runState.markLeaseLost();
             } catch (RuntimeException ex) {

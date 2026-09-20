@@ -28,7 +28,7 @@ import java.util.List;
  *   <li>{@code GET /threads}：列出会话全部线程，协调器主线程排首位
  *       （{@code parent_thread_id} 为 null；单 Agent 场景恒一条）；</li>
  *   <li>{@code GET /threads/{thread_id}/events}：线程作用域扁平 Event 游标分页
- *       （分页 / 过滤参数与 Session 事件列表一致；归属为账本内部过滤键，
+ *       （分页 / 过滤参数与 Session 事件列表一致；归属为事件表内部过滤键，
  *       MUST NOT 扩张对外扁平 Event 公开字段）；携带 {@code Accept: text/event-stream} 时
  *       切换为线程事件流；</li>
  *   <li>{@code GET /threads/{thread_id}/events/stream}：线程事件流（仅 buffered，

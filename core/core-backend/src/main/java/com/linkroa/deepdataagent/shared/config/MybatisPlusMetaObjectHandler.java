@@ -17,11 +17,11 @@ import java.time.ZoneId;
  * <p><b>操作人口径</b>：填充器在发起 JDBC 调用的线程内执行，直接读取
  * {@link AuthContext}（JWT 过滤器在请求线程写入的数字 user_id）——
  * 请求线程内的写入记真实操作人（user_id 字符串）；后台 / 虚拟线程与未认证入口
- * 上下文必空，回落约定值 <code>system</code>，其操作人语义以业务 owner_id 与事件账本为准。</p>
+ * 上下文必空，回落约定值 <code>system</code>，其操作人语义以业务 owner_id 与事件表为准。</p>
  * <p><b>填充覆盖范围盲区（预期行为，非缺陷）</b>：updateFill 仅在 entity-based 写入
  * （update(entity, wrapper) 且 entity 非 null）时触发；
  * update(null, wrapper) 形式的窄列 CAS（如状态机条件更新）不经过本填充器，
- * updated_by 保持原值——此类写入的操作人归因同样看事件账本与业务 owner_id。</p>
+ * updated_by 保持原值——此类写入的操作人归因同样看事件表与业务 owner_id。</p>
  */
 @Component
 public class MybatisPlusMetaObjectHandler implements MetaObjectHandler {

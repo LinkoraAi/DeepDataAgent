@@ -44,7 +44,7 @@ class TurnRunStateTest {
         // when
         state.rememberConfirmCandidate("tc-1", "search", "{\"q\":\"x\"}", eventId);
 
-        // then：挂起时经批次定位候选，公开事件 id 锚点随现场留存（映射销毁不影响账本锚点）
+        // then：挂起时经批次定位候选，公开事件 id 锚点随现场留存（映射销毁不影响事件表锚点）
         List<ConfirmCandidateBatch.ConfirmCandidate> batch = state.confirmBatch(List.of("tc-1"));
         assertEquals(1, batch.size());
         assertEquals("tc-1", batch.get(0).toolCallId());

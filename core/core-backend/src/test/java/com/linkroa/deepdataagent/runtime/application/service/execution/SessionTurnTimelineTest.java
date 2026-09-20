@@ -37,7 +37,7 @@ import static org.mockito.Mockito.when;
  * <b>完整事件类型序列</b>与<b>会话内 seq 顺序</b>（seq 由会话级计数器真实分配，
  * 从 1 起严格 +1——无空洞、无乱序）。
  *
- * <p>八条时序：正常收流 / HITL 挂起 / 中断（含在飞工具配对补偿）/ 执行出错 /
+ * <p>八条时序：正常收流 / HITL 挂起 / 中断（含执行中工具配对补偿）/ 执行出错 /
  * 迭代上限 / 归档 / 删除 / 断连不取消。其中「归档零事件」与「断连不取消」此前
  * 无端到端序列断言，由本类补齐。</p>
  */
@@ -101,7 +101,7 @@ class SessionTurnTimelineTest extends AgentRuntimeServiceTestSupport {
         // when
         turnExecutionService.sendMessageAsync(new SendMessageCommand(session.sessionId(), "你好"));
 
-        // then（开跑双状态事件 → 内容事件 → 收场二事件，seq 从 1 起严格递增）
+        // then（启动双状态事件 → 内容事件 → 收场二事件，seq 从 1 起严格递增）
         List<ChatEvent> saved = savedChatEvents();
         assertTimeline(saved,
                 ChatEventType.SESSION_STATUS_RUNNING,
@@ -118,7 +118,7 @@ class SessionTurnTimelineTest extends AgentRuntimeServiceTestSupport {
 
     @Test
     void should_emitToolUseTimelineWithoutTerminalEvents_when_sendMessageAsync_given_hitlSuspendedBatch() {
-        // given（两个工具调用聚合成入参后整批 REQUIRE 挂起：挂起即物理轮终局，等待现场只由账本承载）
+        // given（两个工具调用聚合成入参后整批 REQUIRE 挂起：挂起即物理轮终局，等待现场只由事件表承载）
         AgentSession session = idleSession();
         wireRound(session);
         stubStream(suspendBatchSignals());
@@ -126,7 +126,7 @@ class SessionTurnTimelineTest extends AgentRuntimeServiceTestSupport {
         // when
         turnExecutionService.sendMessageAsync(new SendMessageCommand(session.sessionId(), "执行"));
 
-        // then（开跑双状态事件 + 两条 agent.tool_use；无任何终态事件，seq 止于工具调用）
+        // then（启动双状态事件 + 两条 agent.tool_use；无任何终态事件，seq 止于工具调用）
         List<ChatEvent> saved = savedChatEvents();
         assertTimeline(saved,
                 ChatEventType.SESSION_STATUS_RUNNING,
@@ -141,7 +141,7 @@ class SessionTurnTimelineTest extends AgentRuntimeServiceTestSupport {
         verify(sessionRepository, never()).transition(anyString(), eq(Transition.FINISH_TURN));
     }
 
-    // ==================== 3. 中断（含在飞工具配对补偿） ====================
+    // ==================== 3. 中断（含执行中工具配对补偿） ====================
 
     @Test
     void should_compensateInFlightToolUseWithSyntheticResult_when_sendMessageAsync_given_interruptMidToolCall() {
@@ -170,7 +170,7 @@ class SessionTurnTimelineTest extends AgentRuntimeServiceTestSupport {
                 ChatEventType.SESSION_STATUS_IDLE);
         ChatEvent synthetic = saved.get(3);
         assertTrue(synthetic.payload().contains("\"tool_use_id\":\"tc-1\""),
-                "合成结果须与在飞工具调用按 tool_use_id 配对，实际: " + synthetic.payload());
+                "合成结果须与执行中工具调用按 tool_use_id 配对，实际: " + synthetic.payload());
         assertTrue(synthetic.payload().contains("error"), "合成结果状态应为错误");
         // then（中断不以 session.error 表达，终态仅为收场二事件 interrupted）
         assertTrue(saved.stream().noneMatch(e -> e.type() == ChatEventType.SESSION_ERROR),
@@ -272,7 +272,7 @@ class SessionTurnTimelineTest extends AgentRuntimeServiceTestSupport {
         // when
         sessionLifecycleService.deleteSession(session.sessionId());
 
-        // then（session.deleted 仅实时推送：账本不新增行——会话历史即将整体删除）
+        // then（session.deleted 仅实时推送：事件表不新增行——会话历史即将整体删除）
         verify(connectionHandle).push(argThat(e -> e.type() == ChatEventType.SESSION_DELETED));
         assertTrue(savedChatEvents().isEmpty(), "session.deleted 不得落库");
         // then（级联清理次序：事件流 → 线程 → 会话行）

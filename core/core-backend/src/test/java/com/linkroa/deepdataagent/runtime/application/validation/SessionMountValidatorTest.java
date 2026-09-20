@@ -40,7 +40,7 @@ import static org.mockito.Mockito.when;
  * 门面壳测试的创建会话校验分区整体迁移，异常语义与断言不减量）。
  * <p>校验器无持久化 / 物化协作者，故本类只钉「校验规则本身的判定与异常语义」；
  * 「校验失败早于物化与落库」的编排时序由会话生命周期服务用例
- * （{@code should_skipMaterializeAndPersist_when_createSession_given_mountValidationFailure}）留守钉桩。</p>
+ * （{@code should_skipMaterializeAndPersist_when_createSession_given_mountValidationFailure}）固化断言。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class SessionMountValidatorTest {

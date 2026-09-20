@@ -249,7 +249,7 @@ public final class TextBlockAccumulator {
 
     /**
      * 挂起（HITL 等待确认）时无条件丢弃进行中流快照与未刷完的尾部增量聚合缓冲。
-     * <p>挂起即物理轮终局：在途文本 / 思考块不会再收到 TEXT_END / THINKING_END，
+     * <p>挂起即物理轮终局：未收尾的文本 / 思考块不会再收到 TEXT_END / THINKING_END，
      * 快照若残留，断线重连会回补一条永远等不到收尾的 {@code event_start} 帧。
      * 与 {@link #dropInFlightAndPending()} 的终态清理同构（本轮生成结束即无进行中流）。</p>
      */

@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link TurnResult} 值对象不变量与收流分类单测（终态决策输入侧）。
- * <p>分类真值表按现状分支顺序独立重述：在途取消 &gt; HITL 挂起驻留 &gt; 迭代上限 &gt; 正常结束。</p>
+ * <p>分类真值表按现状分支顺序独立重述：进行中的取消 &gt; HITL 挂起驻留 &gt; 迭代上限 &gt; 正常结束。</p>
  */
 class TurnResultTest {
 

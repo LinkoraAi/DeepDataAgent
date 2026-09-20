@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * （spec {@code runtime/sessions}「Session 环境变量校验」六场景的离线可执行断言，D11 共用判定）。
  * <p>校验器零协作者、入参为会话环境变量 JSON 文本，故本类只钉「判定项本体」：变量名形态、
  * 值类型、保留名 / 保留前缀、单值 / 条数 / 总字节越限，以及各上限的边界取值。
- * 「校验失败早于落库（创建）/ 早于列更新（更新）」的编排时序由会话生命周期服务用例留守钉桩
+ * 「校验失败早于落库（创建）/ 早于列更新（更新）」的编排时序由会话生命周期服务用例固化断言
  * （{@code SessionLifecycleServiceTest}）。</p>
  */
 class SessionEnvironmentVariablesValidatorTest {

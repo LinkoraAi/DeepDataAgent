@@ -125,7 +125,7 @@ class StartupRecoveryLifecycleTest {
         // when
         lifecycle.start();
 
-        // then（他实例在跑的会话不触碰）
+        // then（他实例运行中的会话不触碰）
         verify(sessionRepository, never()).transition("s-live", Transition.ABANDON_ORPHAN_EXECUTION);
     }
 
@@ -144,7 +144,7 @@ class StartupRecoveryLifecycleTest {
         // when
         lifecycle.start();
 
-        // then：仅回收崩溃残留租约，会话状态保持等待（确认 / 拒绝可在重启后经账本重建续跑）
+        // then：仅回收崩溃残留租约，会话状态保持等待（确认 / 拒绝可在重启后经事件表重建续跑）
         verify(coordinationLeaseService).releaseTurnLease(sessionId);
         verify(sessionRepository, never()).transition(anyString(), eq(Transition.ABANDON_ORPHAN_EXECUTION));
     }

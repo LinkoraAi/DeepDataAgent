@@ -33,13 +33,13 @@ public final class ToolCallAggregator {
     /** 工具调用事件 ID（tool_call_id → evt_，agent.tool_use / agent.tool_result 共用） */
     private final Map<String, String> toolEventIds = new HashMap<>();
     /**
-     * 在飞工具调用（已落库 {@code agent.tool_use} / {@code agent.mcp_tool_use} 但尚未落库配对结果；
+     * 执行中的工具调用（已落库 {@code agent.tool_use} / {@code agent.mcp_tool_use} 但尚未落库配对结果；
      * tool_call_id → 工具名）。TOOL_CALL_END 登记、TOOL_RESULT_END 摘除；中断收流时据此补合成
-     * 错误结果，保证事件账本无悬空 tool_use（见 runtime/events 规格「中断不留下悬空 tool_use」）。
+     * 错误结果，保证事件表无悬空 tool_use（见 runtime/events 规格「中断不留下悬空 tool_use」）。
      */
     private final Map<String, String> pendingToolUses = new HashMap<>();
 
-    /** 在飞工具调用快照（tool_call_id + 工具名，顺序为登记顺序）。 */
+    /** 执行中的工具调用快照（tool_call_id + 工具名，顺序为登记顺序）。 */
     public record PendingToolUse(String toolCallId, String toolName) {
     }
 
@@ -119,7 +119,7 @@ public final class ToolCallAggregator {
     }
 
     /**
-     * 登记在飞工具调用（TOOL_CALL_END 落库 {@code tool_use} 后调用一次）。
+     * 登记执行中的工具调用（TOOL_CALL_END 落库 {@code tool_use} 后调用一次）。
      */
     public void registerPendingToolUse(String toolCallId, String toolName) {
         if (toolCallId != null) {
@@ -128,7 +128,7 @@ public final class ToolCallAggregator {
     }
 
     /**
-     * 摘除在飞工具调用（TOOL_RESULT_END 落库配对结果后调用一次）。
+     * 摘除执行中的工具调用（TOOL_RESULT_END 落库配对结果后调用一次）。
      */
     public void removePendingToolUse(String toolCallId) {
         if (toolCallId != null) {
@@ -137,7 +137,7 @@ public final class ToolCallAggregator {
     }
 
     /**
-     * 在飞工具调用快照（登记顺序）：中断收流时据此补合成错误结果。
+     * 执行中的工具调用快照（登记顺序）：中断收流时据此补合成错误结果。
      */
     public List<PendingToolUse> pendingToolUses() {
         List<PendingToolUse> snapshot = new ArrayList<>(pendingToolUses.size());

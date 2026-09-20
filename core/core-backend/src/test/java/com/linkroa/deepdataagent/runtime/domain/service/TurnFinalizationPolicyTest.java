@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 「迁移尝试链 + 终态事件集 + 调度回写语义」。收场事件集按「线程先、会话后」镜像，
  * 两条状态事件共享同一 {@code stop_reason}。</p>
  * <p>另锁定决策侧不变量：取消 × 迭代上限同发只收敛 idle；terminated 显式指令胜出为 no-op；
- * 事件集内状态事件永远等于迁移目标（账本与实际状态不可能错位）。</p>
+ * 事件集内状态事件永远等于迁移目标（事件表与实际状态不可能错位）。</p>
  */
 class TurnFinalizationPolicyTest {
 
@@ -224,7 +224,7 @@ class TurnFinalizationPolicyTest {
 
     @Test
     void should_noOpWithHitlSuspended_when_decide_given_suspendedTurn() {
-        // given：物理轮结束但等待事实已随挂起事务落账本
+        // given：物理轮结束但等待事实已随挂起事务落事件表
         TurnResult result = TurnResult.hitlSuspended();
 
         // when

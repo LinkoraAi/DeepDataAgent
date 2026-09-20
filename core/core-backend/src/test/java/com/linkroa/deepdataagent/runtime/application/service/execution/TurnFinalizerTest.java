@@ -57,21 +57,21 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * {@link TurnFinalizer} 直测（decompose-command-facade 3.1）：钉死自门面纯搬移的轮次收口四条红线
+ * {@link TurnFinalizer} 直测（decompose-command-facade 3.1）：固化自门面纯搬移的轮次收口四条红线
  * （design Context 硬约束，用例自门面壳测试类逐名迁入，
  * 迁移前后对照登记于 {@code openspec/changes/decompose-command-facade/tasks.md} 3.1 注记）。
  * <ul>
- *   <li><b>严格排空协议</b>：终态 / 挂起事务<b>外</b>先 {@code flush()} 整队排空，事务<b>首行</b>查毒，
- *       毒发整批回滚且会话状态不迁移（含「他会话行不随本会话回滚丢失」的跨会话不变式）；</li>
+ *   <li><b>严格排空协议</b>：终态 / 挂起事务<b>外</b>先 {@code flush()} 整队排空，事务<b>首行</b>校验落库失败标记，
+ *       落库失败整批回滚且会话状态不迁移（含「他会话行不随本会话回滚丢失」的跨会话不变式）；</li>
  *   <li><b>D19 拒绝挂起</b>：批次 / 候选错配的抛点位于排空与事务<b>之前</b>（零 flush、零事务、零落库）；</li>
- *   <li><b>防悬挂收尾</b>：查毒异常就地消化不上抛，收轮信号与租约释放必达（{@code awaitFinish} 放行）；</li>
- *   <li><b>挂起即物理轮终局</b>：清在途流快照 → 置等待守卫 → 收轮 → 释放租约的先后顺序。</li>
+ *   <li><b>防止永久阻塞的收尾</b>：落库失败标记校验异常在本方法内捕获处理不上抛，收轮信号与租约释放必达（{@code awaitFinish} 放行）；</li>
+ *   <li><b>挂起即物理轮终局</b>：清进行中流快照 → 置等待守卫 → 收轮 → 释放租约的先后顺序。</li>
  * </ul>
  * <p>编排线程侧的轮次生命周期（{@code agent.close()} / 续约任务 {@code cancel()}）随其断言主体
  * 归属留在门面壳与执行模板的用例中（design D4：断言不删、随主体归位）。</p>
  * <p>夹具口径与壳测试一致：真实 {@link InMemorySessionRegistry} + 真实
- * {@link TurnEventWriter}（同一组替身），令「哪些事件按何序入账本 / 广播」可端到端断言；
- * 落库端口在同步直存替身、恒置毒替身与真实批量落库器（写故障注入）之间按用例切换。</p>
+ * {@link TurnEventWriter}（同一组替身），令「哪些事件按何序入事件表 / 广播」可端到端断言；
+ * 落库端口在同步直存替身、恒标记落库失败的替身与真实批量落库器（写故障注入）之间按用例切换。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class TurnFinalizerTest {
@@ -86,7 +86,7 @@ class TurnFinalizerTest {
     @Mock private ApplicationEventPublisher applicationEventPublisher;
     @Mock private ConnectionHandle connectionHandle;
 
-    /** 真实会话级聚合注册表：seq 计数器 / 在途流快照 / 等待守卫按真实实现执行。 */
+    /** 真实会话级聚合注册表：seq 计数器 / 进行中流快照 / 等待守卫按真实实现执行。 */
     private final InMemorySessionRegistry sessionRegistry = new InMemorySessionRegistry();
 
     private TurnEventWriter turnEventWriter;
@@ -105,7 +105,7 @@ class TurnFinalizerTest {
         ReflectionTestUtils.setField(turnFinalizer, "coordinationLeaseService", coordinationLeaseService);
         ReflectionTestUtils.setField(turnFinalizer, "applicationEventPublisher", applicationEventPublisher);
         wirePersister(synchronousPersister());
-        // 事务模板同步执行回调：排空 / 查毒 / 迁移 / 落库在测试线程内按真实次序跑完
+        // 事务模板同步执行回调：排空 / 校验落库失败标记 / 迁移 / 落库在测试线程内按真实次序跑完
         lenient().doAnswer(inv -> {
             TransactionCallback<Object> callback = inv.getArgument(0);
             return callback.doInTransaction(mock(TransactionStatus.class));
@@ -114,13 +114,13 @@ class TurnFinalizerTest {
 
     // ==================== 夹具 ====================
 
-    /** 落库端口两处同步替换（Writer 入队侧 + 收口器排空 / 查毒侧），保持「注入即全链路生效」。 */
+    /** 落库端口两处同步替换（Writer 入队侧 + 收口器排空 / 校验落库失败标记侧），保持「注入即全链路生效」。 */
     private void wirePersister(ChatEventPersister persister) {
         ReflectionTestUtils.setField(turnEventWriter, "chatEventPersister", persister);
         ReflectionTestUtils.setField(turnFinalizer, "chatEventPersister", persister);
     }
 
-    /** 同步落库替身：enqueue 即 save、flush 无操作、查毒恒为假（无持久化故障的常态）。 */
+    /** 同步落库替身：enqueue 即 save、flush 无操作、校验落库失败标记恒为假（无持久化故障的常态）。 */
     private ChatEventPersister synchronousPersister() {
         return new ChatEventPersister() {
             @Override
@@ -144,7 +144,7 @@ class TurnFinalizerTest {
     }
 
     /**
-     * 账本不可信（恒已置毒）替身：事务前 flush 无操作、事务首行查毒恒为真，
+     * 事件表不可信（恒已标记落库失败）替身：事务前 flush 无操作、事务首行校验落库失败标记恒为真，
      * 由被测收口器在事务 lambda 首行抛业务异常触发整批回滚。
      */
     private ChatEventPersister poisonedPersister() {
@@ -170,8 +170,8 @@ class TurnFinalizerTest {
     }
 
     /**
-     * 真实异步批量落库器（同锁 flush 排空 + isPoisoned 查毒，即严格排空协议本体），
-     * 以账本 mock 为落库目标；指定事件类型写失败即模拟「重试耗尽仍未落库」的置毒源。
+     * 真实异步批量落库器（同锁 flush 排空 + isPoisoned 校验落库失败标记，即严格排空协议本体），
+     * 以事件表 mock 为落库目标；指定事件类型写失败即模拟「重试耗尽仍未落库」的落库失败标记来源。
      *
      * @param failingType 必写失败的事件类型（null = 全程无故障）
      */
@@ -179,21 +179,21 @@ class TurnFinalizerTest {
         lenient().when(chatEventRepository.save(any(ChatEvent.class))).thenAnswer(inv -> {
             ChatEvent event = inv.getArgument(0);
             if (failingType != null && event.type() == failingType) {
-                throw new RuntimeException("事件账本写入故障（注入）: " + failingType.value());
+                throw new RuntimeException("事件表写入故障（注入）: " + failingType.value());
             }
             return event;
         });
         return new BatchChatEventPersister(chatEventRepository);
     }
 
-    /** 可观测落库端口（mock）：默认不置毒、enqueue 不落库，使终态事件成为唯一 save 来源。 */
+    /** 可观测落库端口（mock）：默认不标记落库失败、enqueue 不落库，使终态事件成为唯一 save 来源。 */
     private ChatEventPersister observablePersister() {
         ChatEventPersister persister = mock(ChatEventPersister.class);
         wirePersister(persister);
         return persister;
     }
 
-    /** 账本落库回显桩。 */
+    /** 事件表落库回显桩。 */
     private void wireLedgerSave() {
         lenient().when(chatEventRepository.save(any(ChatEvent.class))).thenAnswer(inv -> inv.getArgument(0));
     }
@@ -222,7 +222,7 @@ class TurnFinalizerTest {
         return AgentStreamSignal.hitl(AgentStreamSignalType.HUMAN_CONFIRM_REQUIRED, "reply-1", toolCallIds);
     }
 
-    /** 汇总账本 save 记录（按调用顺序）。 */
+    /** 汇总事件表 save 记录（按调用顺序）。 */
     private List<ChatEvent> savedChatEvents() {
         return org.mockito.Mockito.mockingDetails(chatEventRepository).getInvocations().stream()
                 .filter(inv -> inv.getMethod().getName().equals("save"))
@@ -236,7 +236,7 @@ class TurnFinalizerTest {
     }
 
     /**
-     * 终态编排次序钉桩（严格排空协议 → 窄读 → 迁移 → 事件落库 → touchLastActive → 终局事件）。
+     * 终态编排次序固化（严格排空协议 → 窄读 → 迁移 → 事件落库 → touchLastActive → 终局事件）。
      */
     private void verifyTerminalCallSequence(String sessionId, InOrder inOrder, ChatEventPersister persister,
                                             List<Transition> transitions, List<ChatEventType> terminalEvents) {
@@ -344,7 +344,7 @@ class TurnFinalizerTest {
 
     @Test
     void should_keepTerminalCallSequence_when_finalizeInterrupted_given_inProcessInterrupt() {
-        // given（决策表第 4 行：断连 / user.interrupt 在途 → 中断终态，事件对同事务）
+        // given（决策表第 4 行：断连 / user.interrupt 进行中 → 中断终态，事件对同事务）
         AgentSession session = idleSession();
         String sessionId = session.sessionId();
         wireLedgerSave();
@@ -536,7 +536,7 @@ class TurnFinalizerTest {
         verify(persister, never()).flush();
         verify(transactionTemplate, never()).execute(any());
         verify(sessionRepository, never()).transition(anyString(), eq(Transition.PHASE_AWAIT));
-        // then（MUST NOT 落 / 广播任何等待事件——等待现场现由账本既有 tool_use 明细承载）
+        // then（MUST NOT 落 / 广播任何等待事件——等待现场现由事件表既有 tool_use 明细承载）
         assertTrue(savedChatEvents().isEmpty(), "批次与候选登记错配时不得落任何事件");
         verify(connectionHandle, never()).push(any(ChatEvent.class));
         // then（拒绝挂起本身不收轮：收轮由错误终态收敛路径承担）
@@ -564,11 +564,11 @@ class TurnFinalizerTest {
         verify(coordinationLeaseService, never()).releaseTurnLease(sessionId);
     }
 
-    // ==================== 红线一 / 三：严格排空协议毒发回滚 + 防悬挂收轮 ====================
+    // ==================== 红线一 / 三：严格排空协议落库失败回滚 + 防止永久阻塞收轮 ====================
 
     @Test
     void should_rollbackTerminalAndStillFinishRound_when_finalizeNormal_given_streamEventWriteFails() {
-        // given（真实批量落库器 + agent.thinking 写库必失败：事务前 flush 排空后本会话置毒）
+        // given（真实批量落库器 + agent.thinking 写库必失败：事务前 flush 排空后本会话标记落库失败）
         AgentSession session = idleSession();
         String sessionId = session.sessionId();
         BatchChatEventPersister persister = batchPersisterFailingOn(ChatEventType.AGENT_THINKING);
@@ -577,7 +577,7 @@ class TurnFinalizerTest {
         ExecutionContext context = newContext(session);
         TurnControl turn = new TurnControl();
 
-        // when（查毒异常不得挂死编排线程：本轮必须按时收轮）
+        // when（校验落库失败标记异常不得永久阻塞编排线程：本轮必须按时收轮）
         assertDoesNotThrow(() -> turnFinalizer.finalizeNormal(context, turn));
 
         // then（终态事务整批回滚：状态不迁移 idle、终态事件不落库不广播）
@@ -585,7 +585,7 @@ class TurnFinalizerTest {
         verify(sessionRepository, never()).touchLastActive(anyString());
         List<ChatEvent> saved = savedChatEvents();
         assertTrue(saved.stream().noneMatch(e -> e.type() == ChatEventType.SESSION_STATUS_IDLE),
-                "账本缺行时不得出现无终局事件的终态会话");
+                "事件表缺行时不得出现无终局事件的终态会话");
         verify(connectionHandle, never()).push(argThat(e -> e.type() == ChatEventType.SESSION_STATUS_IDLE));
         verify(applicationEventPublisher, never()).publishEvent(any(TurnFinished.class));
         // then（本轮仍照常收轮：完成阻塞等待 + 释放租约）
@@ -595,7 +595,7 @@ class TurnFinalizerTest {
 
     @Test
     void should_rollbackTerminalAndStillFinishRound_when_finalizeNormal_given_ledgerAlwaysPoisoned() {
-        // given（账本恒已置毒：事务前 flush 无操作、终态事务首行查毒命中抛异常）
+        // given（事件表恒已标记落库失败：事务前 flush 无操作、终态事务首行命中落库失败标记抛异常）
         AgentSession session = idleSession();
         String sessionId = session.sessionId();
         wireLedgerSave();
@@ -603,10 +603,10 @@ class TurnFinalizerTest {
         ExecutionContext context = newContext(session);
         TurnControl turn = new TurnControl();
 
-        // when（awaitFinish 必被放行——否则本断言超时失败：编排线程永久阻塞即回归 design D2 的悬挂）
+        // when（awaitFinish 必被放行——否则本断言超时失败：编排线程永久阻塞即回归 design D2 的永久阻塞问题）
         assertTimeoutPreemptively(Duration.ofSeconds(2), () -> turnFinalizer.finalizeNormal(context, turn));
 
-        // then（必释放租约：会话可被复位路径接管，而非被续约钉在 processing）
+        // then（必释放租约：会话可被复位路径接管，而非被续约卡在 processing）
         verify(coordinationLeaseService, atLeastOnce()).releaseTurnLease(sessionId);
         // then（不迁移状态、不落 / 不广播任何终态事件）
         verify(sessionRepository, never()).transition(anyString(), eq(Transition.FINISH_TURN));
@@ -633,7 +633,7 @@ class TurnFinalizerTest {
         rememberCandidate(context.runState(), "tc-1", "search", "{\"q\":\"x\"}", "evt_tool_1");
         TurnControl turn = new TurnControl();
 
-        // when（事务首行查毒异常不得挂死编排线程：本轮必须按时收轮）
+        // when（事务首行校验落库失败标记异常不得永久阻塞编排线程：本轮必须按时收轮）
         assertTimeoutPreemptively(Duration.ofSeconds(2),
                 () -> turnFinalizer.enterWaitingConfirm(context, suspendSignal(List.of("tc-1")), turn));
 
@@ -646,14 +646,14 @@ class TurnFinalizerTest {
                         || e.type() == ChatEventType.SESSION_THREAD_STATUS_IDLE
                         || e.type() == ChatEventType.SESSION_ERROR),
                 "明细不可信时不得落任何终态事件，实际: " + saved.stream().map(e -> e.type().name()).toList());
-        // then（本轮照常收轮：turn 租约即刻释放，无悬挂）
+        // then（本轮照常收轮：turn 租约即刻释放，无永久阻塞）
         assertTimeoutPreemptively(Duration.ofSeconds(2), turn::awaitFinish);
         verify(coordinationLeaseService, atLeastOnce()).releaseTurnLease(sessionId);
     }
 
     @Test
     void should_completeRoundAndReleaseLease_when_enterWaitingConfirm_given_ledgerAlwaysPoisoned() {
-        // given（挂起事务首行查毒命中抛异常：待确认明细不可信）
+        // given（挂起事务首行命中落库失败标记抛异常：待确认明细不可信）
         AgentSession session = idleSession();
         String sessionId = session.sessionId();
         wireLedgerSave();
@@ -684,7 +684,7 @@ class TurnFinalizerTest {
 
     @Test
     void should_stillSuspendDurable_when_enterWaitingConfirm_given_strictFlushPasses() {
-        // given（真实批量落库器、无写故障：轮内在队明细随事务前 flush 先入账本）
+        // given（真实批量落库器、无写故障：轮内在队明细随事务前 flush 先入事件表）
         AgentSession session = idleSession();
         String sessionId = session.sessionId();
         BatchChatEventPersister persister = batchPersisterFailingOn(null);
@@ -703,12 +703,12 @@ class TurnFinalizerTest {
         // when
         turnFinalizer.enterWaitingConfirm(context, suspendSignal(List.of("tc-1", "tc-2")), turn);
 
-        // then（等待现场由账本既有工具调用明细承载：两条 agent.tool_use 随事务前 flush 先入账本，
+        // then（等待现场由事件表既有工具调用明细承载：两条 agent.tool_use 随事务前 flush 先入事件表，
         //       挂起不再落 session.status_waiting_confirmation / session.requires_action 旁路事件）
         List<ChatEvent> saved = savedChatEvents();
         assertEquals(2, saved.stream().filter(e -> e.type() == ChatEventType.AGENT_TOOL_USE).count());
         assertTrue(saved.stream().allMatch(e -> e.type() == ChatEventType.AGENT_TOOL_USE),
-                "挂起全程零状态事件，等待事实只由账本既有 tool_use 明细承载");
+                "挂起全程零状态事件，等待事实只由事件表既有 tool_use 明细承载");
         // then（挂起成功路径行为不回归：一次相位 CAS + 收轮 + 释放租约，不落 idle 终态）
         verify(sessionRepository).transition(sessionId, Transition.PHASE_AWAIT);
         verify(sessionRepository, never()).transition(anyString(), eq(Transition.FINISH_TURN));
@@ -720,7 +720,7 @@ class TurnFinalizerTest {
 
     @Test
     void should_dropInFlightSnapshotAndGuardConfirmation_when_enterWaitingConfirm_given_textBlockStreamingMidSuspend() {
-        // given（文本块流式中途挂起：在途块等不到 TEXT_END，快照残留会让重连回补无收尾的 event_start）
+        // given（文本块流式中途挂起：进行中块等不到 TEXT_END，快照残留会让重连回补无收尾的 event_start）
         AgentSession session = idleSession();
         String sessionId = session.sessionId();
         BatchChatEventPersister persister = batchPersisterFailingOn(null);
@@ -728,7 +728,7 @@ class TurnFinalizerTest {
         ExecutionContext context = newContext(session);
         TurnRunState runState = context.runState();
         runState.markInFlightStream("evt_text_1", ChatEventType.AGENT_MESSAGE, "blk-1", 0L);
-        assertNotNull(runState.inFlightStream(), "前置：在途流快照已登记");
+        assertNotNull(runState.inFlightStream(), "前置：进行中流快照已登记");
         rememberCandidate(runState, "tc-1", "search", "{\"q\":\"x\"}", "evt_tool_1");
         wireTransition(sessionId, Transition.PHASE_AWAIT, 1);
         TurnControl turn = new TurnControl();
@@ -745,12 +745,12 @@ class TurnFinalizerTest {
         assertTrue(runState.confirmationPending(), "挂起后本轮须置等待守卫");
     }
 
-    // ==================== 红线一补强：毒发回滚严格限定本会话（跨会话不变式） ====================
+    // ==================== 红线一补强：落库失败回滚严格限定本会话（跨会话不变式） ====================
 
     @Test
     void should_keepOtherSessionRowsCommitted_when_saveAndBroadcastTerminal_given_poisonRollbackWithSecondSessionQueued() {
-        // given（A 会话本轮存在写失败事件将置毒，B 会话事件同在全局队列中——排空已移至 A 事务外的
-        //       flush、逐条独立提交，B 行不得进入 A 的 JDBC 事务、不得随 A 毒发回滚丢失）
+        // given（A 会话本轮存在写失败事件将标记落库失败，B 会话事件同在全局队列中——排空已移至 A 事务外的
+        //       flush、逐条独立提交，B 行不得进入 A 的 JDBC 事务、不得随 A 落库失败回滚丢失）
         AgentSession session = idleSession();
         String sessionId = session.sessionId();
         BatchChatEventPersister persister = batchPersisterFailingOn(ChatEventType.AGENT_THINKING);
@@ -761,22 +761,22 @@ class TurnFinalizerTest {
         ExecutionContext context = newContext(session);
         TurnControl turn = new TurnControl();
 
-        // when（A 轮进终态：事务前 flush 使 A 置毒且把 B 行独立落库；事务首行查毒回滚）
+        // when（A 轮进终态：事务前 flush 使 A 标记落库失败且把 B 行独立落库；事务首行校验落库失败标记回滚）
         assertTimeoutPreemptively(Duration.ofSeconds(2), () -> turnFinalizer.finalizeNormal(context, turn));
 
-        // then（B 会话事件行已由事务外排空落库，不随 A 会话毒发回滚而消失）
+        // then（B 会话事件行已由事务外排空落库，不随 A 会话落库失败回滚而消失）
         verify(chatEventRepository).save(otherSessionEvent);
         // then（B 行写入先于 A 终态事务开启——证明其不在 A 事务内写入；旧「事务内排空」机制下
         //       execute 记录先于该 save，本 InOrder 断言必失败）
         InOrder drainBeforeTerminalTx = inOrder(transactionTemplate, chatEventRepository);
         drainBeforeTerminalTx.verify(chatEventRepository).save(otherSessionEvent);
         drainBeforeTerminalTx.verify(transactionTemplate).execute(any());
-        // then（A 会话仍按协议回滚：状态不迁移、不落终态事件，毒发影响严格限定本会话）
+        // then（A 会话仍按协议回滚：状态不迁移、不落终态事件，落库失败影响严格限定本会话）
         verify(sessionRepository, never()).transition(anyString(), eq(Transition.FINISH_TURN));
         List<ChatEvent> saved = savedChatEvents();
         assertTrue(saved.stream().noneMatch(e -> e.type() == ChatEventType.SESSION_STATUS_IDLE
                         && e.sessionId().equals(sessionId)),
-                "A 会话账本缺行时不得出现无终局事件的终态会话");
+                "A 会话事件表缺行时不得出现无终局事件的终态会话");
         assertTimeoutPreemptively(Duration.ofSeconds(2), turn::awaitFinish);
     }
 }

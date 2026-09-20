@@ -440,7 +440,7 @@ class AgentRuntimeQueryServiceTest {
 
     @Test
     void should_convertAfterIdToSeq_when_listEventPage_given_eventIdCursor() {
-        // given（after_id（evt_）换算为账本 seq 位点后下传）
+        // given（after_id（evt_）换算为事件表 seq 位点后下传）
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         when(chatEventRepository.findSeqByEventId(session.sessionId(), "evt_9"))
@@ -462,7 +462,7 @@ class AgentRuntimeQueryServiceTest {
 
     @Test
     void should_scopeByThread_when_listEventPage_given_threadScope() {
-        // given（线程作用域：线程归属键下传至账本过滤，不扩张对外扁平 Event 字段）
+        // given（线程作用域：线程归属键下传至事件表过滤，不扩张对外扁平 Event 字段）
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         ChatEvent only = ChatEvent.create(session.sessionId(), ChatEventType.AGENT_MESSAGE,

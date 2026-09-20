@@ -116,7 +116,7 @@ class DecisionTest {
 
     @Test
     void should_throwIllegalArgument_when_attempt_given_missingEvents() {
-        // given / when / then：迁移必须声明终态事件集（否则状态已迁而账本无痕）
+        // given / when / then：迁移必须声明终态事件集（否则状态已迁而事件表无痕）
         assertThrows(IllegalArgumentException.class,
                 () -> new Decision.Attempt(Transition.FINISH_TURN, List.of(), DeploymentOutcome.TERMINATED));
         assertThrows(IllegalArgumentException.class,

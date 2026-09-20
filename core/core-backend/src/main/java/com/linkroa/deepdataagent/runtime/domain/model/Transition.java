@@ -30,7 +30,7 @@ public record Transition(
 ) {
 
     /**
-     * 开跑一轮（抢占执行权）：{@code status idle→running} + {@code phase →running}。
+     * 启动一轮（抢占执行权）：{@code status idle→running} + {@code phase →running}。
      * <p>非对称守卫：对外状态前置<b>只看</b> {@code status=idle}（不看 phase），
      * 故此处 statusFrom 为单元素、phaseFrom 为空集。</p>
      */

@@ -116,7 +116,7 @@ public class SessionArtifactDeliveryTarget implements ArtifactDeliveryTarget {
     /**
      * 上抛交付信号（登记成功后调用）：事件装配 / 落库 / 广播由应用层承载。
      * <p>异常仅告警——产物已登记成功，事件上抛失败 MUST NOT 把交付结果改写为失败
-     * （否则模型会重复交付同一产物）；账本缺该条交付事件属可容忍的观测缺口。</p>
+     * （否则模型会重复交付同一产物）；事件表缺该条交付事件属可容忍的观测缺口。</p>
      */
     private void publishDeliveredSignal(String filename, String fileId, long size) {
         try {

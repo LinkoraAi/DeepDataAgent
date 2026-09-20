@@ -13,7 +13,7 @@ import java.util.List;
  * （{@code ascending} 派生）/ {@code created_at[gt|gte|lt|lte]}；游标统一
  * {@link CursorPageParams}（{@code limit 1-100 缺省 20} + {@code after_id / before_id} 的
  * {@code evt_} 事件 ID 定位，两者互斥）。</p>
- * <p>{@code sessionThreadId} 为账本内部过滤键（线程作用域端点装配；会话级列表为 null），
+ * <p>{@code sessionThreadId} 为事件表内部过滤键（线程作用域端点装配；会话级列表为 null），
  * MUST NOT 因此扩张对外扁平 Event 的公开字段。</p>
  *
  * @param sessionId       会话 ID（必填）

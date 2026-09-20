@@ -90,7 +90,7 @@ import java.util.Set;
  * 可读配置错误、不抛异常）。故 {@link #buildToolsConfig} 在无白名单时恒把两名并入
  * deny；显式启用须用户在 {@code enabled_tools} 白名单点名 {@code WebFetch}/{@code WebSearch}。</p>
  * <p><b>框架能力「不采用」清单（防后续升级误当遗漏）</b>：不启用
- * {@code FinalAnswerFilterMiddleware}（与逐 token SSE 账本冲突）；不接入 transcript 三件套
+ * {@code FinalAnswerFilterMiddleware}（与逐 token SSE 事件表冲突）；不接入 transcript 三件套
  * （transcript / session_log / session_search）、teams、{@code subagentFactory}、
  * {@code filesystemRoute}（RoutedSandboxFilesystem）、{@code getTaskRepository()}——均为有意取舍，
  * 见 openspec 变更 upgrade-agentscope-203 design.md（D13 等）。

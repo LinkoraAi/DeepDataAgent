@@ -55,7 +55,7 @@ import static org.mockito.Mockito.when;
  * <p><b>与离线断言的分工</b>：可离线验证的掩码形态、解析器匹配、降级判定与诊断脱敏已下沉为常跑单测
  * （{@code McpDiscoveryAssemblyTest} / {@code SecretMaskerTest} / {@code SignalHandlersTest} /
  * {@code AgentscopeHarnessAgentFactoryTest} / {@code RuntimeArchitectureTest}），本类只承担
- * <b>必须真实 PG / 真实网络</b>的部分——密文落库形态、真实跨 BC 解密材料化、真实事件账本持久化与
+ * <b>必须真实 PG / 真实网络</b>的部分——密文落库形态、真实跨 BC 解密材料化、真实事件表持久化与
  * 真实 SSE 协议编码（tasks 2.7 选项 a）。</p>
  *
  * <p><b>默认不执行</b>：{@code @Tag("integration")} 由 {@code core-backend/pom.xml} 的
@@ -75,7 +75,7 @@ class VaultCredentialEgressIntegrationTest extends RedisFullContextTestSupport {
     /** 唯一出口验证用凭证明文：形态不匹配 {@code sk-*} / {@code Bearer } 正则，只能靠精确掩码覆盖。 */
     private static final String PLAINTEXT = "ghp_integration-egress-token";
 
-    /** 事件账本断言用会话 ID（{@code chat_event} 无外键，可直接落行）。 */
+    /** 事件表断言用会话 ID（{@code chat_event} 无外键，可直接落行）。 */
     private static final String LEDGER_SESSION_ID = "sess_egress_it_ledger";
 
     /** 已知明文精确掩码的替换标记（与 {@link SecretMasker} 内部常量同形，供出站载荷断言）。 */
@@ -170,13 +170,13 @@ class VaultCredentialEgressIntegrationTest extends RedisFullContextTestSupport {
         ArgumentCaptor<ChatEvent> pushed = ArgumentCaptor.forClass(ChatEvent.class);
         verify(connection).push(pushed.capture());
 
-        // when③（真实异步落库 + PostgreSQL 账本读回）
+        // when③（真实异步落库 + PostgreSQL 事件表读回）
         chatEventPersister.enqueue(event);
         chatEventPersister.flush();
         String ledgerPayload = jdbcTemplate.queryForObject(
                 "SELECT payload::text FROM chat_event WHERE session_id = ?", String.class, LEDGER_SESSION_ID);
 
-        // then（SSE 载荷 / 推送事件 / 账本行三处对明文精确匹配零命中，且掩码标记确已落盘）
+        // then（SSE 载荷 / 推送事件 / 事件表行三处对明文精确匹配零命中，且掩码标记确已落盘）
         assertFalse(sseJson.contains(PLAINTEXT), sseJson);
         assertTrue(sseJson.contains(EXACT_VALUE_MASK), sseJson);
         assertFalse(pushed.getValue().payload().contains(PLAINTEXT), pushed.getValue().payload());

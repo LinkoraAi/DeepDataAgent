@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>覆盖 design D5 的三条时效红线：①服务端慢命令（注入 2s 阻塞）下续约<b>不丢锁</b>——存储故障
  * 以异常呈现，MUST NOT 被误判为确证失权；②租约确证消失（Redis 重启丢锁等价场景）续约返回
- * {@code false}，调用方据此立即 fail-closed；③续约窗口内 TTL 被正确延长（不误杀在跑轮次）。</p>
+ * {@code false}，调用方据此立即 fail-closed；③续约窗口内 TTL 被正确延长（不误杀运行中的轮次）。</p>
  *
  * <p>「连续 2 周期异常才 fail-closed」的周期容忍计数属应用层编排，由
  * {@code RoundExecutionTemplateTest} 以单测锁定；本类只锁定其依赖的存储侧契约
@@ -99,7 +99,7 @@ class RedisCoordLeaseTimingTest extends RedisRepositoryTestSupport {
         // then②：锁未被误摘——持有者仍是本实例，延迟解除后续约可正常续命
         assertEquals(OWNER, currentTurnValue(sessionId), "慢命令不得丢锁");
         assertTrue(leaseStore.renew(CoordLeaseType.TURN, turnKey(sessionId),
-                OWNER, Duration.ofMinutes(10)), "延迟解除后续约应成功（不误杀在跑轮次）");
+                OWNER, Duration.ofMinutes(10)), "延迟解除后续约应成功（不误杀运行中的轮次）");
     }
 
     @Test
@@ -130,7 +130,7 @@ class RedisCoordLeaseTimingTest extends RedisRepositoryTestSupport {
         assertTrue(leaseStore.renew(CoordLeaseType.TURN, turnKey(sessionId),
                 OWNER, Duration.ofMinutes(10)));
 
-        // then：TTL 被重置为完整窗口（在跑轮次不因续约窗口误期被接管）
+        // then：TTL 被重置为完整窗口（运行中的轮次不因续约窗口误期被接管）
         long afterRenew = remainTtlMillis(sessionId);
         assertTrue(afterRenew > beforeRenew + 1000,
                 "续约应显著延长 TTL，实际: " + beforeRenew + " -> " + afterRenew);

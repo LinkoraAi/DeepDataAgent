@@ -32,7 +32,7 @@ import static org.mockito.Mockito.when;
 /**
  * {@link InboundEventService} 入站事件批量摄取单测（decompose-command-facade 4.2）。
  * <p>用例自门面壳测试类的入站分区整体迁入（断言逐字保留，
- * 仅调用目标由门面改为本服务），钉桩口径不变：</p>
+ * 仅调用目标由门面改为本服务），固化口径不变：</p>
  * <ul>
  *   <li>落库回显与实时广播：按到达顺序逐事件分配 seq 后落库，并向实时订阅者推送（回放兜底）；</li>
  *   <li>单活跃执行 409 门禁：含文本的 {@code user.message} 在落库前整批拒绝（零部分成功），
@@ -43,7 +43,7 @@ import static org.mockito.Mockito.when;
  * </ul>
  * <p>夹具沿用共享基座 {@link AgentRuntimeServiceTestSupport}：本服务与三个驱动目标
  * （执行链 / HITL / 会话生命周期）均为<b>真实实例 + 同一组替身端口</b>，
- * 故跨服务的驱动链路红线仍可端到端钉桩。</p>
+ * 故跨服务的驱动链路红线仍可端到端固化断言。</p>
  */
 class InboundEventServiceTest extends AgentRuntimeServiceTestSupport {
 

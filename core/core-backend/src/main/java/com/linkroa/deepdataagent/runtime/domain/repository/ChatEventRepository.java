@@ -58,7 +58,7 @@ public interface ChatEventRepository {
     /**
      * 按会话查询指定类型集合的全部事件（升序）。
      * <p>durable HITL 等待现场定位用：工具调用与工具结果两类各自取齐后，
-     * 由应用层按 {@code tool_use_id} 配对求出「未应答」批次——等待事实完全由账本承载，
+     * 由应用层按 {@code tool_use_id} 配对求出「未应答」批次——等待事实完全由事件表承载，
      * 不再有 {@code session.requires_action} 旁路事件。</p>
      *
      * @param sessionId 会话 ID
