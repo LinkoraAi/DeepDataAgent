@@ -35,7 +35,7 @@ spring:
     multipart:
       # 单文件与请求总大小
       max-file-size: ${APP_STORAGE_MAX_FILE_SIZE:100MB}
-      max-request-size: ${APP_STORAGE_MAX_REQUEST_SIZE:100MB}
+      max-request-size: ${APP_STORAGE_MAX_REQUEST_SIZE:150MB}
 
 # ---------- Agent 运行时（AgentScope Harness 装配参数） ----------
 # 模型字符串 ID（dashscope:qwen-plus / openai:... 等，经 AgentScope ModelRegistry 解析）；
@@ -91,10 +91,55 @@ app:
     # AgentScope 工作区根（宿主侧）：按 agentId 建子目录并物化 AGENTS.md，
     # 供 Harness 注入系统提示 + 沙箱 workspace projection 投影进容器
     workspace-root: ${APP_AGENT_WORKSPACE_ROOT:./data/agentscope-workspaces}
+  # 知识库域配置
+  knowledge-base:
+    # 文档删除链（两段式：短事务受理置 DELETING → 清退线程内等待在飞摄入退出 → Storage 先行 → 分批物理清退 → 收口＝条件物理 DELETE 行消失即 404）
+    document-delete:
+      # 单批清退切片条数（每批独立事务，控制事务粒度避免长事务）
+      cleanup-batch-size: ${APP_KB_DOC_DELETE_CLEANUP_BATCH_SIZE:500}
+      # 等待在飞摄入任务终止的超时上限（秒），超时后 WARN 留痕并继续清退
+      cancel-wait-timeout-seconds: ${APP_KB_DOC_DELETE_CANCEL_WAIT_TIMEOUT_SECONDS:30}
+  # RAG 知识库检索增强域配置
+  rag:
+    ingestion:
+      # 在飞摄入上限 = 常驻消费线程数（内存队列模型：落库即入队，出队条件更新领取；
+      max-inflight: 5
+      # 启动恢复：按本实例标识直接读取在飞任务注册表键，经状态一致性校验后把残留的
+      describe:
+        concurrency: 4
+      # Stage 3 向量化预趟单批条数（embedBatch 分批远程调用；小于 1 按 1 即逐条；
+      embed:
+        batch-size: 32
+      # 摄入全局默认语言（知识库语言未配置时的兜底，11 语言全名口径，缺省 Chinese；
+      language: Chinese
+      extraction:
+        # 是否启用 JSON 输出模式抽取（默认文本分隔符模式）
+        json-mode: false
+        # 补漏（gleaning）最大轮数 N（0 表示不补漏，负数归零）
+        max-gleaning: 1
+    graph:
+      # 图谱来源账本（source_ids）保留上限：超出按截断策略丢弃并输出 INFO 留痕
+      source-ids-limit: ${RAG_GRAPH_SOURCE_IDS_LIMIT:200}
+      # 账本截断策略：KEEP=保留最早来源（默认）；FIFO=保留最近来源（丢弃最早）
+      source-ids-truncation: ${RAG_GRAPH_SOURCE_IDS_TRUNCATION:KEEP}
+      # 来源文件路径列表（filePaths）保留上限：超出保留前 N 条并在末尾追加溢出占位元素
+      # （占位元素 = 占位词 + "(KEEP;保留<保留数>/共<总数>)"，口径见 GraphSourceFilePaths）
+      source-file-paths-limit: ${RAG_GRAPH_SOURCE_FILE_PATHS_LIMIT:75}
+      # 来源文件路径溢出占位词（知识库级 rag_engine_config 图合并段 source_file_paths_placeholder 可覆盖）
+      source-file-paths-placeholder: ${RAG_GRAPH_SOURCE_FILE_PATHS_PLACEHOLDER:…等}
+    # 删除清退执行端（JDK 21 虚拟线程 thread-per-task + CompletableFuture
+    cleanup:
+      # 全局并发配额 = 清退信号量许可数（配额耗尽时后到任务排队等待而非丢弃；非正数回落缺省 4）
+      max-concurrent: 4
+      # 停机等待在飞任务自然收尾的宽限秒数（宽限期满先按状态一致性校验收敛残留为 DELETE_FAILED 并移除在飞成员，收尾后才中断残留线程）
+      shutdown-grace-seconds: 30
+      # 单批清退条数（透传给 KbCleanupWriter，每批独立小事务）
+      batch-size: 500
+
 
 datasource:
   encryption:
-    key: ${DATASOURCE_ENCRYPTION_KEY:deepdataagent-pwd}
+    key: ${DATASOURCE_ENCRYPTION_KEY:}
 
 # 模型配置（agent BC）：凭证独立加密密钥（AES/GCM），与 datasource 密钥完全隔离。
 # 无默认值：生产部署必须通过环境变量 APP_MODEL_ENCRYPTION_KEY 显式配置，未配置时启动即失败

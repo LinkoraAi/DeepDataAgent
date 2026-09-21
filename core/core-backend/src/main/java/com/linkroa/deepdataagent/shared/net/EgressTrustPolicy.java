@@ -113,6 +113,18 @@ public final class EgressTrustPolicy {
      * @return {@code true} = 确证超出信任边界（拒绝连接）
      */
     public static boolean isBlockedTarget(String host, boolean allowPrivateNetwork) {
+        return isBlockedTarget(host, allowPrivateNetwork, InetAddress::getAllByName);
+    }
+
+    /**
+     * 目标是否超出信任边界（自定义解析器入口，供离线断言「无法解析 → 放行」的 fail-open 语义）。
+     *
+     * @param host                目标主机名或 IP 字面量
+     * @param allowPrivateNetwork 白名单开关
+     * @param resolver            域名解析器
+     * @return {@code true} = 确证超出信任边界（拒绝连接）
+     */
+    public static boolean isBlockedTarget(String host, boolean allowPrivateNetwork, HostResolver resolver) {
         if (allowPrivateNetwork || StringUtils.isBlank(host)) {
             return false;
         }
@@ -122,7 +134,7 @@ public final class EgressTrustPolicy {
         }
         InetAddress[] resolved;
         try {
-            resolved = resolveAddresses(normalized);
+            resolved = resolveAddresses(normalized, resolver);
         } catch (IllegalStateException e) {
             return false;
         }

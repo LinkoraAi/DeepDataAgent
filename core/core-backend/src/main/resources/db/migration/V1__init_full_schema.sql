@@ -761,3 +761,376 @@ CREATE INDEX idx_session_thread_session ON session_thread (session_id, id);
 -- 键布局与脚本见 runtime.infrastructure.config.CoordLeaseKeys 与 resources/lua/runtime/。
 -- 原协调租约表（含「类型 + 键」唯一索引与过期时间索引、列注释）随本基线一并移除；
 -- 存量库若残留该同名表，已无任何代码读写，可择期人工 DROP。
+
+-- -----------------------------------------------------------
+-- Flyway 迁移 ：知识库 BC && RAG BC 初始化
+-- -----------------------------------------------------------
+-- -----------------------------------------------------------
+-- 1. knowledge_base 知识库表
+-- -----------------------------------------------------------
+CREATE TABLE knowledge_base (
+                                id                  BIGSERIAL       PRIMARY KEY,
+                                name                VARCHAR(256)    NOT NULL,
+                                description         TEXT,
+                                language            VARCHAR(32)     NOT NULL DEFAULT 'ENGLISH',
+                                lifecycle_status    VARCHAR(32)     NOT NULL DEFAULT 'ACTIVE',
+                                error_message       TEXT,
+                                rag_engine_config   JSONB,
+                                dedup_policy        JSONB,
+                                retrieval_strategy  JSONB,
+                                embedding_config    JSONB,
+                                multi_model_config  JSONB,
+                                entity_type_config  JSONB,
+                                created_at          TIMESTAMPTZ     NOT NULL DEFAULT now(),
+                                updated_at          TIMESTAMPTZ     NOT NULL DEFAULT now(),
+                                created_by          VARCHAR(100),
+                                updated_by          VARCHAR(100)
+);
+
+CREATE UNIQUE INDEX uk_kb_name ON knowledge_base (name);
+
+COMMENT ON TABLE knowledge_base IS '知识库表';
+COMMENT ON COLUMN knowledge_base.id IS '知识库ID';
+COMMENT ON COLUMN knowledge_base.name IS '知识库名称';
+COMMENT ON COLUMN knowledge_base.description IS '知识库描述';
+COMMENT ON COLUMN knowledge_base.language IS '知识库语言: 11语言全名(Chinese/English/Japanese/Korean/French/German/Spanish/Portuguese/Russian/Arabic/Italian)';
+COMMENT ON COLUMN knowledge_base.lifecycle_status IS '生命周期状态: ACTIVE/DELETING/DELETE_FAILED（DELETED常量已移除；收口即物理DELETE行消失、行缺失即已删除）';
+COMMENT ON COLUMN knowledge_base.error_message IS '清退失败原因留痕(DELETE_FAILED时记录[KB-CLEANUP] step=…摘要，余为NULL)';
+COMMENT ON COLUMN knowledge_base.rag_engine_config IS 'RAG引擎配置VO(JSON): {engineType: DOCUMENT_ENGINE|MEDIA_ENGINE, parseEngine: {provider: LOCAL|MINERU|UNDEFINED, engineConfig: {params: {}}}, chunkStrategy: {chunkMode: GENERAL|QA|BOOK|LAWS|TABLE|PRESENTATION|ONE|TIME_WINDOW|SCENE_BOUNDARY, modeConfig: {params: {}}}, language: 11语言全名(缺省视同Chinese)}；本列不承载任何模型选型';
+COMMENT ON COLUMN knowledge_base.dedup_policy IS '去重策略VO(JSON): {matchRule: NONE|BY_NAME|BY_CONTENT|BY_NAME_OR_CONTENT, conflictAction: REJECT|SKIP|OVERWRITE}';
+COMMENT ON COLUMN knowledge_base.retrieval_strategy IS '检索策略VO(JSON): {strategyType: NAIVE|MIX, rewriteQuestion, resultChunkCount, similarThreshold, rerankConfig: {enabled, modelProfileId, topK}, fusionConfig: {fusionType: RRF|WEIGHTED_SUM, rrfK, channelDenseWeight: {VECTOR: 0.7, BM25: 0.3}}}';
+COMMENT ON COLUMN knowledge_base.embedding_config IS '嵌入模型配置VO(JSON): {modelProfileId}；切片向量写入与检索 query 向量化均以本列为唯一真相源，二者必须同源，否则向量召回静默失效';
+COMMENT ON COLUMN knowledge_base.multi_model_config IS '知识库级通用LLM配置VO(JSON): {modelProfileId}；虽以「多模态」命名，实为该库统一的大模型引用——媒体描述、检索侧附图转译、实体抽取、关系与关键词提取、摘要生成、检索侧问题改写与作答共用本列，不存在第二个LLM配置项';
+COMMENT ON COLUMN knowledge_base.entity_type_config IS '实体类型自定义配置VO(JSON): {entityTypes: [{entityType}]}';
+COMMENT ON COLUMN knowledge_base.created_at IS '创建时间';
+COMMENT ON COLUMN knowledge_base.updated_at IS '更新时间';
+COMMENT ON COLUMN knowledge_base.created_by IS '创建人';
+COMMENT ON COLUMN knowledge_base.updated_by IS '更新人';
+
+-- -----------------------------------------------------------
+-- 2. document 文档聚合根
+-- -----------------------------------------------------------
+CREATE TABLE document (
+                          id                   BIGSERIAL       PRIMARY KEY,
+                          kb_id                BIGINT          NOT NULL,
+                          file_name            VARCHAR(1024)   NOT NULL,
+                          file_type            VARCHAR(32)     NOT NULL,
+                          status               VARCHAR(32)     NOT NULL DEFAULT 'PENDING',
+                          error_message        TEXT,
+                          file_size            BIGINT,
+                          chunk_count          INTEGER         NOT NULL DEFAULT 0,
+                          source_file_profile  JSONB,
+                          import_type          VARCHAR(32)     NOT NULL DEFAULT 'UPLOAD',
+                          s3_file              JSONB,
+                          file_content_hash    VARCHAR(64),
+                          chunk_strategy       JSONB,
+                          created_at           TIMESTAMPTZ     NOT NULL DEFAULT now(),
+                          updated_at           TIMESTAMPTZ     NOT NULL DEFAULT now(),
+                          created_by           VARCHAR(100),
+                          updated_by           VARCHAR(100)
+);
+
+CREATE UNIQUE INDEX uk_doc_kb_name ON document (kb_id, file_name) WHERE status NOT IN ('DELETING','DELETE_FAILED');
+CREATE INDEX idx_doc_kb_name ON document (kb_id, file_name);
+CREATE INDEX idx_doc_content_hash ON document (file_content_hash) WHERE file_content_hash IS NOT NULL;
+CREATE INDEX idx_doc_nonterminal ON document (id) WHERE status IN ('PENDING', 'PROCESSING');
+
+COMMENT ON TABLE document IS '文档聚合根表';
+COMMENT ON COLUMN document.id IS '文档ID';
+COMMENT ON COLUMN document.kb_id IS '所属知识库ID，弱引用 knowledge_base.id';
+COMMENT ON COLUMN document.file_name IS '文件名';
+COMMENT ON COLUMN document.file_type IS '文件格式: PDF/DOC/DOCX/XLS/XLSX/PPT/PPTX/TXT/MD/CSV/HTML/PNG/JPG/JPEG';
+COMMENT ON COLUMN document.status IS '文档处理状态: PENDING/PROCESSING/PROCESSED/FAILED/DELETING/DELETE_FAILED（DELETED常量已移除；收口即物理DELETE行消失、行缺失即已删除）';
+COMMENT ON COLUMN document.error_message IS '处理/清退失败原因(状态为FAILED或DELETE_FAILED时记录错误信息，其余为NULL)';
+COMMENT ON COLUMN document.file_size IS '文件大小(字节)';
+COMMENT ON COLUMN document.chunk_count IS '分块数量';
+COMMENT ON COLUMN document.source_file_profile IS '源文件关键信息VO(JSON)，按类型多态: DocumentProfile {pageCount} / ImageProfile {width,height} / AudioProfile {durationMs} / VideoProfile {durationMs}';
+COMMENT ON COLUMN document.import_type IS '导入方式: UPLOAD';
+COMMENT ON COLUMN document.s3_file IS '源文件对象存储VO(JSON): {bucket, objectKey}';
+COMMENT ON COLUMN document.file_content_hash IS '文件内容哈希值，配合 matchRule 两轴判重';
+COMMENT ON COLUMN document.chunk_strategy IS '文档级分块策略VO(JSON)，NULL=继承库级；上传/重新解析可覆盖 generalType 与参数，切分类型恒继承库级';
+COMMENT ON COLUMN document.created_at IS '创建时间';
+COMMENT ON COLUMN document.updated_at IS '更新时间';
+COMMENT ON COLUMN document.created_by IS '创建人';
+COMMENT ON COLUMN document.updated_by IS '更新人';
+
+-- -----------------------------------------------------------
+-- 3. chunk 分块聚合根（主表：仅业务字段，向量与全文分词拆表）
+-- -----------------------------------------------------------
+CREATE TABLE chunk (
+                       id                  BIGSERIAL       PRIMARY KEY,
+                       kb_id               BIGINT          NOT NULL,
+                       document_id         BIGINT          NOT NULL,
+                       sequence            INTEGER         NOT NULL DEFAULT 0,
+                       tokens              INTEGER,
+                       chunk_content       TEXT,
+                       original_item       JSONB,
+                       chunk_content_type  VARCHAR(32)     NOT NULL DEFAULT 'TEXT',
+                       source_file_name    VARCHAR(1024),
+                       s3_file             JSONB,
+                       source_type         VARCHAR(16) NOT NULL DEFAULT 'PARSED',
+                       created_at          TIMESTAMPTZ     NOT NULL DEFAULT now(),
+                       updated_at          TIMESTAMPTZ     NOT NULL DEFAULT now(),
+                       created_by          VARCHAR(100),
+                       updated_by          VARCHAR(100)
+);
+
+CREATE UNIQUE INDEX uk_chunk_doc_seq ON chunk (document_id, sequence);
+CREATE INDEX idx_chunk_kb_doc ON chunk (kb_id, document_id);
+
+COMMENT ON TABLE chunk IS '分块聚合根主表';
+COMMENT ON COLUMN chunk.id IS '分块ID';
+COMMENT ON COLUMN chunk.kb_id IS '所属知识库ID（冗余提升列，加速库级检索）';
+COMMENT ON COLUMN chunk.document_id IS '所属文档ID，弱引用 document.id';
+COMMENT ON COLUMN chunk.sequence IS '块在文档内的序号';
+COMMENT ON COLUMN chunk.tokens IS '块的token数量';
+COMMENT ON COLUMN chunk.chunk_content IS '块内容(套模板后的最终文本)';
+COMMENT ON COLUMN chunk.original_item IS '多模态chunk原始信息(JSON): 如图片章节位置、邻近文本等';
+COMMENT ON COLUMN chunk.chunk_content_type IS '内容形态: TEXT/IMAGE/TABLE/EQUATION/GENERIC';
+COMMENT ON COLUMN chunk.source_file_name IS '来源文件名(冗余，便于引用展示)';
+COMMENT ON COLUMN chunk.s3_file IS '多模态(图片)切片对象存储VO(JSON): {bucket, objectKey}，无图片引用为 NULL';
+COMMENT ON COLUMN chunk.source_type IS '分块来源标识: PARSED=解析产生 / MANUAL=人工新增（写入即定，编辑等操作不改写；人工删除入口仅接受 MANUAL，删除原语按本批是否含 PARSED 推导图谱账本收敛）';
+COMMENT ON COLUMN chunk.created_at IS '创建时间';
+COMMENT ON COLUMN chunk.updated_at IS '更新时间';
+COMMENT ON COLUMN chunk.created_by IS '创建人';
+COMMENT ON COLUMN chunk.updated_by IS '更新人';
+
+-- -----------------------------------------------------------
+-- 4. chunk_vector 分块向量表（HNSW 近邻索引独立承载）
+-- -----------------------------------------------------------
+CREATE TABLE chunk_vector (
+                              id           BIGSERIAL       PRIMARY KEY,
+                              kb_id        BIGINT          NOT NULL,
+                              document_id  BIGINT          NOT NULL,
+                              chunk_id     BIGINT          NOT NULL,
+                              chunk_vector vector(1024),
+                              created_at   TIMESTAMPTZ     NOT NULL DEFAULT now(),
+                              updated_at   TIMESTAMPTZ     NOT NULL DEFAULT now(),
+                              created_by   VARCHAR(100),
+                              updated_by   VARCHAR(100)
+);
+
+CREATE UNIQUE INDEX uk_chunk_vector_chunk_id ON chunk_vector (chunk_id);
+CREATE INDEX idx_chunk_vector_kb_doc ON chunk_vector (kb_id, document_id);
+CREATE INDEX idx_chunk_vector_hnsw ON chunk_vector USING hnsw (chunk_vector vector_cosine_ops) WITH (m = 16, ef_construction = 200);
+
+COMMENT ON TABLE chunk_vector IS '分块向量表：与 chunk 1:1，独立承载 HNSW 索引以隔离主表写放大';
+COMMENT ON COLUMN chunk_vector.id IS '主键ID';
+COMMENT ON COLUMN chunk_vector.kb_id IS '所属知识库ID(冗余，支持库级向量检索过滤)';
+COMMENT ON COLUMN chunk_vector.document_id IS '所属文档ID(冗余，支持按文档过滤重建)';
+COMMENT ON COLUMN chunk_vector.chunk_id IS '分块ID，弱引用 chunk.id，1:1';
+COMMENT ON COLUMN chunk_vector.chunk_vector IS '块内容嵌入向量，维度需与 embedding_config.modelProfileId 对应模型一致';
+COMMENT ON COLUMN chunk_vector.created_at IS '创建时间';
+COMMENT ON COLUMN chunk_vector.updated_at IS '更新时间';
+COMMENT ON COLUMN chunk_vector.created_by IS '创建人';
+COMMENT ON COLUMN chunk_vector.updated_by IS '更新人';
+
+-- -----------------------------------------------------------
+-- 5. chunk_tsv 分块全文检索表（BM25/tsvector 通道）
+-- -----------------------------------------------------------
+CREATE TABLE chunk_tsv (
+                           id           BIGSERIAL       PRIMARY KEY,
+                           kb_id        BIGINT          NOT NULL,
+                           document_id  BIGINT          NOT NULL,
+                           chunk_id     BIGINT          NOT NULL,
+                           content_tsv  TSVECTOR,
+                           created_at   TIMESTAMPTZ     NOT NULL DEFAULT now(),
+                           updated_at   TIMESTAMPTZ     NOT NULL DEFAULT now(),
+                           created_by   VARCHAR(100),
+                           updated_by   VARCHAR(100)
+);
+
+CREATE UNIQUE INDEX uk_chunk_tsv_chunk_id ON chunk_tsv (chunk_id);
+CREATE INDEX idx_chunk_tsv_kb_doc ON chunk_tsv (kb_id, document_id);
+CREATE INDEX idx_chunk_tsv_gin ON chunk_tsv USING gin (content_tsv);
+
+COMMENT ON TABLE chunk_tsv IS '分块全文检索表：与 chunk 1:1，承载 tsvector 及 GIN 索引';
+COMMENT ON COLUMN chunk_tsv.id IS '主键ID';
+COMMENT ON COLUMN chunk_tsv.kb_id IS '所属知识库ID(冗余，支持库级全文过滤)';
+COMMENT ON COLUMN chunk_tsv.document_id IS '所属文档ID(冗余)';
+COMMENT ON COLUMN chunk_tsv.chunk_id IS '分块ID，弱引用 chunk.id，1:1';
+COMMENT ON COLUMN chunk_tsv.content_tsv IS '块内容全文分词向量，由应用层按分词器生成写入';
+COMMENT ON COLUMN chunk_tsv.created_at IS '创建时间';
+COMMENT ON COLUMN chunk_tsv.updated_at IS '更新时间';
+COMMENT ON COLUMN chunk_tsv.created_by IS '创建人';
+COMMENT ON COLUMN chunk_tsv.updated_by IS '更新人';
+
+CREATE TABLE entity_node_graph (
+                                   id           BIGSERIAL      PRIMARY KEY,
+                                   kb_id        BIGINT         NOT NULL,
+                                   entity_name  VARCHAR(512)   NOT NULL,
+                                   properties   JSONB          NOT NULL DEFAULT '{}'::JSONB,
+                                   created_at   TIMESTAMPTZ    NOT NULL DEFAULT now(),
+                                   updated_at   TIMESTAMPTZ    NOT NULL DEFAULT now(),
+                                   created_by   VARCHAR(100),
+                                   updated_by   VARCHAR(100)
+);
+CREATE UNIQUE INDEX uk_entity_node_kb_name ON entity_node_graph (kb_id, entity_name);
+CREATE INDEX idx_entity_node_properties ON entity_node_graph USING gin (properties);
+
+COMMENT ON TABLE entity_node_graph IS '知识图谱实体节点聚合根表';
+COMMENT ON COLUMN entity_node_graph.id IS '实体节点ID';
+COMMENT ON COLUMN entity_node_graph.kb_id IS '所属知识库ID，弱引用 knowledge_base.id';
+COMMENT ON COLUMN entity_node_graph.entity_name IS '实体名称，库内唯一';
+COMMENT ON COLUMN entity_node_graph.properties IS 'EntityProperties值对象(JSON): {entity_type: 实体类型(默认GENERIC，支持库级自定义类型过滤), description: 实体描述, source_chunk_id: 来源分块ID(弱引用 chunk.id), file_path: 来源文件路径}';
+COMMENT ON COLUMN entity_node_graph.created_at IS '创建时间';
+COMMENT ON COLUMN entity_node_graph.updated_at IS '更新时间';
+COMMENT ON COLUMN entity_node_graph.created_by IS '创建人';
+COMMENT ON COLUMN entity_node_graph.updated_by IS '更新人';
+COMMENT ON COLUMN entity_node_graph.properties IS 'EntityProperties 值对象(JSON)，键名与 record 组件序列化一致(camelCase): {entityType: 实体类型(默认 Other，支持库级自定义类型过滤), description: 收敛后的实体描述, sourceIds: 来源分块ID列表(弱引用 chunk.id，升序), filePaths: 来源文件路径列表(字符串数组，跨文档共享实体含多篇来源，去重保序 + 上限截断 + 溢出占位元素), entityTypeVotes: 类型出现次数统计, descriptions: 描述原文累积列表}';
+
+
+CREATE TABLE relation_edge_graph (
+                                     id           BIGSERIAL      PRIMARY KEY,
+                                     kb_id        BIGINT         NOT NULL,
+                                     source_name  VARCHAR(512)   NOT NULL,
+                                     target_name  VARCHAR(512)   NOT NULL,
+                                     properties   JSONB          NOT NULL DEFAULT '{}'::JSONB,
+                                     created_at   TIMESTAMPTZ    NOT NULL DEFAULT now(),
+                                     updated_at   TIMESTAMPTZ    NOT NULL DEFAULT now(),
+                                     created_by   VARCHAR(100),
+                                     updated_by   VARCHAR(100)
+);
+CREATE UNIQUE INDEX uk_relation_edge_kb_src_tgt ON relation_edge_graph (kb_id, source_name, target_name);
+CREATE INDEX idx_relation_edge_target ON relation_edge_graph (kb_id, target_name);
+CREATE INDEX idx_relation_edge_properties ON relation_edge_graph USING gin (properties);
+
+COMMENT ON TABLE relation_edge_graph IS '知识图谱关系边聚合根表';
+COMMENT ON COLUMN relation_edge_graph.id IS '关系边ID';
+COMMENT ON COLUMN relation_edge_graph.kb_id IS '所属知识库ID，弱引用 knowledge_base.id';
+COMMENT ON COLUMN relation_edge_graph.source_name IS '源实体名称，弱引用 entity_node_graph.entity_name';
+COMMENT ON COLUMN relation_edge_graph.target_name IS '目标实体名称，弱引用 entity_node_graph.entity_name';
+COMMENT ON COLUMN relation_edge_graph.properties IS 'RelationProperties值对象(JSON): {weight: 关系权重(double), description: 关系描述, keywords: 关系关键词, source_chunk_id: 来源分块ID(弱引用 chunk.id), file_path: 来源文件路径}';
+COMMENT ON COLUMN relation_edge_graph.created_at IS '创建时间';
+COMMENT ON COLUMN relation_edge_graph.updated_at IS '更新时间';
+COMMENT ON COLUMN relation_edge_graph.created_by IS '创建人';
+COMMENT ON COLUMN relation_edge_graph.updated_by IS '更新人';
+COMMENT ON COLUMN relation_edge_graph.properties IS 'RelationProperties 值对象(JSON)，键名与 record 组件序列化一致(camelCase): {weight: 关系权重(double，按存活来源记录全额求和，删除文档即回扣), description: 收敛后的关系描述, keywords: 关系关键词列表, sourceIds: 来源分块ID列表(弱引用 chunk.id，展示列按截断策略裁剪), filePaths: 来源文件路径列表(字符串数组，跨文档共享关系含多篇来源，去重保序 + 上限截断 + 溢出占位元素)}';
+
+
+CREATE TABLE entity_info_vector (
+                                    id             BIGSERIAL      PRIMARY KEY,
+                                    kb_id          BIGINT         NOT NULL,
+                                    entity_name    VARCHAR(512)   NOT NULL,
+                                    content        TEXT,
+                                    content_vector vector(1024),
+                                    chunk_ids      JSONB          NOT NULL DEFAULT '[]'::JSONB,
+                                    file_path      VARCHAR(1024),
+                                    created_at     TIMESTAMPTZ    NOT NULL DEFAULT now(),
+                                    updated_at     TIMESTAMPTZ    NOT NULL DEFAULT now(),
+                                    created_by     VARCHAR(100),
+                                    updated_by     VARCHAR(100)
+);
+CREATE UNIQUE INDEX uk_entity_info_vector_kb_name ON entity_info_vector (kb_id, entity_name);
+CREATE INDEX idx_entity_info_vector_hnsw ON entity_info_vector USING hnsw (content_vector vector_cosine_ops) WITH (m = 16, ef_construction = 200);
+
+COMMENT ON TABLE entity_info_vector IS '实体向量表：与 entity_node_graph 1:1，merge 时合并 chunk_ids 与描述';
+COMMENT ON COLUMN entity_info_vector.id IS '主键ID';
+COMMENT ON COLUMN entity_info_vector.kb_id IS '所属知识库ID';
+COMMENT ON COLUMN entity_info_vector.entity_name IS '实体名称，弱引用 entity_node_graph.entity_name';
+COMMENT ON COLUMN entity_info_vector.content IS '用于嵌入的实体描述内容(merge后)';
+COMMENT ON COLUMN entity_info_vector.content_vector IS '实体内容嵌入向量';
+COMMENT ON COLUMN entity_info_vector.chunk_ids IS '关联分块ID列表(JSON数组)，弱引用 chunk.id，merge 时累积';
+COMMENT ON COLUMN entity_info_vector.file_path IS '来源文件路径';
+COMMENT ON COLUMN entity_info_vector.created_at IS '创建时间';
+COMMENT ON COLUMN entity_info_vector.updated_at IS '更新时间';
+COMMENT ON COLUMN entity_info_vector.created_by IS '创建人';
+COMMENT ON COLUMN entity_info_vector.updated_by IS '更新人';
+
+CREATE TABLE relation_info_vector (
+                                      id             BIGSERIAL      PRIMARY KEY,
+                                      kb_id          BIGINT         NOT NULL,
+                                      source_name    VARCHAR(512)   NOT NULL,
+                                      target_name    VARCHAR(512)   NOT NULL,
+                                      content        TEXT,
+                                      content_vector vector(1024),
+                                      chunk_ids      JSONB          NOT NULL DEFAULT '[]'::JSONB,
+                                      file_path      VARCHAR(1024),
+                                      created_at     TIMESTAMPTZ    NOT NULL DEFAULT now(),
+                                      updated_at     TIMESTAMPTZ    NOT NULL DEFAULT now(),
+                                      created_by     VARCHAR(100),
+                                      updated_by     VARCHAR(100)
+);
+CREATE UNIQUE INDEX uk_relation_info_vector_kb_src_tgt ON relation_info_vector (kb_id, source_name, target_name);
+CREATE INDEX idx_relation_info_vector_hnsw ON relation_info_vector USING hnsw (content_vector vector_cosine_ops) WITH (m = 16, ef_construction = 200);
+
+COMMENT ON TABLE relation_info_vector IS '关系向量表：与 relation_edge_graph 1:1，merge 时合并 chunk_ids 与描述';
+COMMENT ON COLUMN relation_info_vector.id IS '主键ID';
+COMMENT ON COLUMN relation_info_vector.kb_id IS '所属知识库ID';
+COMMENT ON COLUMN relation_info_vector.source_name IS '源实体名称，弱引用 relation_edge_graph.source_name';
+COMMENT ON COLUMN relation_info_vector.target_name IS '目标实体名称，弱引用 relation_edge_graph.target_name';
+COMMENT ON COLUMN relation_info_vector.content IS '用于嵌入的关系描述内容(merge后，含keywords)';
+COMMENT ON COLUMN relation_info_vector.content_vector IS '关系内容嵌入向量';
+COMMENT ON COLUMN relation_info_vector.chunk_ids IS '关联分块ID列表(JSON数组)，弱引用 chunk.id，merge 时累积';
+COMMENT ON COLUMN relation_info_vector.file_path IS '来源文件路径';
+COMMENT ON COLUMN relation_info_vector.created_at IS '创建时间';
+COMMENT ON COLUMN relation_info_vector.updated_at IS '更新时间';
+COMMENT ON COLUMN relation_info_vector.created_by IS '创建人';
+COMMENT ON COLUMN relation_info_vector.updated_by IS '更新人';
+
+-- =====================================================================
+-- llm_cache LLM 调用缓存（确定性回放，避免重复调用；按 kb_id + cache_type 维度隔离）
+-- =====================================================================
+CREATE TABLE llm_cache (
+                           id           BIGSERIAL      PRIMARY KEY,
+                           kb_id        BIGINT         NOT NULL,
+                           cache_type   VARCHAR(32)    NOT NULL DEFAULT 'ANSWER',
+                           cache_key    CHAR(32)       NOT NULL,
+                           model        VARCHAR(128),
+                           prompt       TEXT,
+                           response     TEXT,
+                           total_tokens INTEGER,
+                           created_at   TIMESTAMPTZ    NOT NULL DEFAULT now(),
+                           updated_at   TIMESTAMPTZ    NOT NULL DEFAULT now(),
+                           created_by   VARCHAR(100),
+                           updated_by   VARCHAR(100)
+);
+
+-- 复合唯一键：缓存命中判断必须携带 kb_id 与 cache_type，避免跨知识库串缓存
+-- 与跨分类碰撞（同一键在不同 LLM 产物分类下互不覆盖）
+CREATE UNIQUE INDEX uk_llm_cache_key ON llm_cache (kb_id, cache_type, cache_key);
+
+COMMENT ON TABLE llm_cache IS 'LLM调用缓存表：以 kb_id + cache_type + (model|prompt|参数 的 MD5) 为复合键，确定性回放，库级隔离';
+COMMENT ON COLUMN llm_cache.id IS '主键ID';
+COMMENT ON COLUMN llm_cache.kb_id IS '所属知识库ID（库级隔离与按库清除维度，删除知识库时按此列清缓存）';
+COMMENT ON COLUMN llm_cache.cache_type IS '缓存分类(ANSWER=答案/QUERY_REWRITE=问题改写/KEYWORD_EXTRACT=关键词提取/ENTITY_DESC=实体描述)，默认 ANSWER，兼容既有写入语义';
+COMMENT ON COLUMN llm_cache.cache_key IS '缓存键(MD5 hex)：model + prompt + 归一化参数（不含 kb_id，隔离由 kb_id 列承担）';
+COMMENT ON COLUMN llm_cache.model IS '模型标识';
+COMMENT ON COLUMN llm_cache.prompt IS '完整提示词';
+COMMENT ON COLUMN llm_cache.response IS '模型返回内容';
+COMMENT ON COLUMN llm_cache.total_tokens IS '输入+输出 token 总量';
+COMMENT ON COLUMN llm_cache.created_at IS '创建时间';
+COMMENT ON COLUMN llm_cache.updated_at IS '更新时间';
+COMMENT ON COLUMN llm_cache.created_by IS '创建人';
+COMMENT ON COLUMN llm_cache.updated_by IS '更新人';
+
+-- =====================================================================
+-- chunk_extract_cache 抽取缓存归属映射表
+-- =====================================================================
+CREATE TABLE chunk_extract_cache (
+                                     id           BIGSERIAL      PRIMARY KEY,
+                                     kb_id        BIGINT         NOT NULL,
+                                     chunk_id     BIGINT         NOT NULL,
+                                     cache_type   VARCHAR(32)    NOT NULL,
+                                     cache_key    CHAR(32)       NOT NULL,
+                                     created_at   TIMESTAMPTZ    NOT NULL DEFAULT now(),
+                                     updated_at   TIMESTAMPTZ    NOT NULL DEFAULT now(),
+                                     created_by   VARCHAR(100),
+                                     updated_by   VARCHAR(100)
+);
+
+-- 唯一索引：一个分块对同一分类的同一缓存行只登记一次归属，重复登记 ON CONFLICT DO NOTHING 幂等
+CREATE UNIQUE INDEX uk_chunk_extract_cache_chunk_type_key ON chunk_extract_cache (chunk_id, cache_type, cache_key);
+-- 查询索引：删除链按引用计数判定（kb_id + cache_type + cache_key）与按键回查归属的扫描面收窄
+CREATE INDEX idx_chunk_extract_cache_kb_type_key ON chunk_extract_cache (kb_id, cache_type, cache_key);
+
+COMMENT ON TABLE chunk_extract_cache IS '抽取缓存归属映射表：记录「分块使用过哪一行抽取缓存(llm_cache)」的多对多关系，供文档删除时按引用计数回收缓存行——某缓存键不再被任何存活分块引用时才删除对应缓存行，共用键只保留';
+COMMENT ON COLUMN chunk_extract_cache.id IS '主键ID';
+COMMENT ON COLUMN chunk_extract_cache.kb_id IS '所属知识库ID（与 llm_cache 复合唯一键同源的隔离维度，缓存回收只在本库范围内判定）';
+COMMENT ON COLUMN chunk_extract_cache.chunk_id IS '分块ID，弱引用 chunk.id（归属的引用方；分块行删除前先据本列追溯到其用过的缓存键）';
+COMMENT ON COLUMN chunk_extract_cache.cache_type IS '缓存分类(CacheType 枚举名，抽取与媒体描述为 EXTRACT)，与 kb_id/cache_key 共同定位 llm_cache 行';
+COMMENT ON COLUMN chunk_extract_cache.cache_key IS '缓存键(MD5 hex)，弱引用 llm_cache.cache_key；以键而非 llm_cache.id 关联，因缓存回写走 ON CONFLICT DO NOTHING 拿不到自增 id';
+COMMENT ON COLUMN chunk_extract_cache.created_at IS '创建时间';
+COMMENT ON COLUMN chunk_extract_cache.updated_at IS '更新时间';
+COMMENT ON COLUMN chunk_extract_cache.created_by IS '创建人';
+COMMENT ON COLUMN chunk_extract_cache.updated_by IS '更新人';

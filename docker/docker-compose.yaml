@@ -5,6 +5,10 @@
 # 用法（在项目根目录执行）：
 #   docker compose -f docker/docker-compose.yaml up --build
 #
+# 实例唯一标识必填（不在 application.yaml 中声明，仅从环境变量读取，不存在默认值）：
+#   APP_INSTANCE_ID=node-a docker compose -f docker/docker-compose.yaml up --build
+#   多实例部署时每个实例必须传入互不相同的值；未传则 backend 的 ${APP_INSTANCE_ID:?...} 直接报错
+#
 # 说明：
 #   - 服务间通过宿主机网关（默认 host.docker.internal）通信，
 #     基础组件端口发布至宿主机（5432/6379），不依赖共享网络
@@ -88,6 +92,9 @@ services:
       APP_STORAGE_SECRET_KEY: ${APP_STORAGE_SECRET_KEY:-}
       APP_STORAGE_REGION: ${APP_STORAGE_REGION:-us-east-1}
       APP_STORAGE_PATH_STYLE: ${APP_STORAGE_PATH_STYLE:-true}
+      # 实例唯一标识（必填）：仅从进程环境变量读取、不存在任何默认值，未传则编排层直接报错、应用亦 fail-fast；
+      # 多实例部署时每个实例必须传入互不相同的值（如 node-a / node-b），重名实例会互相错杀在飞任务
+      APP_INSTANCE_ID: ${APP_INSTANCE_ID:?实例标识未配置：请为每个实例传入唯一的 APP_INSTANCE_ID（如 node-a）}
     extra_hosts:
       # Linux 下将 host.docker.internal 解析到宿主机网关；Docker Desktop 自带映射，冗余添加无副作用
       - "host.docker.internal:host-gateway"

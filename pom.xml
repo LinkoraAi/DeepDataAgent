@@ -57,6 +57,9 @@
         <!-- Redisson 核心库（协调租约 Redis 存储）：Boot 4 兼容线 ≥4.6.1，首选 4.7.0；不引 starter（避免自动配置冲突） -->
         <redisson.version>4.7.0</redisson.version>
         <software.amazon.awssdk>2.53.2</software.amazon.awssdk>
+        <software.amazon.awssdk.version>2.53.2</software.amazon.awssdk.version>
+        <tika.version>4.0.0</tika.version>
+        <jtokkit.version>1.1.0</jtokkit.version>
     </properties>
 
     <build>

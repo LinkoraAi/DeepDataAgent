@@ -354,6 +354,24 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 处理检索附图入参非法异常（真实 HTTP 400）
+     * <p>检索端点入口附图校验（数量/字节/类型白名单/base64/魔数）任一附件非法时整请求拒绝，
+     * 错误信息含第几张附图与原因定位。与 {@link DeepDataAgentException} 的「HTTP 200 +
+     * 响应体 code=400」业务错误包装形态刻意区分：附图非法属客户端入参错误，按标准状态码
+     * 400 发布（形态对齐 {@link InvalidApiVersionException} 真实 4xx 先例）。
+     * 本 handler 按最具体类型匹配优先于父类 {@link DeepDataAgentException} 的 200 包装 handler。</p>
+     *
+     * @param e 检索附图入参非法异常
+     * @return 包含错误定位信息的ApiResponse
+     */
+    @ExceptionHandler(InvalidQueryImageException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ErrorEnvelope handleInvalidQueryImageException(InvalidQueryImageException e) {
+        log.warn("检索附图入参非法: {}", e.getMessage());
+        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getMessage());
+    }
+
+    /**
      * 处理请求载荷超限异常（HTTP 413）
      * <p>请求体 / multipart 包体超过服务端业务限额（如技能包 zip 超过 50MB）时抛出，
      * 对齐 spec「超限包被拒」场景：zip 体积超限返回 413 {@code request_too_large_error}。</p>

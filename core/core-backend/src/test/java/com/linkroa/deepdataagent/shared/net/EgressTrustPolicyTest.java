@@ -88,9 +88,14 @@ class EgressTrustPolicyTest {
 
     @Test
     void should_throw_when_resolveTrusted_given_unresolvableHost() {
-        // given & when & then（.invalid 顶级域恒不解析；收敛为 IllegalStateException）
+        // given（解析器抛 UnknownHostException：与真实 DNS 失败同构，离线可重复）
+        EgressTrustPolicy.HostResolver unresolvable = host -> {
+            throw new UnknownHostException(host);
+        };
+
+        // when & then（解析失败收敛为 IllegalStateException，不外泄 UnknownHostException）
         IllegalStateException e = assertThrows(IllegalStateException.class,
-                () -> EgressTrustPolicy.resolveTrusted("no-such-host.invalid", false));
+                () -> EgressTrustPolicy.resolveTrusted("no-such-host.invalid", false, unresolvable));
         assertTrue(e.getMessage().contains("无法解析"));
     }
 
@@ -138,9 +143,13 @@ class EgressTrustPolicyTest {
 
     @Test
     void should_notBlock_when_isBlockedTarget_given_unresolvableHost() {
-        // given（无法解析 → 无法判定，fail-open：连接同样无法建立，交由 D12 降级处理）
+        // given（解析失败：无法判定，fail-open——连接同样无法建立，交由 D12 降级处理）
+        EgressTrustPolicy.HostResolver unresolvable = host -> {
+            throw new UnknownHostException(host);
+        };
+
         // when & then
-        assertFalse(EgressTrustPolicy.isBlockedTarget("no-such-host.invalid", false));
+        assertFalse(EgressTrustPolicy.isBlockedTarget("no-such-host.invalid", false, unresolvable));
         assertFalse(EgressTrustPolicy.isBlockedTarget("  ", false));
         assertFalse(EgressTrustPolicy.isBlockedTarget("93.184.216.34", false));
     }
