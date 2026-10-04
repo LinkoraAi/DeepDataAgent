@@ -144,6 +144,28 @@ class AgentToolTest {
         assertNull(AgentTool.toJson(List.of()));
     }
 
+    /**
+     * custom 工具名不得包含运行时 MCP 实名分隔符 {@code __}（集成测试 D9）。
+     */
+    @Test
+    void should_reject_when_validateCustomTool_given_nameWithDoubleUnderscore() {
+        // given & when & then
+        assertThrows(IllegalArgumentException.class,
+                () -> customTool("a__b", Map.of("type", "object")));
+    }
+
+    /**
+     * 单下划线为合法工具名字符：常规自定义工具名通过校验。
+     */
+    @Test
+    void should_accept_when_validateCustomTool_given_regularName() {
+        // given & when
+        AgentTool tool = customTool("my_tool", Map.of("type", "object"));
+
+        // then（不抛异常即通过）
+        assertEquals("my_tool", tool.name());
+    }
+
     private static AgentTool customTool(String name, Map<String, Object> schema) {
         return new AgentTool(AgentTool.TYPE_CUSTOM, List.of(), List.of(), List.of(), null,
                 name, "描述", schema);

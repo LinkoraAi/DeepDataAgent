@@ -1,5 +1,6 @@
 package com.linkroa.deepdataagent.rag.infrastructure.client;
 
+import com.linkroa.deepdataagent.agent.domain.model.enums.ApiFormat;
 import com.linkroa.deepdataagent.rag.domain.enums.CacheType;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatRequest;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatResult;
@@ -378,7 +379,7 @@ class OpenAiCompatibleLlmClientTest {
      * 构造解析后的模型端点。
      */
     private static ModelProfileAccess.ResolvedEndpoint endpoint() {
-        return new ModelProfileAccess.ResolvedEndpoint("https://api.example/v1", "sk-x", MODEL_NAME, null);
+        return new ModelProfileAccess.ResolvedEndpoint("https://api.example/v1", "sk-x", MODEL_NAME, null, null);
     }
 
     /**
@@ -399,6 +400,52 @@ class OpenAiCompatibleLlmClientTest {
         Source source = ((ImageBlock) block).getSource();
         assertInstanceOf(Base64Source.class, source);
         return (Base64Source) source;
+    }
+
+    // ==================== D14：apiFormat → provider 前缀路由 ====================
+
+    @Test
+    void should_prefixOpenai_when_resolveRegistryModelId_given_apiFormatOpenai() {
+        // given（OpenAI 兼容格式 + 裸模型名：须以 openai: 前缀强制走 OpenAI 协议 provider，
+        // 避免 qwen3.8-flash 命中 DashScope 白名单被劫持到原生多模态端点）
+        ModelProfileAccess.ResolvedEndpoint endpoint = new ModelProfileAccess.ResolvedEndpoint(
+                "https://host/compatible-mode/v1", "sk-x", "qwen3.8-flash", null, ApiFormat.OPENAI);
+
+        // when
+        String modelId = OpenAiCompatibleLlmClient.resolveRegistryModelId(endpoint);
+
+        // then
+        assertEquals("openai:qwen3.8-flash", modelId);
+    }
+
+    @Test
+    void should_keepBareName_when_resolveRegistryModelId_given_apiFormatAgentscope() {
+        // given（AGENTSCOPE：沿用注册表命名，不加前缀）
+        ModelProfileAccess.ResolvedEndpoint endpoint = new ModelProfileAccess.ResolvedEndpoint(
+                "https://dashscope.aliyuncs.com", "sk-x", "qwen-plus", null, ApiFormat.AGENTSCOPE);
+
+        // when / then
+        assertEquals("qwen-plus", OpenAiCompatibleLlmClient.resolveRegistryModelId(endpoint));
+    }
+
+    @Test
+    void should_keepExplicitPrefix_when_resolveRegistryModelId_given_alreadyPrefixedName() {
+        // given（模型名已显式带 provider 前缀：视为显式声明，不改写避免双前缀）
+        ModelProfileAccess.ResolvedEndpoint endpoint = new ModelProfileAccess.ResolvedEndpoint(
+                "https://host/v1", "sk-x", "openai:gpt-4o", null, ApiFormat.OPENAI);
+
+        // when / then
+        assertEquals("openai:gpt-4o", OpenAiCompatibleLlmClient.resolveRegistryModelId(endpoint));
+    }
+
+    @Test
+    void should_keepBareName_when_resolveRegistryModelId_given_nullApiFormat() {
+        // given（apiFormat 缺失：向后兼容退化裸名）
+        ModelProfileAccess.ResolvedEndpoint endpoint = new ModelProfileAccess.ResolvedEndpoint(
+                "https://host/v1", "sk-x", "qwen-plus", null, null);
+
+        // when / then
+        assertEquals("qwen-plus", OpenAiCompatibleLlmClient.resolveRegistryModelId(endpoint));
     }
 
     /**

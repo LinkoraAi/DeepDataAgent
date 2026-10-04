@@ -68,3 +68,5 @@ AGENTS.md
 .ua/intermediate/
 .ua/diff-overlay.json
 .ua/tmp/
+
+/.test/

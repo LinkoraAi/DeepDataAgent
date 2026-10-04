@@ -9,8 +9,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.BindException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.accept.InvalidApiVersionException;
 import org.springframework.web.accept.MissingApiVersionException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -21,16 +24,23 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * 全局异常处理器（统一错误信封，对齐 shared/api-conventions spec）。
  * <p>全部错误响应使用 {@link ErrorEnvelope} 形状
  * （{@code {"error":{"type","message"},"request_id":"...","type":"error"}}），
- * HTTP 状态码 MUST 与语义匹配（400/401/403/404/409/429/500），
+ * HTTP 状态码 MUST 与语义匹配（400/401/403/404/405/409/429/500），
  * <b>不再以 HTTP 200 包装业务错误</b>（BREAKING：旧形态 {@code 200 + ApiResponse{success:false}}
  * 已整体收敛）。类别映射：409 默认 {@code conflict_error}，<b>唯一特例为会话忙 / 会话资源冲突
  * （{@link SessionBusyException} 等契约明文路径）的 {@code invalid_request_error}</b>；
  * 参数 / 校验 / 领域不变量类归 {@code invalid_request_error}；未预期异常兜底 {@code api_error}。</p>
+ * <p><b>响应形态契约（JSON 恒定）</b>：错误信封经 {@link #envelope(HttpStatus, ErrorEnvelope)}
+ * 显式声明 {@code Content-Type: application/json}，不受原请求映射的 {@code produces}
+ * （如 SSE 端点的 {@code text/event-stream}）或客户端 {@code Accept} 影响。原因：异常处理返回值
+ * 会继承原映射的 preset Content-Type，若其为 {@code text/event-stream}，Jackson 无转换器可写
+ * JSON 信封，异常处理自身抛出 {@code HttpMessageNotWritableException} 并落入兜底 500
+ * （集成测试 D3）。显式头使响应写出走 contentType-preset 分支直接采用 {@code application/json}。</p>
  * <p>处理的异常类型包括：</p>
  * <ul>
  *   <li>DeepDataAgentException: 业务逻辑异常，400 invalid_request_error</li>
@@ -40,6 +50,8 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
  *   <li>HttpMessageNotReadableException: 请求体不可解析（含超限截断），400 invalid_request_error</li>
  *   <li>IllegalArgumentException/IllegalStateException: 领域不变量 / 状态校验，400 invalid_request_error</li>
  *   <li>ResourceNotFoundException: 资源不存在，404 not_found_error</li>
+ *   <li>NoResourceFoundException: 路由 / 静态资源不存在，404 not_found_error</li>
+ *   <li>HttpRequestMethodNotSupportedException: 请求方法不支持，405 invalid_request_error</li>
  *   <li>UnauthorizedException: 认证失败，401 authentication_error</li>
  *   <li>ForbiddenException: 禁止访问，403 permission_error</li>
  *   <li>ResourceConflictException / DuplicateKeyException: 冲突，409 conflict_error</li>
@@ -66,10 +78,9 @@ public class GlobalExceptionHandler {
      * @return 400 invalid_request_error 错误信封
      */
     @ExceptionHandler(DeepDataAgentException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorEnvelope handleDeepDataAgentException(DeepDataAgentException e) {
+    public ResponseEntity<ErrorEnvelope> handleDeepDataAgentException(DeepDataAgentException e) {
         log.warn("业务异常: {}", e.getMessage());
-        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getMessage());
+        return envelope(HttpStatus.BAD_REQUEST, ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getMessage()));
     }
 
     /**
@@ -80,11 +91,10 @@ public class GlobalExceptionHandler {
      * @return 400 invalid_request_error 错误信封（携带第一个校验错误信息）
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorEnvelope handleMethodArgumentNotValidException(MethodArgumentNotValidException e) {
+    public ResponseEntity<ErrorEnvelope> handleMethodArgumentNotValidException(MethodArgumentNotValidException e) {
         String message = e.getBindingResult().getAllErrors().get(0).getDefaultMessage();
         log.warn("参数校验失败: {}", message);
-        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, message);
+        return envelope(HttpStatus.BAD_REQUEST, ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, message));
     }
 
     /**
@@ -94,11 +104,10 @@ public class GlobalExceptionHandler {
      * @return 400 invalid_request_error 错误信封（携带第一个校验错误信息）
      */
     @ExceptionHandler(BindException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorEnvelope handleBindException(BindException e) {
+    public ResponseEntity<ErrorEnvelope> handleBindException(BindException e) {
         String message = e.getBindingResult().getAllErrors().get(0).getDefaultMessage();
         log.warn("参数绑定失败: {}", message);
-        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, message);
+        return envelope(HttpStatus.BAD_REQUEST, ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, message));
     }
 
     /**
@@ -108,11 +117,10 @@ public class GlobalExceptionHandler {
      * @return 400 invalid_request_error 错误信封（携带第一个约束错误信息）
      */
     @ExceptionHandler(ConstraintViolationException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorEnvelope handleConstraintViolationException(ConstraintViolationException e) {
+    public ResponseEntity<ErrorEnvelope> handleConstraintViolationException(ConstraintViolationException e) {
         String message = e.getConstraintViolations().iterator().next().getMessage();
         log.warn("约束校验失败: {}", message);
-        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, message);
+        return envelope(HttpStatus.BAD_REQUEST, ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, message));
     }
 
     /**
@@ -122,11 +130,10 @@ public class GlobalExceptionHandler {
      * @return 400 invalid_request_error 错误信封
      */
     @ExceptionHandler(MissingServletRequestParameterException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorEnvelope handleMissingServletRequestParameterException(MissingServletRequestParameterException e) {
+    public ResponseEntity<ErrorEnvelope> handleMissingServletRequestParameterException(MissingServletRequestParameterException e) {
         String message = "缺少请求参数: " + e.getParameterName();
         log.warn(message);
-        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, message);
+        return envelope(HttpStatus.BAD_REQUEST, ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, message));
     }
 
     /**
@@ -138,23 +145,24 @@ public class GlobalExceptionHandler {
      * @return 400 invalid_request_error 错误信封
      */
     @ExceptionHandler(HttpMessageNotReadableException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorEnvelope handleHttpMessageNotReadableException(HttpMessageNotReadableException e) {
+    public ResponseEntity<ErrorEnvelope> handleHttpMessageNotReadableException(HttpMessageNotReadableException e) {
         log.warn("请求体不可解析: {}", e.getMessage());
-        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, "Request body must be valid JSON.");
+        return envelope(HttpStatus.BAD_REQUEST,
+                ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, "Request body must be valid JSON."));
     }
 
     /**
      * 处理非法参数异常
+     * <p>含 SSE 流端点在同步段抛出的参数校验异常：错误信封以显式 JSON 写出，
+     * 不再因原映射 {@code produces=text/event-stream} 的 preset 协商失败而落兜底 500。</p>
      *
      * @param e 非法参数异常
      * @return 400 invalid_request_error 错误信封
      */
     @ExceptionHandler(IllegalArgumentException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorEnvelope handleIllegalArgumentException(IllegalArgumentException e) {
+    public ResponseEntity<ErrorEnvelope> handleIllegalArgumentException(IllegalArgumentException e) {
         log.warn("非法参数: {}", e.getMessage());
-        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getMessage());
+        return envelope(HttpStatus.BAD_REQUEST, ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getMessage()));
     }
 
     /**
@@ -165,10 +173,9 @@ public class GlobalExceptionHandler {
      * @return 400 invalid_request_error 错误信封
      */
     @ExceptionHandler(IllegalStateException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorEnvelope handleIllegalStateException(IllegalStateException e) {
+    public ResponseEntity<ErrorEnvelope> handleIllegalStateException(IllegalStateException e) {
         log.warn("状态异常: {}", e.getMessage());
-        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getMessage());
+        return envelope(HttpStatus.BAD_REQUEST, ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getMessage()));
     }
 
     /**
@@ -179,10 +186,42 @@ public class GlobalExceptionHandler {
      * @return 404 not_found_error 错误信封
      */
     @ExceptionHandler(ResourceNotFoundException.class)
-    @ResponseStatus(HttpStatus.NOT_FOUND)
-    public ErrorEnvelope handleResourceNotFoundException(ResourceNotFoundException e) {
+    public ResponseEntity<ErrorEnvelope> handleResourceNotFoundException(ResourceNotFoundException e) {
         log.warn("资源不存在: {}", e.getMessage());
-        return ErrorEnvelope.of(ErrorType.NOT_FOUND_ERROR, e.getMessage());
+        return envelope(HttpStatus.NOT_FOUND, ErrorEnvelope.of(ErrorType.NOT_FOUND_ERROR, e.getMessage()));
+    }
+
+    /**
+     * 处理路由 / 静态资源不存在异常（HTTP 404）
+     * <p>Spring 6.1+ 对未匹配任何处理器（含缺版本段 / 未知业务路径）的请求抛
+     * {@link NoResourceFoundException}；若无专用处理会被兜底 Exception 处理器吞成 500
+     * （集成测试 D4）。本处理器将其归一为 404 {@code not_found_error}。</p>
+     *
+     * @param e 路由不存在异常
+     * @return 404 not_found_error 错误信封
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorEnvelope> handleNoResourceFoundException(NoResourceFoundException e) {
+        log.warn("路由不存在: {}", e.getMessage());
+        return envelope(HttpStatus.NOT_FOUND, ErrorEnvelope.of(ErrorType.NOT_FOUND_ERROR, "请求的路由不存在"));
+    }
+
+    /**
+     * 处理请求方法不支持异常（HTTP 405）
+     * <p>对已知路径使用了未映射的 HTTP 方法（如对仅支持 GET 的端点发 POST）时由框架抛出；
+     * 若无专用处理会被兜底 Exception 处理器吞成 500（集成测试 D4）。
+     * 错误类别归 {@code invalid_request_error}（现有 {@link ErrorType} 无 405 专用类别，
+     * 语义上与客户端请求不合法同族）。</p>
+     *
+     * @param e 方法不支持异常
+     * @return 405 invalid_request_error 错误信封
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorEnvelope> handleHttpRequestMethodNotSupportedException(
+            HttpRequestMethodNotSupportedException e) {
+        log.warn("请求方法不支持: {}", e.getMessage());
+        return envelope(HttpStatus.METHOD_NOT_ALLOWED,
+                ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, "请求方法不支持: " + e.getMethod()));
     }
 
     /**
@@ -193,10 +232,9 @@ public class GlobalExceptionHandler {
      * @return 401 authentication_error 错误信封
      */
     @ExceptionHandler(UnauthorizedException.class)
-    @ResponseStatus(HttpStatus.UNAUTHORIZED)
-    public ErrorEnvelope handleUnauthorizedException(UnauthorizedException e) {
+    public ResponseEntity<ErrorEnvelope> handleUnauthorizedException(UnauthorizedException e) {
         log.warn("认证失败: {}", e.getMessage());
-        return ErrorEnvelope.of(ErrorType.AUTHENTICATION_ERROR, e.getMessage());
+        return envelope(HttpStatus.UNAUTHORIZED, ErrorEnvelope.of(ErrorType.AUTHENTICATION_ERROR, e.getMessage()));
     }
 
     /**
@@ -208,10 +246,9 @@ public class GlobalExceptionHandler {
      * @return 403 permission_error 错误信封
      */
     @ExceptionHandler(ForbiddenException.class)
-    @ResponseStatus(HttpStatus.FORBIDDEN)
-    public ErrorEnvelope handleForbiddenException(ForbiddenException e) {
+    public ResponseEntity<ErrorEnvelope> handleForbiddenException(ForbiddenException e) {
         log.warn("禁止访问: {}", e.getMessage());
-        return ErrorEnvelope.of(ErrorType.PERMISSION_ERROR, e.getMessage());
+        return envelope(HttpStatus.FORBIDDEN, ErrorEnvelope.of(ErrorType.PERMISSION_ERROR, e.getMessage()));
     }
 
     /**
@@ -223,10 +260,9 @@ public class GlobalExceptionHandler {
      * @return 409 conflict_error 错误信封
      */
     @ExceptionHandler(ResourceConflictException.class)
-    @ResponseStatus(HttpStatus.CONFLICT)
-    public ErrorEnvelope handleResourceConflictException(ResourceConflictException e) {
+    public ResponseEntity<ErrorEnvelope> handleResourceConflictException(ResourceConflictException e) {
         log.warn("资源冲突: {}", e.getMessage());
-        return ErrorEnvelope.of(ErrorType.CONFLICT_ERROR, e.getMessage());
+        return envelope(HttpStatus.CONFLICT, ErrorEnvelope.of(ErrorType.CONFLICT_ERROR, e.getMessage()));
     }
 
     /**
@@ -239,10 +275,9 @@ public class GlobalExceptionHandler {
      * @return 409 invalid_request_error 错误信封
      */
     @ExceptionHandler(SessionBusyException.class)
-    @ResponseStatus(HttpStatus.CONFLICT)
-    public ErrorEnvelope handleSessionBusyException(SessionBusyException e) {
+    public ResponseEntity<ErrorEnvelope> handleSessionBusyException(SessionBusyException e) {
         log.warn("会话忙: {}", e.getMessage());
-        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getMessage());
+        return envelope(HttpStatus.CONFLICT, ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getMessage()));
     }
 
     /**
@@ -253,10 +288,9 @@ public class GlobalExceptionHandler {
      * @return 429 rate_limit_error 错误信封
      */
     @ExceptionHandler(TooManyRequestsException.class)
-    @ResponseStatus(HttpStatus.TOO_MANY_REQUESTS)
-    public ErrorEnvelope handleTooManyRequestsException(TooManyRequestsException e) {
+    public ResponseEntity<ErrorEnvelope> handleTooManyRequestsException(TooManyRequestsException e) {
         log.warn("请求过于频繁: {}", e.getMessage());
-        return ErrorEnvelope.of(ErrorType.RATE_LIMIT_ERROR, e.getMessage());
+        return envelope(HttpStatus.TOO_MANY_REQUESTS, ErrorEnvelope.of(ErrorType.RATE_LIMIT_ERROR, e.getMessage()));
     }
 
     /**
@@ -269,10 +303,10 @@ public class GlobalExceptionHandler {
      * @return 409 conflict_error 错误信封
      */
     @ExceptionHandler(DuplicateKeyException.class)
-    @ResponseStatus(HttpStatus.CONFLICT)
-    public ErrorEnvelope handleDuplicateKeyException(DuplicateKeyException e) {
+    public ResponseEntity<ErrorEnvelope> handleDuplicateKeyException(DuplicateKeyException e) {
         log.warn("唯一键冲突: {}", e.getMostSpecificCause().getMessage());
-        return ErrorEnvelope.of(ErrorType.CONFLICT_ERROR, "资源已存在或已被并发占用，请刷新后重试");
+        return envelope(HttpStatus.CONFLICT,
+                ErrorEnvelope.of(ErrorType.CONFLICT_ERROR, "资源已存在或已被并发占用，请刷新后重试"));
     }
 
     /**
@@ -286,23 +320,23 @@ public class GlobalExceptionHandler {
      * @return 500 api_error 错误信封
      */
     @ExceptionHandler(ObjectStorageException.class)
-    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-    public ErrorEnvelope handleObjectStorageException(ObjectStorageException e) {
+    public ResponseEntity<ErrorEnvelope> handleObjectStorageException(ObjectStorageException e) {
         if (e.kind() == ObjectStorageErrorKind.UNAVAILABLE) {
             log.error("对象存储不可用: {}", e.getMessage(), e);
         } else {
             log.error("对象存储操作失败: kind={}, message={}", e.kind(), e.getMessage(), e);
         }
-        return ErrorEnvelope.of(ErrorType.API_ERROR, "对象存储服务暂时不可用，请稍后重试");
+        return envelope(HttpStatus.INTERNAL_SERVER_ERROR,
+                ErrorEnvelope.of(ErrorType.API_ERROR, "对象存储服务暂时不可用，请稍后重试"));
     }
 
     /**
      * 处理异步请求不可用异常
      * <p>当客户端断开 SSE 连接后，后端尝试 flush 或 completeWithError 时会抛出此异常。
      * 属于正常行为（如用户切换会话中断了正在进行的分析），无需记录为 ERROR 级别。</p>
+     * <p>返回 {@code void}：SSE 连接已断开，无线可写，MUST NOT 返回错误信封。</p>
      *
      * @param e 异步请求不可用异常
-     * @return 空响应（客户端已断开，无需返回数据）
      */
     @ExceptionHandler(AsyncRequestNotUsableException.class)
     @ResponseStatus(HttpStatus.OK)
@@ -334,10 +368,9 @@ public class GlobalExceptionHandler {
      * @return 400 invalid_request_error 错误信封
      */
     @ExceptionHandler(InvalidApiVersionException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorEnvelope handleInvalidApiVersionException(InvalidApiVersionException e) {
+    public ResponseEntity<ErrorEnvelope> handleInvalidApiVersionException(InvalidApiVersionException e) {
         log.warn("API 版本无效: {}", e.getReason());
-        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getReason());
+        return envelope(HttpStatus.BAD_REQUEST, ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getReason()));
     }
 
     /**
@@ -347,28 +380,23 @@ public class GlobalExceptionHandler {
      * @return 400 invalid_request_error 错误信封
      */
     @ExceptionHandler(MissingApiVersionException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorEnvelope handleMissingApiVersionException(MissingApiVersionException e) {
+    public ResponseEntity<ErrorEnvelope> handleMissingApiVersionException(MissingApiVersionException e) {
         log.warn("API 版本缺失: {}", e.getReason());
-        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getReason());
+        return envelope(HttpStatus.BAD_REQUEST, ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getReason()));
     }
 
     /**
      * 处理检索附图入参非法异常（真实 HTTP 400）
      * <p>检索端点入口附图校验（数量/字节/类型白名单/base64/魔数）任一附件非法时整请求拒绝，
-     * 错误信息含第几张附图与原因定位。与 {@link DeepDataAgentException} 的「HTTP 200 +
-     * 响应体 code=400」业务错误包装形态刻意区分：附图非法属客户端入参错误，按标准状态码
-     * 400 发布（形态对齐 {@link InvalidApiVersionException} 真实 4xx 先例）。
-     * 本 handler 按最具体类型匹配优先于父类 {@link DeepDataAgentException} 的 200 包装 handler。</p>
+     * 错误信息含第几张附图与原因定位。</p>
      *
      * @param e 检索附图入参非法异常
-     * @return 包含错误定位信息的ApiResponse
+     * @return 400 invalid_request_error 错误信封（含错误定位信息）
      */
     @ExceptionHandler(InvalidQueryImageException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorEnvelope handleInvalidQueryImageException(InvalidQueryImageException e) {
+    public ResponseEntity<ErrorEnvelope> handleInvalidQueryImageException(InvalidQueryImageException e) {
         log.warn("检索附图入参非法: {}", e.getMessage());
-        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getMessage());
+        return envelope(HttpStatus.BAD_REQUEST, ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, e.getMessage()));
     }
 
     /**
@@ -380,10 +408,10 @@ public class GlobalExceptionHandler {
      * @return 413 request_too_large_error 错误信封
      */
     @ExceptionHandler(RequestTooLargeException.class)
-    @ResponseStatus(HttpStatus.PAYLOAD_TOO_LARGE)
-    public ErrorEnvelope handleRequestTooLargeException(RequestTooLargeException e) {
+    public ResponseEntity<ErrorEnvelope> handleRequestTooLargeException(RequestTooLargeException e) {
         log.warn("请求载荷超限: {}", e.getMessage());
-        return ErrorEnvelope.of(ErrorType.REQUEST_TOO_LARGE_ERROR, e.getMessage());
+        return envelope(HttpStatus.PAYLOAD_TOO_LARGE,
+                ErrorEnvelope.of(ErrorType.REQUEST_TOO_LARGE_ERROR, e.getMessage()));
     }
 
     /**
@@ -396,10 +424,10 @@ public class GlobalExceptionHandler {
      * @return 400 invalid_request_error 错误信封
      */
     @ExceptionHandler(MaxUploadSizeExceededException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorEnvelope handleMaxUploadSizeExceededException(MaxUploadSizeExceededException e) {
+    public ResponseEntity<ErrorEnvelope> handleMaxUploadSizeExceededException(MaxUploadSizeExceededException e) {
         log.warn("上传大小超限: {}", e.getMessage());
-        return ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, "上传文件超过 50MB 上限");
+        return envelope(HttpStatus.BAD_REQUEST,
+                ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, "上传文件超过 50MB 上限"));
     }
 
     /**
@@ -410,9 +438,25 @@ public class GlobalExceptionHandler {
      * @return 500 api_error 错误信封
      */
     @ExceptionHandler(Exception.class)
-    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-    public ErrorEnvelope handleException(Exception e) {
+    public ResponseEntity<ErrorEnvelope> handleException(Exception e) {
         log.error("系统内部异常", e);
-        return ErrorEnvelope.of(ErrorType.API_ERROR, "系统内部错误，请联系管理员");
+        return envelope(HttpStatus.INTERNAL_SERVER_ERROR,
+                ErrorEnvelope.of(ErrorType.API_ERROR, "系统内部错误，请联系管理员"));
+    }
+
+    /**
+     * 构造统一错误信封响应。
+     * <p>显式声明 {@code Content-Type: application/json}：异常处理返回值会继承原请求映射的
+     * preset Content-Type（如 SSE 的 {@code text/event-stream}），若非 JSON 则 Jackson 无转换器
+     * 可写、异常处理自身失败并落兜底 500。此显式头使响应写出直接采用 JSON（集成测试 D3）。</p>
+     *
+     * @param status HTTP 状态码（与错误语义匹配）
+     * @param body   错误信封
+     * @return 携带显式 JSON Content-Type 的错误响应
+     */
+    private static ResponseEntity<ErrorEnvelope> envelope(HttpStatus status, ErrorEnvelope body) {
+        return ResponseEntity.status(status)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body);
     }
 }

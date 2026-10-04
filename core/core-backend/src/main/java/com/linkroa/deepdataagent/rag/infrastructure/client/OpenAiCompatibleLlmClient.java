@@ -1,5 +1,6 @@
 package com.linkroa.deepdataagent.rag.infrastructure.client;
 
+import com.linkroa.deepdataagent.agent.domain.model.ModelIndicator;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatRequest;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatResult;
 import com.linkroa.deepdataagent.rag.domain.port.LlmClient;
@@ -88,8 +89,9 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
      * @return 框架模型实例
      */
     static Model resolveByRegistry(ModelProfileAccess.ResolvedEndpoint endpoint) {
+        String modelId = resolveRegistryModelId(endpoint);
         if (StringUtils.isBlank(endpoint.apiKey()) && StringUtils.isBlank(endpoint.baseUrl())) {
-            return ModelRegistry.resolve(endpoint.modelName());
+            return ModelRegistry.resolve(modelId);
         }
         ModelCreationContext.Builder context = ModelCreationContext.builder();
         if (StringUtils.isNotBlank(endpoint.apiKey())) {
@@ -98,7 +100,31 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
         if (StringUtils.isNotBlank(endpoint.baseUrl())) {
             context.baseUrl(endpoint.baseUrl());
         }
-        return ModelRegistry.resolve(endpoint.modelName(), context.build());
+        return ModelRegistry.resolve(modelId, context.build());
+    }
+
+    /**
+     * 按 API 格式解析注册表模型标识（集成测试 D14）。
+     * <p>复用领域规则 {@link ModelIndicator}：AGENTSCOPE 保持注册表裸名（如 {@code dashscope:qwen-plus}），
+     * 其余格式以 {@code 小写apiFormat:modelName} 显式前缀强制对应 provider
+     * （如 {@code openai:qwen3.8-flash}）。避免模型名命中其它 provider 白名单被误路由——
+     * DashScope provider 的模型名白名单含 {@code qwen3.8} 前缀，会把裸名 {@code qwen3.8-flash}
+     * 劫持到原生多模态端点并与含版本段的兼容 base 拼出双重版本段（400）。</p>
+     * <p>已携带 provider 前缀（含 {@code :}）的模型名视为显式声明，原样返回不改写；
+     * apiFormat 缺失时同样退化为裸名（向后兼容）。</p>
+     *
+     * @param endpoint 已解析的模型端点
+     * @return 注册表模型标识（可能带 provider 前缀）
+     */
+    static String resolveRegistryModelId(ModelProfileAccess.ResolvedEndpoint endpoint) {
+        String modelName = endpoint.modelName();
+        if (StringUtils.isBlank(modelName) || modelName.contains(":")) {
+            return modelName;
+        }
+        if (ObjectUtils.isEmpty(endpoint.apiFormat())) {
+            return modelName;
+        }
+        return ModelIndicator.of(endpoint.apiFormat(), modelName).resolved();
     }
 
     @Override

@@ -215,11 +215,20 @@ public class MemoryStoreApplicationService {
     // ===== MemoryVersion 用例 =====
 
     /**
-     * 列出某记忆条目的全部版本历史（按版本号降序；已脱敏版本 content 为 null）。
+     * 列出某记忆条目的全部版本历史（按版本号升序 / 时间正序；已脱敏版本 content 为 null）。
+     * <p>条目可能已被墓碑软删（物理删行被逻辑删除过滤）：不再要求条目存在，改按版本行的
+     * 库归属过滤，使删除后的版本历史（含 deleted 墓碑）仍可审计（集成测试 D7）。
+     * 版本列表为空（条目不存在或不属于本库）→ 404，保持跨租户不泄露。</p>
      */
     public List<MemoryVersion> listVersions(String storeId, String memoryId) {
-        requireOwnedEntry(storeId, memoryId);
-        return memoryRepository.listVersions(memoryId);
+        requireOwned(storeId);
+        List<MemoryVersion> versions = memoryRepository.listVersions(memoryId).stream()
+                .filter(version -> version.storeId().equals(storeId))
+                .toList();
+        if (versions.isEmpty()) {
+            throw new ResourceNotFoundException("记忆不存在");
+        }
+        return versions;
     }
 
     /**

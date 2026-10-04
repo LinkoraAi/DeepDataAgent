@@ -49,6 +49,8 @@ public record AgentTool(String type, List<String> enabledTools, List<String> dis
     public static final int MAX_TOOLS = 128;
     /** MCP 桥接工具名称保留前缀（custom 工具不得占用）。 */
     public static final String MCP_TOOL_PREFIX = "mcp__";
+    /** 运行时 MCP 工具实名分隔符（{@code mcp__{server}__{tool}}），custom 工具名不得包含（集成测试 D9）。 */
+    public static final String NAME_SEPARATOR = "__";
     /** 内置工具基座全集（白/黑名单与 custom 工具名均不得越出该集合）。 */
     public static final Set<String> BUILTIN_TOOL_NAMES = Set.of(
             "Bash", "DeliverArtifacts", "Edit", "Glob", "Grep", "ImageGen",
@@ -94,8 +96,10 @@ public record AgentTool(String type, List<String> enabledTools, List<String> dis
             }
             if (BUILTIN_TOOL_NAMES.contains(name)
                     || RESERVED_TOOL_NAME_ADVISOR.equalsIgnoreCase(name)
-                    || name.startsWith(MCP_TOOL_PREFIX)) {
-                throw new IllegalArgumentException("custom 工具不得与内置工具重名、不得占用保留名 advisor 或 mcp__ 前缀");
+                    || name.startsWith(MCP_TOOL_PREFIX)
+                    || name.contains(NAME_SEPARATOR)) {
+                throw new IllegalArgumentException(
+                        "custom 工具不得与内置工具重名、不得占用保留名 advisor、不得包含保留分隔符 __ 或前缀 mcp__");
             }
             if (StringUtils.isBlank(description)) {
                 throw new IllegalArgumentException("custom 工具 description 不能为空");

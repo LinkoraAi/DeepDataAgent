@@ -37,15 +37,15 @@ class ModelApiChannelTest {
 
     /** 版本化 base URL 端点（台账约定形态） */
     private static final ModelProfileAccess.ResolvedEndpoint VERSIONED_ENDPOINT =
-            new ModelProfileAccess.ResolvedEndpoint("https://api.example/v1", "sk-x", "bge-m3", 1024);
+            new ModelProfileAccess.ResolvedEndpoint("https://api.example/v1", "sk-x", "bge-m3", 1024, null);
 
     /** 无版本段 base URL 端点 */
     private static final ModelProfileAccess.ResolvedEndpoint PLAIN_ENDPOINT =
-            new ModelProfileAccess.ResolvedEndpoint("https://api.example", "sk-x", "bge-m3", null);
+            new ModelProfileAccess.ResolvedEndpoint("https://api.example", "sk-x", "bge-m3", null, null);
 
     /** 无凭证端点 */
     private static final ModelProfileAccess.ResolvedEndpoint NO_KEY_ENDPOINT =
-            new ModelProfileAccess.ResolvedEndpoint("https://api.example/v1", null, "local-rerank", null);
+            new ModelProfileAccess.ResolvedEndpoint("https://api.example/v1", null, "local-rerank", null, null);
 
     /** 单次调用超时（生产口径：embedding/rerank 60s） */
     private static final Duration TIMEOUT = Duration.ofSeconds(60);

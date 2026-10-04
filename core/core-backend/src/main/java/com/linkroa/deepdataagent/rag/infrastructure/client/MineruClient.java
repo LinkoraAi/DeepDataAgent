@@ -401,6 +401,8 @@ public class MineruClient {
     /**
      * 第 4 步：解析产物 —— results 中每项取 content_list 数组（逐条映射 Block，缺失或空视为解析失败）
      * 与 images 对象（{@code {图片文件名: base64}}，缺失 / 非对象时为空头，不影响解析成功判定）。
+     * <p>两个字段均先经 {@link #normalizeStructuredNode(JsonNode)} 归一：MinerU 3.4.2
+     * 以 JSON 序列化字符串返回，须兼容数组 / 对象与字符串两形态（集成测试 D13）。</p>
      */
     private ParsedResult buildParsedResult(String resultJson) {
         JsonNode root = readJson(resultJson);
@@ -410,7 +412,7 @@ public class MineruClient {
         Iterator<Map.Entry<String, JsonNode>> fields = results.fields();
         while (fields.hasNext()) {
             Map.Entry<String, JsonNode> entry = fields.next();
-            JsonNode contentList = entry.getValue().path(JSON_FIELD_CONTENT_LIST);
+            JsonNode contentList = normalizeStructuredNode(entry.getValue().path(JSON_FIELD_CONTENT_LIST));
             if (CollectionUtils.isEmpty(toList(contentList))) {
                 throw new IllegalStateException(ERROR_RESULT_MISSING_CONTENT_LIST);
             }
@@ -419,9 +421,32 @@ public class MineruClient {
                 blocks.add(toBlock(item));
             }
             resultMap.put(entry.getKey(), blocks);
-            imageMap.put(entry.getKey(), toImagePayload(entry.getValue().path(JSON_FIELD_IMAGES)));
+            imageMap.put(entry.getKey(),
+                    toImagePayload(normalizeStructuredNode(entry.getValue().path(JSON_FIELD_IMAGES))));
         }
         return new ParsedResult(resultMap, imageMap);
+    }
+
+    /**
+     * 归一结构化结果字段节点（集成测试 D13：兼容 MinerU 3.4.2 的字符串化返回）。
+     * <p>MinerU 3.4.2（protocol_version=2）将 {@code content_list} 等结构化字段以
+     * JSON 序列化<b>字符串</b>返回：文本节点尝试反序列化；数组 / 对象 / 缺失节点原样返回。</p>
+     * <p><b>失败软处理</b>：字符串不是合法 JSON 时原样返回，交由字段各自的既有容错口径处置——
+     * {@code content_list} 经 {@link #toList} 得空集合从而按「结果缺少 content_list」失败；
+     * {@code images} 非对象从而归一为空映射（既有契约：图片载荷形态异常不构成解析失败）。</p>
+     *
+     * @param node 原始节点（可能为字符串化的 JSON）
+     * @return 归一后的节点（数组 / 对象 / 缺失原样）
+     */
+    private JsonNode normalizeStructuredNode(JsonNode node) {
+        if (ObjectUtils.isEmpty(node) || !node.isTextual()) {
+            return node;
+        }
+        try {
+            return readJson(node.asText());
+        } catch (IllegalStateException e) {
+            return node;
+        }
     }
 
     /**

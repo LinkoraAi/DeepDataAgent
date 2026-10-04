@@ -489,6 +489,103 @@ class MineruClientTest {
         assertThrows(IllegalArgumentException.class, () -> new MineruClient("  ", restTemplate));
     }
 
+    // ==================== D13：兼容 MinerU 3.4.2 的字符串化结果字段 ====================
+
+    /**
+     * 场景：MinerU 3.4.2 将 {@code content_list} 以 JSON 序列化<b>字符串</b>返回
+     * （直连实测形态：PPTX 146 块 / DOCX 463 块均为字符串）。
+     * 预期：反序列化后解析出与数组形态一致的内容块。
+     */
+    @Test
+    void should_parseBlocks_when_parse_given_stringifiedContentList() {
+        // given
+        stubCreateAndCompleted();
+        String contentListJson = "[{\"type\":\"text\",\"page_idx\":1,\"text\":\"hello\"}]";
+        when(restTemplate.exchange(eq(RESULT_URL), eq(HttpMethod.GET), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.status(200).body(
+                        "{\"results\":{\"report\":{\"content_list\":\""
+                                + contentListJson.replace("\"", "\\\"") + "\"}}}"));
+
+        // when
+        MineruClient.ParsedResult parsed = client.parse(new byte[]{1, 2, 3}, "report.pptx");
+
+        // then：字符串形态解析出与数组形态一致的内容块
+        List<MineruClient.Block> blocks = parsed.results().get("report");
+        assertEquals(1, blocks.size());
+        assertEquals("text", blocks.get(0).type());
+        assertEquals(1, blocks.get(0).pageIdx());
+        assertEquals("hello", blocks.get(0).fields().get("text"));
+    }
+
+    /**
+     * 场景：{@code images} 亦为字符串化 JSON。
+     * 预期：反序列化后按名承载 base64 原文。
+     */
+    @Test
+    void should_parseImages_when_parse_given_stringifiedImages() {
+        // given
+        stubCreateAndCompleted();
+        String contentListJson = "[{\"type\":\"image\",\"page_idx\":0,\"img_path\":\"images/a.png\"}]";
+        String imagesJson = "{\"a.png\":\"YWJj\"}";
+        when(restTemplate.exchange(eq(RESULT_URL), eq(HttpMethod.GET), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.status(200).body(
+                        "{\"results\":{\"report\":{\"content_list\":\""
+                                + contentListJson.replace("\"", "\\\"")
+                                + "\",\"images\":\"" + imagesJson.replace("\"", "\\\"") + "\"}}}"));
+
+        // when
+        MineruClient.ParsedResult parsed = client.parse(new byte[]{1}, "report.pdf");
+
+        // then
+        assertEquals("YWJj", parsed.images().get("report").get("a.png"));
+    }
+
+    /**
+     * 场景：字符串化 {@code content_list} 内容为非法 JSON（契约破坏）。
+     * 预期：归一失败软处理 → 空集合 → 按「结果缺少 content_list」抛出 {@link IllegalStateException}。
+     */
+    @Test
+    void should_throwException_when_parse_given_illegalContentListString() {
+        // given
+        stubCreateAndCompleted();
+        when(restTemplate.exchange(eq(RESULT_URL), eq(HttpMethod.GET), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.status(200).body(
+                        "{\"results\":{\"report\":{\"content_list\":\"{ not json\"}}}"));
+
+        // when / then
+        IllegalStateException exception = assertThrows(IllegalStateException.class,
+                () -> client.parse(new byte[]{1}, "report.pdf"));
+        assertTrue(exception.getMessage().contains("content_list"), exception.getMessage());
+    }
+
+    /**
+     * 场景：字符串化 {@code content_list} 反序列化为空数组。
+     * 预期：仍按「结果缺少 content_list」失败（空集不构成解析成功）。
+     */
+    @Test
+    void should_throwException_when_parse_given_emptyStringifiedContentList() {
+        // given
+        stubCreateAndCompleted();
+        when(restTemplate.exchange(eq(RESULT_URL), eq(HttpMethod.GET), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.status(200).body(
+                        "{\"results\":{\"report\":{\"content_list\":\"[]\"}}}"));
+
+        // when / then
+        IllegalStateException exception = assertThrows(IllegalStateException.class,
+                () -> client.parse(new byte[]{1}, "report.pdf"));
+        assertEquals("MinerU 结果缺少 content_list", exception.getMessage());
+    }
+
+    /**
+     * 打桩「创建 202 + 轮询 completed」公共前置，供 D13 用例聚焦结果字段形态。
+     */
+    private void stubCreateAndCompleted() {
+        when(restTemplate.exchange(eq(TASKS_URL), eq(HttpMethod.POST), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.status(202).body("{\"task_id\":\"t1\"}"));
+        when(restTemplate.exchange(eq(TASK_URL), eq(HttpMethod.GET), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.status(200).body("{\"status\":\"completed\"}"));
+    }
+
     /**
      * 捕获创建任务请求体，验证表单字段映射。
      *

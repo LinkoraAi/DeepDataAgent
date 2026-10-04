@@ -32,7 +32,8 @@ import java.util.concurrent.atomic.LongAdder;
  * 未显式声明的通用调用回落 {@link CacheType#ANSWER}。回放只在同分区内发生、互不串扰，
  * 读、写两侧三元组一致才能命中回放。
  * 未命中执行真实调用后经 {@code saveIfAbsent}（ON CONFLICT DO NOTHING）回写，
- * 并发重复调用最多损失一次冗余写入。</p>
+ * 并发重复调用最多损失一次冗余写入。<b>回写降级</b>：仓储异常只记 WARN 与失败计数，
+ * MUST NOT 影响本次 LLM 调用结果返回（缓存属旁路优化，回写故障不得放大为抽取/作答等主链路失败）。</p>
  * <p>多模态请求在键要素串尾按图片顺序追加每张图的
  * {@code sha256:<内容十六进制摘要>}，确保「同文本不同图」不会互串回放；无图请求的
  * 键计算与引入图片维度前逐字节一致，既有缓存条目继续可命中。</p>
@@ -64,6 +65,9 @@ public class CachingLlmClient implements LlmClient {
 
     /** 归属登记累计失败次数（观测指标；登记失败不影响 LLM 调用结果返回） */
     private final LongAdder attributionFailureCount = new LongAdder();
+
+    /** 缓存回写累计失败次数（观测指标；回写失败降级不影响 LLM 调用结果返回） */
+    private final LongAdder cacheWriteFailureCount = new LongAdder();
 
     /**
      * 构造带缓存的 LLM 客户端。
@@ -107,11 +111,44 @@ public class CachingLlmClient implements LlmClient {
                     ObjectUtils.defaultIfNull(entry.totalTokens(), 0), true);
         }
         LlmChatResult result = delegate.chat(request);
-        llmCacheRepository.saveIfAbsent(LlmCacheEntry.create(request.kbId(), cacheKey, cacheType, modelName,
-                composePromptText(request), result.text(), result.totalTokens()));
+        saveCacheQuietly(request, cacheKey, cacheType, modelName, result);
         // 未命中路径在回写之后登记归属：登记只新增映射行，不改变刚写入的缓存行内容
         registerAttribution(request, cacheType, cacheKey);
         return result;
+    }
+
+    /**
+     * 缓存回写降级执行：正常经 {@code saveIfAbsent} 幂等落库（已存在则忽略）。
+     * <p><b>失败只降级不阻断</b>：缓存属旁路优化，仓储异常时输出 WARN 并累加失败计数，
+     * MUST NOT 向上抛出，以免回写故障放大为抽取/作答等主链路失败。</p>
+     *
+     * @param request   本次 LLM 请求（取 kbId 与提示词文本）
+     * @param cacheKey  本次缓存键（32 位 MD5 hex）
+     * @param cacheType 生效缓存分类（与本次读、写命中的分区一致）
+     * @param modelName 解析后的模型名（回写 model 列）
+     * @param result    委托客户端返回的 LLM 结果（回写 response/totalTokens）
+     */
+    private void saveCacheQuietly(LlmChatRequest request, String cacheKey, CacheType cacheType,
+                                  String modelName, LlmChatResult result) {
+        try {
+            llmCacheRepository.saveIfAbsent(LlmCacheEntry.create(request.kbId(), cacheKey, cacheType, modelName,
+                    composePromptText(request), result.text(), result.totalTokens()));
+        } catch (RuntimeException failed) {
+            cacheWriteFailureCount.increment();
+            log.warn("llm_cache 回写失败（不影响本次调用返回）: kbId={}, cacheType={}, cacheKey={}, 累计失败次数={}",
+                    request.kbId(), cacheType, cacheKey, cacheWriteFailureCount.sum(), failed);
+        }
+    }
+
+    /**
+     * 缓存回写累计失败次数（观测指标，供监控与告警消费）。
+     * <p>回写失败被本类捕获并降级为 WARN，计数用于观察缓存仓储可用性；
+     * 计数增长 MUST NOT 影响任何 LLM 调用的返回值。</p>
+     *
+     * @return 累计失败次数（进程内计数，重启归零）
+     */
+    public long cacheWriteFailureCount() {
+        return cacheWriteFailureCount.sum();
     }
 
     /**

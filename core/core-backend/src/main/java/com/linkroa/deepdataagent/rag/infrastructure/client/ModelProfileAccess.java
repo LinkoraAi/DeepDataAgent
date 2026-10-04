@@ -1,6 +1,7 @@
 package com.linkroa.deepdataagent.rag.infrastructure.client;
 
 import com.linkroa.deepdataagent.agent.domain.model.ModelProfile;
+import com.linkroa.deepdataagent.agent.domain.model.enums.ApiFormat;
 import com.linkroa.deepdataagent.agent.domain.repository.ModelProfileRepository;
 import com.linkroa.deepdataagent.agent.infrastructure.util.ModelCredentialEncryptionUtil;
 import org.apache.commons.lang3.ObjectUtils;
@@ -41,7 +42,7 @@ public class ModelProfileAccess {
         ModelProfile profile = modelProfileRepository.findByProfileId(profileId)
                 .orElseThrow(() -> new IllegalArgumentException("模型配置不存在: " + profileId));
         return new ResolvedEndpoint(profile.apiEndpointUrl(), resolveCredential(profile),
-                profile.modelName(), profile.vectorDimension());
+                profile.modelName(), profile.vectorDimension(), profile.apiFormat());
     }
 
     /**
@@ -60,9 +61,11 @@ public class ModelProfileAccess {
      *
      * @param baseUrl         OpenAI 兼容 base URL（形如 {@code https://host/v1}，调用方仅追加资源路径）
      * @param apiKey          解密后的访问凭证（可为空，表示无鉴权端点）
-     * @param modelName       模型名称（请求体 model 字段与缓存键组成部分）
+     * @param modelName       模型名称（请求体 model 字段与缓存键组成部分，不含 provider 前缀）
      * @param vectorDimension 向量维度（EMBEDDING 类型配置值，CHAT 类型可为空）
+     * @param apiFormat       API 格式（决定运行时注册表模型的 provider 前缀路由，见 {@code ModelIndicator}）
      */
-    public record ResolvedEndpoint(String baseUrl, String apiKey, String modelName, Integer vectorDimension) {
+    public record ResolvedEndpoint(String baseUrl, String apiKey, String modelName, Integer vectorDimension,
+                                   ApiFormat apiFormat) {
     }
 }

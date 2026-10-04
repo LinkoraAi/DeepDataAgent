@@ -299,6 +299,44 @@ class InboundEventValidatorTest {
         assertEquals("追加挂载资源不能为空", ex.getMessage());
     }
 
+    // ==================== image url source 出网信任边界（D12） ====================
+
+    /**
+     * image url source 指向回环 / RFC1918 私网 / 链路本地元数据地址时拒绝（400 validation_error）。
+     */
+    @Test
+    void should_rejectImageUrl_when_validate_given_loopbackOrPrivateHost() {
+        // given（回环 / 私网 / 链路本地元数据地址）
+        List<String> blockedUrls = List.of(
+                "https://127.0.0.1/a.png",
+                "https://10.0.0.1/a.png",
+                "https://192.168.1.1/a.png",
+                "https://169.254.169.254/latest");
+
+        // when & then（逐个断言 400）
+        for (String url : blockedUrls) {
+            assertValidationRejected(List.of(draft(ChatEventType.USER_MESSAGE, imageUrlMessage(url))));
+        }
+    }
+
+    /**
+     * image url source 指向公网 HTTPS 主机时通过校验（非回环 / 私网 / 链路本地）。
+     */
+    @Test
+    void should_acceptImageUrl_when_validate_given_publicHttpsHost() {
+        // given
+        List<InboundEventDraft> drafts = List.of(
+                draft(ChatEventType.USER_MESSAGE, imageUrlMessage("https://example.com/a.png")));
+
+        // when & then（不抛异常即通过）
+        validator.validateInboundBatch(drafts, 1L);
+    }
+
+    /** 构造携带 image url source 的 user.message 草案 JSON。 */
+    private static String imageUrlMessage(String url) {
+        return "{\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"url\",\"url\":\"" + url + "\"}}]}";
+    }
+
     /** 断言入站 payload 结构校验失败（400 语义 validation_error）。 */
     private void assertValidationRejected(List<InboundEventDraft> drafts) {
         DeepDataAgentException ex = assertThrows(DeepDataAgentException.class,

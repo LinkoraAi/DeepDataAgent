@@ -6,11 +6,13 @@ import com.linkroa.deepdataagent.runtime.domain.model.SessionResource;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.ChatEventType;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.shared.net.EgressTrustPolicy;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -263,6 +265,11 @@ public class InboundEventValidator {
                 if (!url.startsWith("https://")) {
                     throw validationError("image url source 必须为外部 HTTPS 地址");
                 }
+                // 回环 / 私网 / 链路本地 / 元数据地址拒绝（与出网 SSRF 防护同口径，集成测试 D12）
+                String host = hostOf(url);
+                if (host == null || EgressTrustPolicy.isBlockedTarget(host, false)) {
+                    throw validationError("image url source 不得指向回环或内网地址");
+                }
             }
             case "file" -> {
                 String fileId = requireNonBlankString(source, "file_id", "image file source");
@@ -285,6 +292,20 @@ public class InboundEventValidator {
         }
         if (!(value instanceof Number number) || number.longValue() <= 0 || number.longValue() > MAX_IMAGE_DIMENSION) {
             throw validationError(subject + " 的 image " + field + " MUST 为 1-" + MAX_IMAGE_DIMENSION + " 的整数");
+        }
+    }
+
+    /**
+     * 取 URL 主机名（非法 URL / 无主机返回 null，交由调用方按拒绝处置）。
+     *
+     * @param url 待解析 URL
+     * @return 主机名；无法解析时为 null
+     */
+    private static String hostOf(String url) {
+        try {
+            return URI.create(url).getHost();
+        } catch (IllegalArgumentException e) {
+            return null;
         }
     }
 

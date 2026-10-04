@@ -226,6 +226,6 @@ class OpenAiCompatibleEmbeddingClientTest {
      * @param vectorDimension 声明维度（null 表示不校验）
      */
     private static ModelProfileAccess.ResolvedEndpoint endpoint(Integer vectorDimension) {
-        return new ModelProfileAccess.ResolvedEndpoint("https://api.example/v1", "sk-x", MODEL_NAME, vectorDimension);
+        return new ModelProfileAccess.ResolvedEndpoint("https://api.example/v1", "sk-x", MODEL_NAME, vectorDimension, null);
     }
 }

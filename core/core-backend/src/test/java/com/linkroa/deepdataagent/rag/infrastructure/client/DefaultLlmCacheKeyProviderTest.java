@@ -201,6 +201,6 @@ class DefaultLlmCacheKeyProviderTest {
      */
     private void stubModelResolve() {
         when(modelProfileAccess.resolve(anyString()))
-                .thenReturn(new ModelProfileAccess.ResolvedEndpoint("https://api.example/v1", "sk-x", MODEL_NAME, null));
+                .thenReturn(new ModelProfileAccess.ResolvedEndpoint("https://api.example/v1", "sk-x", MODEL_NAME, null, null));
     }
 }

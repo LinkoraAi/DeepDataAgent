@@ -721,4 +721,82 @@ class AgentApplicationServiceTest {
         assertEquals("[{\"type\":\"custom\",\"skill_id\":\"skill_1\"}]", captor.getValue().toolsJson());
         assertNotNull(captor.getValue().mcpServersJson());
     }
+
+    // ==================== multiagent 空形态归一（D8） ====================
+
+    /** 打桩「创建即首版」链路所需的模型目录 / 仓储协作方。 */
+    private void stubFirstVersionCreate() {
+        when(modelCatalogService.resolveProfileId("ultimate", 1L)).thenReturn(null);
+        when(agentDefinitionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(agentDefinitionRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(agentVersionRepository.findMaxVersionNumber(anyString())).thenReturn(0);
+        when(agentVersionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    }
+
+    /** 走 {@code createAgent} 发布首版并捕获落库的 {@link AgentVersion} 入参。 */
+    private AgentVersion captureFirstPublishedVersion(String multiagentJson) {
+        service.createAgent(new CreateAgentCommand("销售助手", null, "你是助手", MODEL_SHORTHAND,
+                null, null, null, multiagentJson, null));
+        ArgumentCaptor<AgentVersion> captor = ArgumentCaptor.forClass(AgentVersion.class);
+        verify(agentVersionRepository).save(captor.capture());
+        return captor.getValue();
+    }
+
+    /**
+     * multiagent 为 null（未提交）时落库为 null。
+     */
+    @Test
+    void should_storeNullMultiagent_when_createAgent_given_nullMultiagent() {
+        // given
+        stubFirstVersionCreate();
+
+        // when
+        AgentVersion saved = captureFirstPublishedVersion(null);
+
+        // then
+        assertNull(saved.multiagent());
+    }
+
+    /**
+     * multiagent 为 {@code "{}"}（空对象）时归一落库为 null，避免响应期按对象解析抛异常。
+     */
+    @Test
+    void should_storeNullMultiagent_when_createAgent_given_emptyObjectMultiagent() {
+        // given
+        stubFirstVersionCreate();
+
+        // when
+        AgentVersion saved = captureFirstPublishedVersion("{}");
+
+        // then
+        assertNull(saved.multiagent());
+    }
+
+    /**
+     * multiagent 为 {@code "[]"}（空数组）时归一落库为 null。
+     */
+    @Test
+    void should_storeNullMultiagent_when_createAgent_given_emptyArrayMultiagent() {
+        // given
+        stubFirstVersionCreate();
+
+        // when
+        AgentVersion saved = captureFirstPublishedVersion("[]");
+
+        // then
+        assertNull(saved.multiagent());
+    }
+
+    /**
+     * 非空 multiagent 由配置校验前置拒绝（废止字段契约），不进入落库链路。
+     * <p>归一方法 {@code normalizeMultiagent} 仅收敛 null / 空对象 / 空数组；非空形态在
+     * {@code AgentConfigValidator.validateMultiagentAbsent} 即 400，因此「原样保留」不可达。</p>
+     */
+    @Test
+    void should_rejectMultiagent_when_createAgent_given_nonEmptyMultiagent() {
+        // given（校验前置于任何仓储协作：无需打桩，避免 STRICT_STUBS 下的多余桩）
+
+        // when / then
+        assertThrows(IllegalArgumentException.class, () -> captureFirstPublishedVersion("{\"mode\":\"x\"}"));
+    }
 }

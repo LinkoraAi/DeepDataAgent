@@ -50,6 +50,8 @@ import static org.mockito.Mockito.when;
  * <p>以及抽取缓存归属登记维度（spec extract-cache-attribution / R1、R3）：
  * 未命中回写后登记、<b>命中回放后同样登记</b>（核心场景）、无归因字段的调用不登记、
  * 登记抛异常不影响 LLM 结果返回且只累加失败计数、归因字段不进入缓存键（键逐字节不漂移）。</p>
+ * <p>以及缓存回写降级维度：回写仓储异常不影响 LLM 结果返回（不抛异常、结果照常），
+ * 仅累加回写失败计数——缓存属旁路优化，回写故障不得放大为抽取/作答等主链路失败。</p>
  * <p>键算法已迁至 {@link DefaultLlmCacheKeyProvider} 并由本类委托计算：
  * 被测对象装配<b>真实的</b>键计算器（仅模型解析端口为 Mock），
  * 使本套件的手工复算基线仍是端到端断言——键计算口径若有漂移立即红灯。</p>
@@ -265,11 +267,12 @@ class CachingLlmClientTest {
 
     /**
      * 场景：委托回源成功但缓存回写仓储抛异常（依赖失败）。
-     * 预期：当前实现未做降级兜底，异常原样上抛；委托客户端已被调用一次。
+     * 预期：回写降级——主链路结果照常返回（不抛异常、cacheHit=false），
+     * 仅回写失败计数累加一次（缓存属旁路优化，回写故障不得放大为主链路失败）。
      */
     @Test
-    void should_propagateRepositoryFailure_when_chat_given_cacheWriteThrows() {
-        // given
+    void should_returnLlmResult_when_chat_given_cacheWriteThrows() {
+        // given：未命中回源成功，缓存回写抛异常
         LlmChatRequest request = new LlmChatRequest(KB_ID, PROFILE_ID, null, "PROMPT", null, CacheType.ENTITY_DESC);
         stubModelResolve();
         when(llmCacheRepository.findByKbIdAndCacheKey(anyLong(), any(CacheType.class), anyString()))
@@ -277,9 +280,15 @@ class CachingLlmClientTest {
         when(delegate.chat(request)).thenReturn(new LlmChatResult("OUT", 3));
         doThrow(new RuntimeException("缓存写失败")).when(llmCacheRepository).saveIfAbsent(any(LlmCacheEntry.class));
 
-        // when & then
-        assertThrows(RuntimeException.class, () -> cachingLlmClient.chat(request));
+        // when
+        LlmChatResult result = assertDoesNotThrow(() -> cachingLlmClient.chat(request));
+
+        // then：主链路结果不受影响，仅旁路计数变化
+        assertEquals("OUT", result.text());
+        assertEquals(3, result.totalTokens());
+        assertFalse(result.cacheHit());
         verify(delegate, times(1)).chat(request);
+        assertEquals(1L, cachingLlmClient.cacheWriteFailureCount());
     }
 
     /**
@@ -634,6 +643,6 @@ class CachingLlmClientTest {
      */
     private void stubModelResolve() {
         when(modelProfileAccess.resolve(anyString()))
-                .thenReturn(new ModelProfileAccess.ResolvedEndpoint("https://api.example/v1", "sk-x", MODEL_NAME, null));
+                .thenReturn(new ModelProfileAccess.ResolvedEndpoint("https://api.example/v1", "sk-x", MODEL_NAME, null, null));
     }
 }

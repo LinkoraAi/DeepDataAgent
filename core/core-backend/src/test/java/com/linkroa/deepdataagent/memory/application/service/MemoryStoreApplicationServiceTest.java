@@ -468,7 +468,6 @@ class MemoryStoreApplicationServiceTest {
         // given
         when(memoryStoreRepository.findByStoreId("ms_1"))
                 .thenReturn(Optional.of(buildStore("ms_1", MemoryStoreStatus.ACTIVE)));
-        when(memoryRepository.findByMemoryId("mem_1")).thenReturn(Optional.of(buildMemory(2, 6L)));
         when(memoryRepository.listVersions("mem_1")).thenReturn(List.of(
                 MemoryVersion.created("memver_1", "ms_1", "mem_1", "notes/a", 1, "旧")));
 
@@ -478,6 +477,61 @@ class MemoryStoreApplicationServiceTest {
         // then
         assertEquals(1, versions.size());
         assertEquals("created", versions.get(0).action().getValue());
+    }
+
+    /**
+     * 条目已墓碑软删（条目行不可见）时，版本历史仍可读：含 deleted 墓碑、且顺序不变（集成测试 D7）。
+     * <p>不再要求条目存在——{@code findByMemoryId} 不得被触达。</p>
+     */
+    @Test
+    void should_returnVersionsIncludingTombstone_when_listVersions_given_deletedEntry() {
+        // given
+        when(memoryStoreRepository.findByStoreId("ms_1"))
+                .thenReturn(Optional.of(buildStore("ms_1", MemoryStoreStatus.ACTIVE)));
+        MemoryVersion created = MemoryVersion.created("memver_1", "ms_1", "mem_1", "notes/a", 1, "旧");
+        MemoryVersion updated = MemoryVersion.updated("memver_2", "ms_1", "mem_1", "notes/a", 2, "新");
+        MemoryVersion tombstone = MemoryVersion.tombstone("memver_3", "ms_1", "mem_1", "notes/a", 3);
+        when(memoryRepository.listVersions("mem_1")).thenReturn(List.of(created, updated, tombstone));
+
+        // when
+        List<MemoryVersion> versions = service.listVersions("ms_1", "mem_1");
+
+        // then（含 deleted 墓碑、顺序不变；不要求条目存在）
+        assertEquals(3, versions.size());
+        assertEquals(List.of(1, 2, 3), versions.stream().map(MemoryVersion::version).toList());
+        assertEquals("deleted", versions.get(2).action().getValue());
+        verify(memoryRepository, never()).findByMemoryId(anyString());
+    }
+
+    /**
+     * 记忆库不属于当前用户 → 404（不泄露存在性，也不触达版本查询）。
+     */
+    @Test
+    void should_throwNotFound_when_listVersions_given_storeNotOwned() {
+        // given
+        OffsetDateTime now = OffsetDateTime.now();
+        MemoryStore other = new MemoryStore(1L, "ms_1", "别人", "", MemoryStoreStatus.ACTIVE,
+                0, 0L, 99L, null, now, now, null, null);
+        when(memoryStoreRepository.findByStoreId("ms_1")).thenReturn(Optional.of(other));
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class, () -> service.listVersions("ms_1", "mem_1"));
+        verify(memoryRepository, never()).listVersions(anyString());
+    }
+
+    /**
+     * 返回版本的 {@code storeId} 与入参不一致时过滤为空 → 404（跨租户不泄露）。
+     */
+    @Test
+    void should_throwNotFound_when_listVersions_given_versionsOfAnotherStore() {
+        // given
+        when(memoryStoreRepository.findByStoreId("ms_1"))
+                .thenReturn(Optional.of(buildStore("ms_1", MemoryStoreStatus.ACTIVE)));
+        when(memoryRepository.listVersions("mem_1")).thenReturn(List.of(
+                MemoryVersion.created("memver_1", "ms_other", "mem_1", "notes/a", 1, "他库")));
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class, () -> service.listVersions("ms_1", "mem_1"));
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.linkroa.deepdataagent.runtime.domain.model.Transition;
 import com.linkroa.deepdataagent.runtime.infrastructure.persistence.entity.AgentSessionEntity;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -27,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doCallRealMethod;
@@ -338,5 +340,81 @@ class AgentSessionMapperTest {
 
         // when / then
         assertFalse(mapper.isCancelling(SESSION_ID));
+    }
+
+    // ==================== D1：JSONB 列条件更新的 typeHandler 绑定 ====================
+
+    /**
+     * JSONB typeHandler 映射串在 SET 片段内出现的次数。
+     * <p>MyBatis-Plus 的 wrapper 式 {@code set} 不应用实体字段上的
+     * {@code @TableField(typeHandler=...)}，须在 set 处显式声明映射，否则直写以 varchar
+     * 绑定 jsonb 列触发 {@code BadSqlGrammarException}（集成测试 D1）。</p>
+     */
+    private static long countTypeHandlerMapping(String sqlSet) {
+        return StringUtils.countMatches(sqlSet, AgentSessionMapper.JSONB_TYPE_HANDLER_MAPPING);
+    }
+
+    @Test
+    void should_bindJsonbTypeHandler_when_updateProfile_given_metadataAndEnvVarsPresent() {
+        // given：metadata / environment_variables 均为 jsonb 列，条件 set 须显式携带 typeHandler 映射
+        AgentSessionMapper mapper = mock(AgentSessionMapper.class);
+        when(mapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
+        doCallRealMethod().when(mapper)
+                .updateProfile(anyString(), anyString(), anyBoolean(), anyString(), anyString());
+
+        // when
+        int rows = mapper.updateProfile(SESSION_ID, "新标题", true, "{\"k\":\"v\"}", "{\"E\":\"1\"}");
+
+        // then：三列均写入，且两个 jsonb 列各带一次 typeHandler 映射
+        assertEquals(1, rows);
+        LambdaUpdateWrapper<AgentSessionEntity> wrapper = captured(mapper);
+        String sqlSet = wrapper.getSqlSet();
+        assertTrue(sqlSet.contains("title="), sqlSet);
+        assertTrue(sqlSet.contains("metadata="), sqlSet);
+        assertTrue(sqlSet.contains("environment_variables="), sqlSet);
+        assertEquals(2L, countTypeHandlerMapping(sqlSet),
+                "metadata / environment_variables 两处均须携带 typeHandler 映射: " + sqlSet);
+        assertTrue(sqlSet.contains("updated_at="), sqlSet);
+        assertTrue(wrapper.getSqlSegment().contains("session_id ="), wrapper.getSqlSegment());
+    }
+
+    @Test
+    void should_omitJsonbColumns_when_updateProfile_given_nullMetadataAndEnvVars() {
+        // given：null 列由条件 set 跳过（「缺省不覆盖」），不产生 typeHandler 映射
+        AgentSessionMapper mapper = mock(AgentSessionMapper.class);
+        when(mapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
+        doCallRealMethod().when(mapper)
+                .updateProfile(anyString(), anyString(), anyBoolean(), isNull(), isNull());
+
+        // when
+        mapper.updateProfile(SESSION_ID, "仅标题", true, null, null);
+
+        // then：仅 title 写入，两个 jsonb 列均不出现
+        LambdaUpdateWrapper<AgentSessionEntity> wrapper = captured(mapper);
+        String sqlSet = wrapper.getSqlSet();
+        assertTrue(sqlSet.contains("title="), sqlSet);
+        assertFalse(sqlSet.contains("metadata="), sqlSet);
+        assertFalse(sqlSet.contains("environment_variables="), sqlSet);
+        assertEquals(0L, countTypeHandlerMapping(sqlSet), sqlSet);
+    }
+
+    @Test
+    void should_bindJsonbTypeHandler_when_updateResources_given_resourcesJson() {
+        // given：resources 为 jsonb 列，覆盖更新须携带 typeHandler 映射
+        AgentSessionMapper mapper = mock(AgentSessionMapper.class);
+        when(mapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
+        doCallRealMethod().when(mapper).updateResources(anyString(), anyString());
+
+        // when
+        mapper.updateResources(SESSION_ID, "[{\"id\":\"sesr_1\"}]");
+
+        // then
+        LambdaUpdateWrapper<AgentSessionEntity> wrapper = captured(mapper);
+        String sqlSet = wrapper.getSqlSet();
+        assertTrue(sqlSet.contains("resources="), sqlSet);
+        assertEquals(1L, countTypeHandlerMapping(sqlSet),
+                "resources 列须携带 typeHandler 映射: " + sqlSet);
+        assertTrue(sqlSet.contains("updated_at="), sqlSet);
+        assertTrue(wrapper.getSqlSegment().contains("session_id ="), wrapper.getSqlSegment());
     }
 }

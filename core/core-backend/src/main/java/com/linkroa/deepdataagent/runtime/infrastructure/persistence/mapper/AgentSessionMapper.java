@@ -32,6 +32,15 @@ import java.util.List;
 @Mapper
 public interface AgentSessionMapper extends BaseMapper<AgentSessionEntity> {
 
+    /**
+     * JSONB 列条件更新的 typeHandler 映射串。
+     * <p>MyBatis-Plus 的 wrapper 式 {@code set} 不应用实体字段上的
+     * {@code @TableField(typeHandler=...)}（该注解仅对实体式 insert/updateById 生效），
+     * 直写会以 varchar 绑定 jsonb 列导致 {@code BadSqlGrammarException}；须在 set 处显式声明。</p>
+     */
+    String JSONB_TYPE_HANDLER_MAPPING =
+            "typeHandler=com.linkroa.deepdataagent.shared.util.PostgresJsonbTypeHandler";
+
     default AgentSessionEntity findBySessionId(String sessionId) {
         return selectOne(Wrappers.<AgentSessionEntity>lambdaQuery()
                 .eq(AgentSessionEntity::getSessionId, sessionId)
@@ -173,13 +182,16 @@ public interface AgentSessionMapper extends BaseMapper<AgentSessionEntity> {
      * 更新会话可变属性（title / metadata / environment_variables）。
      * <p>{@code titlePresent=true} 时无条件写 title 列（可为 null 清空）；metadata /
      * environment_variables 传 null 的列不更新（「缺省不覆盖」由条件 set 承载）。</p>
+     * <p>metadata / environment_variables 为 jsonb 列，条件 set 须携带
+     * {@link #JSONB_TYPE_HANDLER_MAPPING}（wrapper 式 set 不应用实体注解）。</p>
      */
     default int updateProfile(String sessionId, String title, boolean titlePresent,
                               String metadata, String environmentVariables) {
         return update(null, Wrappers.<AgentSessionEntity>lambdaUpdate()
                 .set(titlePresent, AgentSessionEntity::getTitle, title)
-                .set(metadata != null, AgentSessionEntity::getMetadata, metadata)
-                .set(environmentVariables != null, AgentSessionEntity::getEnvironmentVariables, environmentVariables)
+                .set(metadata != null, AgentSessionEntity::getMetadata, metadata, JSONB_TYPE_HANDLER_MAPPING)
+                .set(environmentVariables != null, AgentSessionEntity::getEnvironmentVariables,
+                        environmentVariables, JSONB_TYPE_HANDLER_MAPPING)
                 .set(AgentSessionEntity::getUpdatedAt, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")))
                 .eq(AgentSessionEntity::getSessionId, sessionId));
     }
@@ -194,6 +206,7 @@ public interface AgentSessionMapper extends BaseMapper<AgentSessionEntity> {
 
     /**
      * 覆盖更新挂载资源 jsonb 文本（创建后追加挂载，仅改 resources 列）。
+     * <p>resources 为 jsonb 列，条件 set 须携带 {@link #JSONB_TYPE_HANDLER_MAPPING}。</p>
      *
      * @param sessionId     会话 ID
      * @param resourcesJson 合并后的资源列表 JSON 文本（snake_case 键，含 sesr_ 资源 ID）
@@ -201,7 +214,7 @@ public interface AgentSessionMapper extends BaseMapper<AgentSessionEntity> {
      */
     default int updateResources(String sessionId, String resourcesJson) {
         return update(null, Wrappers.<AgentSessionEntity>lambdaUpdate()
-                .set(AgentSessionEntity::getResources, resourcesJson)
+                .set(AgentSessionEntity::getResources, resourcesJson, JSONB_TYPE_HANDLER_MAPPING)
                 .set(AgentSessionEntity::getUpdatedAt, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")))
                 .eq(AgentSessionEntity::getSessionId, sessionId));
     }

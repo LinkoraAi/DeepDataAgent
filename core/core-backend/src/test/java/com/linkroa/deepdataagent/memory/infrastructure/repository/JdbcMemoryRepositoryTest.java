@@ -273,7 +273,7 @@ class JdbcMemoryRepositoryTest {
     @Test
     void should_mapVersions_when_listVersions_given_multipleRows() {
         // given
-        when(versionMapper.selectByEntryIdOrderByVersionDesc("mem_1"))
+        when(versionMapper.selectByEntryIdOrderByVersionAsc("mem_1"))
                 .thenReturn(List.of(versionEntity(2), versionEntity(1)));
 
         // when

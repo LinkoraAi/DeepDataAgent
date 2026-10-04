@@ -1,10 +1,13 @@
 package com.linkroa.deepdataagent.rag.infrastructure.convert;
 
+import com.linkroa.deepdataagent.rag.domain.enums.CacheType;
 import com.linkroa.deepdataagent.rag.domain.model.EntityNode;
 import com.linkroa.deepdataagent.rag.domain.model.EntityProperties;
+import com.linkroa.deepdataagent.rag.domain.model.LlmCacheEntry;
 import com.linkroa.deepdataagent.rag.domain.model.RelationEdge;
 import com.linkroa.deepdataagent.rag.domain.model.RelationProperties;
 import com.linkroa.deepdataagent.rag.infrastructure.persistence.entity.EntityNodeGraphEntity;
+import com.linkroa.deepdataagent.rag.infrastructure.persistence.entity.LlmCacheEntity;
 import com.linkroa.deepdataagent.rag.infrastructure.persistence.entity.RelationEdgeGraphEntity;
 import org.junit.jupiter.api.Test;
 
@@ -21,6 +24,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>覆盖：实体/关系属性序列化产出的 JSON 键恒为 {@code filePaths}（数组形态、不再出现旧键
  * {@code filePath}）；含溢出占位元素的多路径列表往返无损；反序列化缺失 {@code filePaths} 键
  * 时经 {@code normalize} 归一空列表；空白 JSON 回落空属性。</p>
+ * <p>另覆盖 String 直落字段的<b>裸值契约</b>（缺陷 D15 锁定）：MapStruct 生成实现 MUST NOT 对
+ * {@code cacheKey/cacheType/model/entityName/sourceName/targetName} 等 String 字段做 JSON 引号包裹
+ * ——32 位 MD5 cacheKey 被引号包裹会变 34 字符并溢出 {@code llm_cache.cache_key CHAR(32)}，
+ * 引发缓存回写必然失败。断言直落字段与领域值逐字节一致（含长度恰为 32 的边界断言）。</p>
  *
  * @author DeepDataAgent
  */
@@ -40,6 +47,12 @@ class RagGraphPersistenceConvertTest {
 
     /** 实体名 */
     private static final String ENTITY_NAME = "张三";
+
+    /** 32 位 MD5 缓存键（llm_cache.cache_key CHAR(32) 容量边界值） */
+    private static final String CACHE_KEY_32 = "0123456789abcdef0123456789abcdef";
+
+    /** 缓存模型名（回写 model 列） */
+    private static final String MODEL_NAME = "qwen3.8-flash";
 
     // ===== 实体侧 =====
 
@@ -143,6 +156,56 @@ class RagGraphPersistenceConvertTest {
         // when & then
         RelationProperties properties = RagGraphPersistenceConvert.INSTANCE.jsonToRelationProperties(null);
         assertTrue(properties.filePaths().isEmpty());
+    }
+
+    // ===== String 直落字段裸值契约（缺陷 D15 锁定） =====
+
+    /**
+     * 场景：LLM 缓存条目转持久化实体。
+     * 预期：cacheKey/cacheType/model/prompt/response 全部<b>裸值直落</b>——cacheKey 逐字节等于
+     * 32 位 MD5 且长度恰为 32（若被 JSON 引号包裹将变 34 字符并溢出 CHAR(32) 列，回写必然失败）。
+     */
+    @Test
+    void should_storeRawCacheFields_when_toEntity_given_llmCacheEntry() {
+        // given：32 位 MD5 键的缓存条目（EXTRACT 分区）
+        LlmCacheEntry entry = LlmCacheEntry.create(KB_ID, CACHE_KEY_32, CacheType.EXTRACT, MODEL_NAME,
+                "PROMPT", "RESPONSE", 9);
+
+        // when
+        LlmCacheEntity entity = RagGraphPersistenceConvert.INSTANCE.toEntity(entry);
+
+        // then：直落裸值，逐字段一致
+        assertEquals(CACHE_KEY_32, entity.getCacheKey(), "cacheKey MUST NOT 被 JSON 引号包裹");
+        assertEquals(32, entity.getCacheKey().length(), "cacheKey 长度须恰为 CHAR(32) 容量");
+        assertEquals("EXTRACT", entity.getCacheType(), "cacheType MUST NOT 被 JSON 引号包裹");
+        assertEquals(MODEL_NAME, entity.getModel());
+        assertEquals("PROMPT", entity.getPrompt());
+        assertEquals("RESPONSE", entity.getResponse());
+    }
+
+    /**
+     * 场景：实体节点/关系边转持久化实体。
+     * 预期：entityName/sourceName/targetName 裸值直落（若被 JSON 引号包裹将产生图数据污染与读取失配），
+     * 且 properties 命名转换不受影响（仍为 JSON 文本）。
+     */
+    @Test
+    void should_storeRawNames_when_toEntity_given_entityNodeAndRelationEdge() {
+        // given：带完整属性的实体与关系边
+        EntityProperties properties = new EntityProperties("PERSON", "描述", List.of(101L),
+                List.of(PATH_A), Map.of("PERSON", 1), List.of("描述"));
+        EntityNode node = new EntityNode(KB_ID, ENTITY_NAME, properties);
+        RelationEdge edge = new RelationEdge(KB_ID, ENTITY_NAME, "公司",
+                new RelationProperties(1.0, "任职于", List.of("雇佣"), List.of(101L), List.of(PATH_A)));
+
+        // when
+        EntityNodeGraphEntity nodeEntity = RagGraphPersistenceConvert.INSTANCE.toEntity(node);
+        RelationEdgeGraphEntity edgeEntity = RagGraphPersistenceConvert.INSTANCE.toEntity(edge);
+
+        // then：名称逐字节一致（裸值），properties 命名转换仍生效
+        assertEquals(ENTITY_NAME, nodeEntity.getEntityName(), "entityName MUST NOT 被 JSON 引号包裹");
+        assertTrue(nodeEntity.getProperties().contains("\"filePaths\":["), "properties 命名转换仍须生效");
+        assertEquals(ENTITY_NAME, edgeEntity.getSourceName(), "sourceName MUST NOT 被 JSON 引号包裹");
+        assertEquals("公司", edgeEntity.getTargetName(), "targetName MUST NOT 被 JSON 引号包裹");
     }
 
     // ===== TypeReference 常量化等价性（converge-rag-hot-path-object-creation / 3.4） =====

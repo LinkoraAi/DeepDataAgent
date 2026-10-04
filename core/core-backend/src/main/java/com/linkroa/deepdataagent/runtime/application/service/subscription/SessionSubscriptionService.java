@@ -65,14 +65,19 @@ public class SessionSubscriptionService {
         long flushIntervalMs = deltaFlushIntervalMs == null || deltaFlushIntervalMs <= 0
                 ? SseTransportPort.DEFAULT_DELTA_FLUSH_INTERVAL_MS : deltaFlushIntervalMs;
 
+        // 重连游标校验<b>前移到同步段</b>：SSE 响应一经提交（下发 : connected）HTTP 状态即不可再变，
+        // 伪造 / 越权 / 归档游标若在提交后才抛，客户端只能观察到「流提前结束」而拿不到 4xx；
+        // 前移后由 @ExceptionHandler 归一为 404 / 400 JSON 信封（集成测试 D3 / TC-09-13）。
+        AgentRuntimeQueryService.ReplayPosition position =
+                queryService.resolveReplayPosition(sessionId, lastEventId);
+
         SseEmitter emitter = bindAndRegister(session, deltaTargets, flushIntervalMs);
         try {
             // 连接建立后立即下发注释行，随后回放历史事件（对齐 Managed Agents : connected）
             sseTransportPort.sendComment(emitter, "connected");
             // 绑定完成后再回放：绑定到回放之间的实时广播与该 emitter 同步，
-            // 客户端按 event_id / seq 幂等去重，杜绝「回放先于绑定」的丢失窗口
-            AgentRuntimeQueryService.ReplayPosition position =
-                    queryService.resolveReplayPosition(sessionId, lastEventId);
+            // 客户端按 event_id / seq 幂等去重，杜绝「回放先于绑定」的丢失窗口；
+            // 回放起点取自前移后的 position（其 afterSequence 为 DB 游标，间隙内新事件仍被本查询覆盖）
             List<ChatEvent> history = queryService.replayEvents(AgentRuntimeCommandConvert.INSTANCE
                     .toReplayQuery(sessionId, position.afterSequence(), null));
             for (ChatEvent event : history) {
@@ -106,12 +111,13 @@ public class SessionSubscriptionService {
     public SseEmitter openThread(String sessionId, String threadId, String lastEventId) {
         AgentSession session = queryService.getSession(sessionId);
         queryService.requireThread(sessionId, threadId);
+        // 重连游标校验前移到同步段（同 {@link #open}）：响应提交后无法再变更 HTTP 状态
+        AgentRuntimeQueryService.ReplayPosition position =
+                queryService.resolveReplayPosition(sessionId, lastEventId);
         SseEmitter emitter = bindAndRegister(session, Set.of(),
                 SseTransportPort.DEFAULT_DELTA_FLUSH_INTERVAL_MS);
         try {
             sseTransportPort.sendComment(emitter, "connected");
-            AgentRuntimeQueryService.ReplayPosition position =
-                    queryService.resolveReplayPosition(sessionId, lastEventId);
             for (ChatEvent event : queryService.replayThreadEvents(sessionId, threadId, position.afterSequence())) {
                 sseTransportPort.sendEvent(emitter, event);
             }

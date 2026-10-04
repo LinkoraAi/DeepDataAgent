@@ -95,7 +95,7 @@ public class JdbcMemoryRepository implements MemoryRepository {
 
     @Override
     public List<MemoryVersion> listVersions(String entryId) {
-        return versionMapper.selectByEntryIdOrderByVersionDesc(entryId).stream()
+        return versionMapper.selectByEntryIdOrderByVersionAsc(entryId).stream()
                 .map(MemoryVersionPersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }

@@ -343,7 +343,7 @@ class OpenAiCompatibleRerankClientTest {
      * 构造解析后的模型端点（api_endpoint_url 原样直调，此处即最终完整请求地址）。
      */
     private static ModelProfileAccess.ResolvedEndpoint endpoint() {
-        return new ModelProfileAccess.ResolvedEndpoint("https://api.example/rerank", "sk-x", MODEL_NAME, null);
+        return new ModelProfileAccess.ResolvedEndpoint("https://api.example/rerank", "sk-x", MODEL_NAME, null, null);
     }
 
     /**

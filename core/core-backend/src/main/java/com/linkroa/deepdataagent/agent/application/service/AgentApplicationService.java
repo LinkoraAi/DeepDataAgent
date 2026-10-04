@@ -129,6 +129,8 @@ public class AgentApplicationService {
     /**
      * 事务内发布一个版本快照（共用行锁，保证 MAX+1 计算串行且 latest_version 与版本号一致）。
      * <p>版本快照的 name/description 为发布时刻 Agent 定义属性复制值，不存在独立发布标签入参。</p>
+     * <p>{@code multiagent} 经 {@link #normalizeMultiagent(String)} 归一：null / 空对象 / 空数组
+     * 统一视为「未提交」落库为 null（集成测试 D8）。</p>
      */
     private AgentVersion publishVersionInTransaction(AgentDefinition definition, String name, String description,
                                                      String systemPrompt,
@@ -149,10 +151,30 @@ public class AgentApplicationService {
                 toolsJson,
                 mcpServersJson,
                 skillsJson,
-                multiagent,
+                normalizeMultiagent(multiagent),
                 metadataJson
         );
         return agentVersionRepository.save(version);
+    }
+
+    /**
+     * 归一 {@code multiagent} 空形态（集成测试 D8）：null / 空白 / {@code "{}"} / {@code "[]"}
+     * 统一视为「未提交」返回 null。
+     * <p>契约「null / 空对象 / 空数组视为未提交、响应恒 null」；若原样落库 {@code "[]"}，
+     * 响应期按对象解析快照会抛 {@code IllegalStateException} 导致 400。</p>
+     *
+     * @param multiagentJson 原始 multiagent JSON 文本
+     * @return 归一后的文本；空形态返回 null
+     */
+    private static String normalizeMultiagent(String multiagentJson) {
+        if (StringUtils.isBlank(multiagentJson)) {
+            return null;
+        }
+        String trimmed = multiagentJson.trim();
+        if ("{}".equals(trimmed) || "[]".equals(trimmed) || "null".equals(trimmed)) {
+            return null;
+        }
+        return multiagentJson;
     }
 
     /**

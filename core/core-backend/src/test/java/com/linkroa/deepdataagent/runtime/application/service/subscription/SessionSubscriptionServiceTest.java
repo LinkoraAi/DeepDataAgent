@@ -13,6 +13,7 @@ import com.linkroa.deepdataagent.runtime.domain.model.StreamFrame;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.ChatEventType;
 import com.linkroa.deepdataagent.runtime.application.port.SessionRuntimeRegistry;
 import com.linkroa.deepdataagent.runtime.infrastructure.sse.SseConnectionHandle;
+import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -72,7 +74,7 @@ class SessionSubscriptionServiceTest {
         ReflectionTestUtils.setField(service, "sseTransportPort", transportPort);
     }
 
-    // ==================== 先绑定后回放（防丢失窗口全序） ====================
+    // ==================== 游标校验前移 + 先绑定后回放（防丢失窗口全序） ====================
 
     @Test
     void should_bindBeforeReplayInOrder_when_open_given_historyEvents() throws IOException {
@@ -92,18 +94,38 @@ class SessionSubscriptionServiceTest {
         // when
         SseEmitter opened = service.open(session.sessionId(), "3", null, null);
 
-        // then（全序：取句柄（绑定前为 NoOp）→ 绑定 → 注册连接 → connected 握手 → 解析游标 → 回放）
+        // then（全序：解析游标〔同步段前移，响应提交前可拒绝〕→ 取句柄 → 绑定 → 注册连接 →
+        // connected 握手 → 回放）
         assertSame(emitter, opened);
         InOrder order = inOrder(transportPort, queryService, context);
+        order.verify(queryService).resolveReplayPosition(session.sessionId(), "3");
         order.verify(transportPort).acquireHandle(NoOpConnectionHandle.INSTANCE);
         order.verify(context).bindConnection(handle);
         order.verify(transportPort).openConnection(handle, Set.of(), 50L);
         order.verify(transportPort).sendComment(emitter, "connected");
-        order.verify(queryService).resolveReplayPosition(session.sessionId(), "3");
         order.verify(queryService).replayEvents(any(ReplayQuery.class));
         order.verify(transportPort, times(2)).sendEvent(eq(emitter), any());
         // 断连不取消：绑定过程不得接线任何取消 / 中断回调
         verify(handle, never()).onDisconnect(any());
+    }
+
+    /**
+     * 集成测试 D3 / TC-09-13：伪造 / 越权 / 归档重连游标必须在<b>同步段</b>上抛，
+     * 使 @ExceptionHandler 能在响应提交前归一为 404 / 400 JSON 信封；
+     * 若在 : connected 之后才抛，客户端只能观察到「流提前结束」。
+     */
+    @Test
+    void should_propagate_when_open_given_invalidReplayCursor() {
+        // given（游标解析失败：响应尚未提交，异常须原样上抛而非 completeWithError）
+        when(queryService.getSession(session.sessionId())).thenReturn(session);
+        when(queryService.resolveReplayPosition(session.sessionId(), "evt_ghost"))
+                .thenThrow(new ResourceNotFoundException("Last-Event-ID 事件不存在: evt_ghost"));
+
+        // when / then
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.open(session.sessionId(), "evt_ghost", null, null));
+        // 未建立任何连接（无 emitter 创建 / 无响应提交）
+        verify(transportPort, never()).openConnection(any(), any(), anyLong());
     }
 
     // ==================== 三段重连判定 ====================

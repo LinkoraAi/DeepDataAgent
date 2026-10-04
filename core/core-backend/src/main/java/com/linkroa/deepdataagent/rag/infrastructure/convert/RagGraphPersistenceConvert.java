@@ -40,6 +40,11 @@ import java.util.Map;
  * 恢复（携带 JSONB 反序列化与空值归一），向量与缓存条目经各自 {@code restore} 工厂恢复。
  * JSON 序列化使用 Jackson 2（{@code com.fasterxml.jackson}），与 rag 包既有实现一致。
  * </p>
+ * <p><b>JSON 序列化 MUST NOT 以通用 {@code Object → String} 方法暴露</b>：MapStruct 会把
+ * 这类方法隐式选为所有 String 字段的映射方法，导致 cache_key 等直落字段被 JSON 双引号
+ * 包裹（32 位 MD5 变 34 字符溢出 {@code CHAR(32)} 列——历史缺陷 D15）。故序列化在
+ * {@code entityPropertiesToJson} / {@code relationPropertiesToJson} / {@code longListToJson}
+ * 各命名转换方法内联完成，不再提供通用 serialize 方法。</p>
  */
 @Mapper(unmappedTargetPolicy = ReportingPolicy.IGNORE)
 public interface RagGraphPersistenceConvert {
@@ -225,7 +230,11 @@ public interface RagGraphPersistenceConvert {
         if (props == null) {
             return null;
         }
-        return serialize(props);
+        try {
+            return OBJECT_MAPPER.writeValueAsString(props);
+        } catch (JsonProcessingException e) {
+            throw new DeepDataAgentException("实体属性 JSON 序列化失败: " + e.getMessage());
+        }
     }
 
     /**
@@ -239,7 +248,11 @@ public interface RagGraphPersistenceConvert {
         if (props == null) {
             return null;
         }
-        return serialize(props);
+        try {
+            return OBJECT_MAPPER.writeValueAsString(props);
+        } catch (JsonProcessingException e) {
+            throw new DeepDataAgentException("关系属性 JSON 序列化失败: " + e.getMessage());
+        }
     }
 
     /**
@@ -275,7 +288,11 @@ public interface RagGraphPersistenceConvert {
         if (ObjectUtils.isEmpty(ids)) {
             return "[]";
         }
-        return serialize(ids);
+        try {
+            return OBJECT_MAPPER.writeValueAsString(ids);
+        } catch (JsonProcessingException e) {
+            throw new DeepDataAgentException("分块ID列表 JSON 序列化失败: " + e.getMessage());
+        }
     }
 
     // ===== 持久化列值 → 领域字段 =====
@@ -447,19 +464,5 @@ public interface RagGraphPersistenceConvert {
                 ObjectUtils.isEmpty(props.filePaths()) ? List.of() : props.filePaths(),
                 ObjectUtils.isEmpty(props.entityTypeVotes()) ? Map.of() : props.entityTypeVotes(),
                 ObjectUtils.isEmpty(props.descriptions()) ? List.of() : props.descriptions());
-    }
-
-    /**
-     * 对象序列化为 JSON 文本（统一异常包装为业务异常）。
-     *
-     * @param value 待序列化对象
-     * @return JSON 文本
-     */
-    default String serialize(Object value) {
-        try {
-            return OBJECT_MAPPER.writeValueAsString(value);
-        } catch (JsonProcessingException e) {
-            throw new DeepDataAgentException("持久化 JSON 序列化失败: " + e.getMessage());
-        }
     }
 }
