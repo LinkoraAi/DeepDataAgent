@@ -3,6 +3,7 @@ package com.linkroa.deepdataagent.rag.infrastructure.parser.engine;
 import com.linkroa.deepdataagent.knowledgebase.application.port.KbAssetStoragePort;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.DocumentParseConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.EngineConfig;
+import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.ParseEngineProvider;
 import com.linkroa.deepdataagent.rag.domain.port.DocumentParser;
 import com.linkroa.deepdataagent.rag.domain.port.DocumentParserRegistry;
@@ -62,14 +63,18 @@ public class DefaultDocumentParserRegistry implements DocumentParserRegistry {
     /** LOCAL 解析器进程内单例（无引擎参数，构造一次复用）。 */
     private final LocalTikaDocumentParser localTikaDocumentParser;
 
+    /** 本地直读兜底解析器进程内单例（引擎不支持该文档类型时使用，无引擎参数，构造一次复用）。 */
+    private final LocalReadFallbackDocumentParser localReadFallbackDocumentParser;
+
     /**
-     * 构造器：注入对象资产存储访问端口并预建 LOCAL 单例解析器。
+     * 构造器：注入对象资产存储访问端口并预建 LOCAL 与本地直读兜底单例解析器。
      *
      * @param kbAssetStoragePort 对象资产存储访问端口（解析器读取源文件的依赖）
      */
     public DefaultDocumentParserRegistry(KbAssetStoragePort kbAssetStoragePort) {
         this.kbAssetStoragePort = kbAssetStoragePort;
         this.localTikaDocumentParser = new LocalTikaDocumentParser(kbAssetStoragePort);
+        this.localReadFallbackDocumentParser = new LocalReadFallbackDocumentParser(kbAssetStoragePort);
     }
 
     @Override
@@ -83,6 +88,25 @@ public class DefaultDocumentParserRegistry implements DocumentParserRegistry {
             case MINERU -> buildMineruParser(parseConfig.engineConfig());
             default -> throw new IllegalArgumentException(ERROR_UNKNOWN_PROVIDER + provider);
         };
+    }
+
+    /**
+     * 按解析配置 + 文档类型路由：先按 provider 选引擎，再看引擎是否支持该文档类型。
+     * <p>支持 → 返回引擎解析器；不支持（含类型为 null 的未知情形）→ 返回本地直读兜底解析器，
+     * 不调用引擎，MUST NOT 因「引擎不支持该类型」把文档置 FAILED。</p>
+     *
+     * @param parseConfig 知识库解析配置
+     * @param fileType    文档类型，可为 null（未知类型）
+     * @return 引擎解析器（引擎支持该类型）或本地直读兜底解析器
+     * @throws IllegalArgumentException 解析配置为 null、provider 未知或 MINERU 必填参数缺失
+     */
+    @Override
+    public DocumentParser resolve(DocumentParseConfig parseConfig, FileType fileType) {
+        DocumentParser engine = resolve(parseConfig);
+        if (ObjectUtils.isNotEmpty(fileType) && engine.supportedTypes().contains(fileType)) {
+            return engine;
+        }
+        return localReadFallbackDocumentParser;
     }
 
     /**

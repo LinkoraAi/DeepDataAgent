@@ -1,6 +1,7 @@
 package com.linkroa.deepdataagent.rag.domain.port;
 
 import com.linkroa.deepdataagent.knowledgebase.domain.model.DocumentParseConfig;
+import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType;
 
 /**
  * 文档解析器注册表端口：按知识库解析配置（provider）选择具体的 {@link DocumentParser} 实现。
@@ -13,6 +14,9 @@ import com.linkroa.deepdataagent.knowledgebase.domain.model.DocumentParseConfig;
  *   <li><b>无失败自动回退</b>——本端口只在解析前选型，解析期失败由具体
  *       {@link DocumentParser} 实现抛异常交由调用方置 FAILED，不得自动切换另一种引擎。</li>
  * </ul>
+ * <p><b>类型路由</b>：带文档类型的重载按「引擎能力」选型——文档类型落在所选引擎
+ * {@link DocumentParser#supportedTypes()} 集合内才返回该引擎，否则返回本地直读兜底解析器
+ * （{@code LocalReadFallbackDocumentParser}），MUST NOT 因「引擎不支持该类型」把文档置 FAILED。</p>
  */
 public interface DocumentParserRegistry {
 
@@ -24,4 +28,16 @@ public interface DocumentParserRegistry {
      * @throws IllegalArgumentException 解析配置为 null、provider 未知或 MINERU 必填参数缺失
      */
     DocumentParser resolve(DocumentParseConfig parseConfig);
+
+    /**
+     * 按解析配置 + 文档类型选择文档解析器（类型路由）。
+     * <p>文档类型落在所选引擎支持集合内 → 返回该引擎解析器；否则跳过引擎、返回本地直读兜底解析器；
+     * 类型为 null（未知）时同样走本地直读兜底。</p>
+     *
+     * @param parseConfig 知识库解析配置（provider + 引擎参数；provider 为空按 LOCAL 兜底）
+     * @param fileType    文档类型，可为 null（未知类型，走本地直读兜底）
+     * @return 与配置及类型匹配的文档解析器（引擎支持该类型）或本地直读兜底解析器
+     * @throws IllegalArgumentException 解析配置为 null、provider 未知或 MINERU 必填参数缺失
+     */
+    DocumentParser resolve(DocumentParseConfig parseConfig, FileType fileType);
 }

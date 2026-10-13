@@ -426,7 +426,12 @@ public final class DelimiterParser {
             }
             List<String> positions = extractPositionParts(unit.text);
             String content = stripTags(unit.text);
-            if (StringUtils.isBlank(content) && positions.isEmpty()) {
+            // 多模态透传单元（IMAGE / TABLE / EQUATION）MUST NOT 因正文空白被过滤：
+            // 其切片媒体引用（s3_file）与 Stage2 模板化描述（图片内容描述等）都挂在本块上，
+            // caption 为空是 MinerU 常态（image_caption=[]），丢弃即整条多模态能力缺失
+            boolean multimodalPassthrough = unit.passthrough && ObjectUtils.isNotEmpty(unit.source)
+                    && unit.source.isMultimodal();
+            if (StringUtils.isBlank(content) && positions.isEmpty() && !multimodalPassthrough) {
                 continue;
             }
             ChunkVO chunk = new ChunkVO(sequence++, content, unit.tokens, unit.source);

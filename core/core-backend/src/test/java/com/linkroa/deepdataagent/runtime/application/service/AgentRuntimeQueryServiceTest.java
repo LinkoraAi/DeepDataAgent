@@ -113,10 +113,10 @@ class AgentRuntimeQueryServiceTest {
         // given（首页不满：limit+1 探针未命中，has_more=false）
         AgentSession session = sessionWithId(1L, "s-1", OffsetDateTime.parse("2026-08-22T10:00:00+08:00"));
         when(sessionRepository.findByCursor("u-1",
-                new SessionListFilter(null, null, null, null, List.of(), null, false,
+                new SessionListFilter(null, null, null, List.of(), null, false,
                         null, null, null, null, false, null, null, false), 21))
                 .thenReturn(List.of(session));
-        ListSessionsQuery query = new ListSessionsQuery("u-1", null, null, null, null, null, false,
+        ListSessionsQuery query = new ListSessionsQuery("u-1", null, null, null, null, false,
                 null, null, null, null, false, new CursorPageParams(20, null, null));
 
         // when
@@ -138,10 +138,10 @@ class AgentRuntimeQueryServiceTest {
                     OffsetDateTime.parse("2026-08-22T10:00:00+08:00").minusSeconds(i)));
         }
         when(sessionRepository.findByCursor("u-1",
-                new SessionListFilter("agent-a", null, null, null, List.of(AgentSessionStatus.IDLE), null,
+                new SessionListFilter("agent-a", null, null, List.of(AgentSessionStatus.IDLE), null,
                         false, null, null, null, null, false, null, null, false), 21))
                 .thenReturn(sessions);
-        ListSessionsQuery query = new ListSessionsQuery("u-1", "agent-a", null, null, null,
+        ListSessionsQuery query = new ListSessionsQuery("u-1", "agent-a", null, null,
                 List.of(AgentSessionStatus.IDLE), false, null, null, null, null, false,
                 new CursorPageParams(20, null, null));
 
@@ -162,10 +162,10 @@ class AgentRuntimeQueryServiceTest {
         AgentSession anchor = sessionWithId(7L, "s-7", cursorTime);
         when(sessionRepository.findBySessionId("s-7")).thenReturn(Optional.of(anchor));
         when(sessionRepository.findByCursor("u-1",
-                new SessionListFilter(null, null, null, null, List.of(), null, false,
+                new SessionListFilter(null, null, null, List.of(), null, false,
                         null, null, null, null, false, cursorTime, 7L, false), 21))
                 .thenReturn(List.of());
-        ListSessionsQuery query = new ListSessionsQuery("u-1", null, null, null, null, null, false,
+        ListSessionsQuery query = new ListSessionsQuery("u-1", null, null, null, null, false,
                 null, null, null, null, false, new CursorPageParams(20, "s-7", null));
 
         // when
@@ -183,12 +183,12 @@ class AgentRuntimeQueryServiceTest {
         AgentSession anchor = sessionWithId(5L, "s-5", cursorTime);
         when(sessionRepository.findBySessionId("s-5")).thenReturn(Optional.of(anchor));
         when(sessionRepository.findByCursor("u-1",
-                new SessionListFilter(null, null, null, null, List.of(), null, false,
+                new SessionListFilter(null, null, null, List.of(), null, false,
                         null, null, null, null, false, cursorTime, 5L, true), 21))
                 .thenReturn(List.of(
                         sessionWithId(3L, "s-3", OffsetDateTime.parse("2026-08-22T10:00:03+08:00")),
                         sessionWithId(4L, "s-4", OffsetDateTime.parse("2026-08-22T10:00:04+08:00"))));
-        ListSessionsQuery query = new ListSessionsQuery("u-1", null, null, null, null, null, false,
+        ListSessionsQuery query = new ListSessionsQuery("u-1", null, null, null, null, false,
                 null, null, null, null, false, new CursorPageParams(20, null, "s-5"));
 
         // when
@@ -204,7 +204,7 @@ class AgentRuntimeQueryServiceTest {
     void should_throwNotFound_when_listSessions_given_missingCursorSession() {
         // given（游标指向不存在的会话 → 404，与详情同语义）
         when(sessionRepository.findBySessionId("s-gone")).thenReturn(Optional.empty());
-        ListSessionsQuery query = new ListSessionsQuery("u-1", null, null, null, null, null, false,
+        ListSessionsQuery query = new ListSessionsQuery("u-1", null, null, null, null, false,
                 null, null, null, null, false, new CursorPageParams(20, "s-gone", null));
 
         // when & then
@@ -647,15 +647,15 @@ class AgentRuntimeQueryServiceTest {
         OffsetDateTime now = OffsetDateTime.parse("2026-08-22T10:00:00+08:00");
         return AgentSession.restore(1L, sessionId, "1", "agent-a", "1.0.0",
                 AgentSessionStatus.IDLE, TurnPhase.IDLE, "{}", null, null,
-                List.of(), List.of(), "{}", resources, null, null,
+                "{}", resources, null, null,
                 now, null, now, now, null, null);
     }
 
     private AgentSession sessionWithId(Long id, String sessionId, OffsetDateTime createdAt) {
-        // 双字段状态机 22 参 restore：idle / idle，无挂载字段（sandboxId / workspaceId 组件已删除）
+        // 双字段状态机 restore：idle / idle，无挂载字段
         return AgentSession.restore(id, sessionId, "1", "agent-a", "1.0.0",
                 AgentSessionStatus.IDLE, TurnPhase.IDLE, "{}", null, null,
-                List.of(), List.of(), "{}", List.of(), null, null,
+                "{}", List.of(), null, null,
                 createdAt, null, createdAt, createdAt, null, null);
     }
 }

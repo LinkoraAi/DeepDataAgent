@@ -23,7 +23,6 @@ import java.util.Map;
  * @param modelProfileId    内部模型供应商配置引用（可空 = 目录模型未配置映射；不进入对外契约）
  * @param modelJson         模型引用（JSONB：目录模型 id 字符串简写或 {id, effort?, context_window?} 对象，见 {@link ModelRef}）
  * @param toolsJson         内联工具配方（JSONB：{@code [{type, ...}]}，见 {@link AgentTool}）
- * @param mcpServersJson    内联外部 MCP 工具源配方（JSONB：{@code [{name, type:"url", url}]}，见 {@link McpServer}）
  * @param skillsJson        技能绑定配方（{@code [{type, skill_id, version}]}，type 取 catalog / custom，见 {@link SkillBinding}）
  * @param multiagent        多智能体编排配置（JSONB；本期非空提交 400、响应恒 null）
  * @param metadataJson      业务自定义元数据（JSONB 键值对象，可空）
@@ -43,7 +42,6 @@ public record AgentVersion(
         String modelProfileId,
         String modelJson,
         String toolsJson,
-        String mcpServersJson,
         String skillsJson,
         String multiagent,
         String metadataJson,
@@ -107,7 +105,6 @@ public record AgentVersion(
             String modelProfileId,
             String modelJson,
             String toolsJson,
-            String mcpServersJson,
             String skillsJson,
             String multiagent,
             String metadataJson
@@ -115,7 +112,7 @@ public record AgentVersion(
         return new AgentVersion(
                 null, versionId, agentId, versionNumber, name, description,
                 systemPrompt != null ? systemPrompt : "", modelProfileId, modelJson,
-                toolsJson, mcpServersJson, skillsJson,
+                toolsJson, skillsJson,
                 multiagent, metadataJson,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
@@ -137,7 +134,6 @@ public record AgentVersion(
             String modelProfileId,
             String modelJson,
             String toolsJson,
-            String mcpServersJson,
             String skillsJson,
             String multiagent,
             String metadataJson,
@@ -149,7 +145,7 @@ public record AgentVersion(
         return new AgentVersion(
                 id, versionId, agentId, versionNumber, name, description,
                 systemPrompt, modelProfileId, modelJson,
-                toolsJson, mcpServersJson, skillsJson,
+                toolsJson, skillsJson,
                 multiagent, metadataJson,
                 createdAt, updatedAt, createdBy, updatedBy);
     }
@@ -176,17 +172,10 @@ public record AgentVersion(
     }
 
     /**
-     * 解析本版本挂载的工具配置列表（{@code [{type, ...}]}，四类型见 {@link AgentTool}）。
+     * 解析本版本挂载的工具配置列表（{@code [{type, ...}]}，两类见 {@link AgentTool}）。
      */
     public List<AgentTool> parseTools() {
         return AgentTool.parse(toolsJson);
-    }
-
-    /**
-     * 解析本版本声明的 MCP 服务器列表（{@code [{name, type:"url", url}]}）。
-     */
-    public List<McpServer> parseMcpServers() {
-        return McpServer.parse(mcpServersJson);
     }
 
     /**

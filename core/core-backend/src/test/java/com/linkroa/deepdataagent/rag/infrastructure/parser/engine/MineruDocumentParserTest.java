@@ -140,6 +140,34 @@ class MineruDocumentParserTest {
     }
 
     /**
+     * 场景：图片载荷值为 data URL 形态（MinerU 3.4.2 返回 {@code data:{mime};base64,{base64}}）。
+     * 预期：剥离前缀后正常解码为字节（回归护栏：前缀不剥离则严格 Base64 解码必失败，
+     * 全部图片被跳过、切片媒体引用整体缺失）。
+     */
+    @Test
+    void should_decodeDataUrlPayload_when_parse_given_dataUrlImages() {
+        // given
+        byte[] content = "dummy".getBytes(StandardCharsets.UTF_8);
+        stubOpen(content);
+        Map<String, List<MineruClient.Block>> results = new HashMap<>();
+        results.put("report", List.of(new MineruClient.Block("image", 1,
+                Map.of("img_path", "images/photo.jpg", "image_caption", "照片"))));
+        Map<String, Map<String, String>> images = new HashMap<>();
+        images.put("report", Map.of("photo.jpg",
+                "data:image/jpeg;base64," + Base64.getEncoder().encodeToString(new byte[]{-1, 0, 127})));
+        when(mineruClient.parse(any(byte[].class), eq("report.pdf")))
+                .thenReturn(new MineruClient.ParsedResult(results, images));
+
+        // when
+        ParsedDocument parsed = parser.parse(new S3File(OBJECT_KEY), "auto",
+                new MultiModelConfig("profile-1"));
+
+        // then
+        assertEquals(1, parsed.images().size(), "data URL 载荷应解码成功");
+        assertArrayEquals(new byte[]{-1, 0, 127}, parsed.images().get("photo.jpg"));
+    }
+
+    /**
      * 场景：图片载荷中混有非法 base64（依赖数据异常）。
      * 预期：解码失败的单图被跳过并告警，其余图片与整篇解析产物不受影响。
      */
@@ -192,7 +220,7 @@ class MineruDocumentParserTest {
     }
 
     /**
-     * 场景：MinerU 结果中缺少对应文件 stem 的 content_list（或为空）。
+     * 场景：MinerU 结果中缺少对应文件 stem（协议破坏：results 不含该文件键）。
      * 预期：抛出 {@link IllegalArgumentException} 提示「解析结果缺少对应文件的内容」。
      */
     @Test
@@ -208,6 +236,29 @@ class MineruDocumentParserTest {
                 () -> parser.parse(s3File, "auto", new MultiModelConfig("profile-1")));
         assertTrue(exception.getMessage().contains("缺少对应文件的内容"),
                 "应提示缺少对应文件内容，实际提示: " + exception.getMessage());
+    }
+
+    /**
+     * 场景：stem 存在但 content_list 为空数组（解析成功但无有效内容，如空白图片）。
+     * 预期：不抛异常，产出含文件名的单个占位 TEXT 块（保证文档可 PROCESSED 且切片数 ≥ 1）。
+     */
+    @Test
+    void should_producePlaceholderBlock_when_parse_given_emptyBlocksForStem() {
+        // given
+        stubOpen(new byte[]{1, 2, 3});
+        when(mineruClient.parse(any(byte[].class), anyString()))
+                .thenReturn(new MineruClient.ParsedResult(Map.of("report", List.of())));
+        S3File s3File = new S3File(OBJECT_KEY);
+
+        // when
+        ParsedDocument parsed = parser.parse(s3File, "auto", new MultiModelConfig("profile-1"));
+
+        // then
+        assertEquals(1, parsed.blocks().size(), "占位产物应恰含 1 个块");
+        ContentBlockVO block = parsed.blocks().get(0);
+        assertEquals(ContentBlockVO.TYPE_TEXT, block.type(), "占位块应为 TEXT 类型");
+        assertTrue(block.text().contains("report.pdf"), "占位块正文应含文件名以可辨识");
+        verify(mineruClient).parse(any(byte[].class), eq("report.pdf"));
     }
 
     /**
@@ -263,6 +314,26 @@ class MineruDocumentParserTest {
                 () -> parser.parse(s3File, "auto", new MultiModelConfig("profile-1")));
         assertTrue(exception.getMessage().contains("源文件对象不存在"),
                 "对象缺失应提示源文件对象不存在，实际提示: " + exception.getMessage());
+    }
+
+    /**
+     * 场景：查询 MinerU 引擎声明的支持类型集合。
+     * 预期：集合含办公文档 + 图片类型，不含 TXT / MD / CSV / XLS 等文本类。
+     */
+    @Test
+    void should_declareOfficeAndImageTypes_when_supportedTypes_given_mineruEngine() {
+        // when
+        java.util.Set<com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType> supported =
+                parser.supportedTypes();
+
+        // then
+        assertTrue(supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.PDF));
+        assertTrue(supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.PNG));
+        assertTrue(supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.JPEG));
+        assertTrue(!supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.TXT),
+                "MINERU 不支持 TXT（应走本地直读兜底）");
+        assertTrue(!supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.XLS),
+                "MINERU 不支持 XLS");
     }
 
     /**

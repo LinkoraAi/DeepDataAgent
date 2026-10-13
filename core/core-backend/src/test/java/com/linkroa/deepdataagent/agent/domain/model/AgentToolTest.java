@@ -11,7 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link AgentTool} 单元测试：四类工具配置解析、互斥/重名/schema 校验与序列化回显。
+ * {@link AgentTool} 单元测试：工具配置解析、互斥/重名/schema 校验与序列化回显。
+ * <p>MCP 工具集（{@code mcp_toolset}）类型已废止，构造即类型非法拒绝。</p>
  */
 class AgentToolTest {
 
@@ -45,6 +46,14 @@ class AgentToolTest {
     }
 
     @Test
+    void should_throw_when_parse_given_mcpToolset() {
+        // given & when（mcp_toolset 工具类型已废止，解析即 400 拒绝）
+        // then
+        assertThrows(IllegalArgumentException.class,
+                () -> AgentTool.parse("[{\"type\":\"mcp_toolset\",\"mcp_server_name\":\"github\"}]"));
+    }
+
+    @Test
     void should_parseCustomTool_when_parse_given_objectSchema() {
         // given
         String json = "[{\"type\":\"custom\",\"name\":\"query_db\",\"description\":\"查询数据库\","
@@ -70,7 +79,14 @@ class AgentToolTest {
     void should_throw_when_constructor_given_illegalType() {
         // given & when & then
         assertThrows(IllegalArgumentException.class,
-                () -> new AgentTool("unknown", List.of(), List.of(), List.of(), null, null, null, Map.of()));
+                () -> new AgentTool("unknown", List.of(), List.of(), List.of(), null, null, Map.of()));
+    }
+
+    @Test
+    void should_throw_when_constructor_given_mcpToolsetType() {
+        // given & when & then（mcp_toolset 已废止，视为类型非法）
+        assertThrows(IllegalArgumentException.class,
+                () -> new AgentTool("mcp_toolset", List.of(), List.of(), List.of(), null, null, Map.of()));
     }
 
     @Test
@@ -78,15 +94,7 @@ class AgentToolTest {
         // given & when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new AgentTool(AgentTool.TYPE_AGENT_TOOLSET, List.of("Read"), List.of("Read"),
-                        List.of(), null, null, null, Map.of()));
-    }
-
-    @Test
-    void should_throw_when_constructor_given_mcpToolsetWithoutServerName() {
-        // given & when & then
-        assertThrows(IllegalArgumentException.class,
-                () -> new AgentTool(AgentTool.TYPE_MCP_TOOLSET, List.of(), List.of(), List.of(),
-                        " ", null, null, Map.of()));
+                        List.of(), null, null, Map.of()));
     }
 
     @Test
@@ -118,7 +126,7 @@ class AgentToolTest {
         // when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new AgentTool(AgentTool.TYPE_CUSTOM, List.of(), List.of(), List.of(config),
-                        null, "query_db", "查询", Map.of("type", "object")));
+                        "query_db", "查询", Map.of("type", "object")));
     }
 
     @Test
@@ -130,15 +138,14 @@ class AgentToolTest {
 
     @Test
     void should_roundTrip_when_toJson_given_parsedTools() {
-        // given
-        String json = "[{\"type\":\"mcp_toolset\",\"mcp_server_name\":\"github\","
-                + "\"configs\":[{\"name\":\"create_issue\",\"permission_policy\":\"always_ask\"}]}]";
+        // given（agent_toolset 逐工具权限策略：序列化后仍可回读）
+        String json = "[{\"type\":\"agent_toolset_20260401\","
+                + "\"configs\":[{\"name\":\"Bash\",\"permission_policy\":\"always_ask\"}]}]";
 
         // when
         String serialized = AgentTool.toJson(AgentTool.parse(json));
 
         // then
-        assertTrue(serialized.contains("\"mcp_server_name\":\"github\""));
         assertTrue(serialized.contains("\"permission_policy\":\"always_ask\""));
         assertEquals(List.of(AgentTool.parse(json).get(0)), AgentTool.parse(serialized));
         assertNull(AgentTool.toJson(List.of()));
@@ -167,7 +174,7 @@ class AgentToolTest {
     }
 
     private static AgentTool customTool(String name, Map<String, Object> schema) {
-        return new AgentTool(AgentTool.TYPE_CUSTOM, List.of(), List.of(), List.of(), null,
+        return new AgentTool(AgentTool.TYPE_CUSTOM, List.of(), List.of(), List.of(),
                 name, "描述", schema);
     }
 }

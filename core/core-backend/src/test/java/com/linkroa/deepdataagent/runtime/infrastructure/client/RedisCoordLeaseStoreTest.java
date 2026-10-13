@@ -91,14 +91,6 @@ class RedisCoordLeaseStoreTest {
     }
 
     @Test
-    void should_throwIllegalArgument_when_tryAcquire_given_fireLeaseType() {
-        // given // when // then（fire 走专用通道，通用方法快速失败，两实现口径一致）
-        assertThrows(IllegalArgumentException.class,
-                () -> store.tryAcquire(CoordLeaseType.FIRE, "fire:scheduler:dep_1", OWNER, TTL));
-        verifyNoInteractions(scripts);
-    }
-
-    @Test
     void should_runRenewScriptAndReportLoss_when_renew_given_scriptReturnsZero() {
         // given（GET==owner 不成立：确证失权，调用方立即 fail-closed）
         stubScriptClient();
@@ -185,41 +177,5 @@ class RedisCoordLeaseStoreTest {
         // then
         assertTrue(keys.isEmpty());
         verify(rSet).remove(SESSION_ID);
-    }
-
-    @Test
-    void should_runFireAcquireWithSingleKeyAndThirtySecondTtl_when_fireTryAcquire_given_freeWindow() {
-        // given（fire 无 owner 二级索引，30s 窗口为语义常量）
-        stubScriptClient();
-        when(scripts.fireAcquire()).thenReturn("FIRE_ACQUIRE_LUA");
-        when(rScript.eval(RScript.Mode.READ_WRITE, "FIRE_ACQUIRE_LUA", RScript.ReturnType.LONG,
-                List.of("runtime:fire:dep_1"), OWNER, FIRE_TTL_MS)).thenReturn(1L);
-
-        // when // then
-        assertTrue(store.fireTryAcquire("dep_1", OWNER));
-    }
-
-    @Test
-    void should_returnFalse_when_fireTryAcquire_given_windowOccupied() {
-        // given
-        stubScriptClient();
-        when(scripts.fireAcquire()).thenReturn("FIRE_ACQUIRE_LUA");
-        when(rScript.eval(RScript.Mode.READ_WRITE, "FIRE_ACQUIRE_LUA", RScript.ReturnType.LONG,
-                List.of("runtime:fire:dep_1"), OWNER, FIRE_TTL_MS)).thenReturn(0L);
-
-        // when // then
-        assertFalse(store.fireTryAcquire("dep_1", OWNER));
-    }
-
-    @Test
-    void should_runFireOwnerScopedRelease_when_fireReleaseOwned_given_scriptReturnsOne() {
-        // given（F11：非持有者的迟到释放不误摘接管者）
-        stubScriptClient();
-        when(scripts.fireReleaseOwned()).thenReturn("FIRE_RELEASE_LUA");
-        when(rScript.eval(RScript.Mode.READ_WRITE, "FIRE_RELEASE_LUA", RScript.ReturnType.LONG,
-                List.of("runtime:fire:dep_1"), OWNER)).thenReturn(1L);
-
-        // when // then
-        assertTrue(store.fireReleaseOwned("dep_1", OWNER));
     }
 }

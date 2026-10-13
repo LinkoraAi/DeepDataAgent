@@ -15,7 +15,6 @@ import org.mapstruct.Mapping;
 import org.mapstruct.ReportingPolicy;
 import org.mapstruct.factory.Mappers;
 import tools.jackson.core.JacksonException;
-import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -28,11 +27,10 @@ import java.util.Map;
  * 领域对象 ⇄ 持久化实体的 MapStruct 转换器（runtime BC）。
  * <p>会话双列（{@code status} / {@code turn_phase}）与事件类型以字符串（小写规范值
  * {@code value()}）落库，与建表注释一致；反查经 default 方法严格 / 兜底解析。</p>
- * <p>会话 {@code metadata} / {@code resources} / {@code vault_ids} / {@code memory_store_ids} /
- * {@code environment_variables} 以 jsonb 文本落库：MapStruct 自动使用本接口声明的 default
- * 转换方法完成值 ⇄ JSON 文本的映射。挂载资源以 <b>snake_case 键</b>手工装配
- * （{@code file_id / mount_path / authorization_token / memory_store_id} 等，与对外契约一致；
- * 持久化全量含令牌，泄露门禁在响应层排除），非法 JSON 反查收敛为空集合（不阻断查询）。</p>
+ * <p>会话 {@code metadata} / {@code resources} / {@code environment_variables} 以 jsonb 文本落库：
+ * MapStruct 自动使用本接口声明的 default 转换方法完成值 ⇄ JSON 文本的映射。挂载资源以
+ * <b>snake_case 键</b>手工装配（{@code file_id / mount_path} 等，与对外契约一致），
+ * 非法 JSON 反查收敛为空集合（不阻断查询）。</p>
  */
 @Mapper(unmappedTargetPolicy = ReportingPolicy.IGNORE)
 public interface RuntimePersistenceConvert {
@@ -40,9 +38,6 @@ public interface RuntimePersistenceConvert {
     RuntimePersistenceConvert INSTANCE = Mappers.getMapper(RuntimePersistenceConvert.class);
 
     ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
-    TypeReference<List<String>> STRING_LIST_TYPE = new TypeReference<>() {
-    };
 
     // ===== AgentSession =====
 
@@ -111,13 +106,6 @@ public interface RuntimePersistenceConvert {
             item.put("type", resource.type());
             putIfPresent(item, "file_id", resource.fileId());
             putIfPresent(item, "mount_path", resource.mountPath());
-            putIfPresent(item, "url", resource.url());
-            putIfPresent(item, "authorization_token", resource.authorizationToken());
-            putIfPresent(item, "password", resource.password());
-            putIfPresent(item, "checkout", resource.checkout());
-            putIfPresent(item, "memory_store_id", resource.memoryStoreId());
-            putIfPresent(item, "access", resource.access());
-            putIfPresent(item, "instructions", resource.instructions());
             items.add(item);
         }
         try {
@@ -145,48 +133,10 @@ public interface RuntimePersistenceConvert {
                         textOrNull(node, "id"),
                         textOrNull(node, "type"),
                         textOrNull(node, "file_id"),
-                        textOrNull(node, "mount_path"),
-                        textOrNull(node, "url"),
-                        textOrNull(node, "authorization_token"),
-                        textOrNull(node, "password"),
-                        textOrNull(node, "checkout"),
-                        textOrNull(node, "memory_store_id"),
-                        textOrNull(node, "access"),
-                        textOrNull(node, "instructions")));
+                        textOrNull(node, "mount_path")));
             }
             return resources;
         } catch (JacksonException | IllegalArgumentException ex) {
-            return List.of();
-        }
-    }
-
-    // ===== 字符串列表 ⇄ jsonb 数组文本（vault_ids / memory_store_ids） =====
-
-    /**
-     * ID 列表 → jsonb 数组文本（null / 空收敛为 {@code []}）。
-     */
-    default String stringListToJson(List<String> values) {
-        if (values == null || values.isEmpty()) {
-            return "[]";
-        }
-        try {
-            return OBJECT_MAPPER.writeValueAsString(values);
-        } catch (JacksonException ex) {
-            throw new IllegalArgumentException("会话挂载ID列表序列化失败", ex);
-        }
-    }
-
-    /**
-     * jsonb 数组文本 → ID 列表（null / 空白 / 非法 JSON 收敛为空列表，不阻断查询）。
-     */
-    default List<String> jsonToStringList(String json) {
-        if (json == null || json.isBlank()) {
-            return List.of();
-        }
-        try {
-            List<String> values = OBJECT_MAPPER.readValue(json, STRING_LIST_TYPE);
-            return values == null ? List.of() : values;
-        } catch (JacksonException ex) {
             return List.of();
         }
     }

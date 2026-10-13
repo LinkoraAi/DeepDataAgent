@@ -22,8 +22,7 @@ import java.util.List;
  * 异常则以运行时异常抛出，调用方据异常与 {@code false} 区分「确证失权」与「瞬断容忍重试」。</p>
  *
  * <p><b>通道划分</b>：通用四方法（{@link #tryAcquire}/{@link #renew}/{@link #releaseOwned}/
- * {@link #findActive}）只承载 {@code TURN} 租约（fire 无续约、无 owner 二级索引、TTL 为语义常量），
- * 实现收到非 TURN 类型 MUST 快速失败；fire 走 {@link #fireTryAcquire}/{@link #fireReleaseOwned}。</p>
+ * {@link #findActive}）只承载 {@code TURN} 租约，实现收到非 TURN 类型 MUST 快速失败。</p>
  */
 public interface CoordinationLeaseStore {
 
@@ -31,7 +30,7 @@ public interface CoordinationLeaseStore {
      * 抢占式获取租约（等价现状 {@code tryAcquire}）：同键无有效租约、或既有租约已过期时写入 /
      * 接管成功，并发下单赢家。
      *
-     * @param leaseType 租约类型（TURN / FIRE）
+     * @param leaseType 租约类型（TURN）
      * @param leaseKey  租约键（{@code CoordLeaseType.keyOf} 派生的业务键形态）
      * @param owner     持有者实例标识
      * @param ttl       存活时长（正数）
@@ -68,24 +67,4 @@ public interface CoordinationLeaseStore {
      * @return 本实例持有的 turn 租约键列表（{@code turn:session:<sessionId>} 形态，顺序不保证）
      */
     List<String> listOwnedTurnKeys(String owner);
-
-    /**
-     * 调度 fire lease 抢占（等价现状 {@code tryAcquireFireLease}）：30s 窗口防重，无 owner 二级索引。
-     *
-     * @param deploymentId 调度器业务 ID
-     * @param owner        持有者实例标识
-     * @return true=获取成功；false=窗口内已有触发进行中
-     */
-    boolean fireTryAcquire(String deploymentId, String owner);
-
-    /**
-     * 调度 fire lease owner-scoped 释放（等价现状 {@code releaseFireLease}）：
-     * 现状 fire 释放走 owner-scoped {@code releaseOwned}（F11 修复），本方法正名，
-     * <b>MUST NOT</b> 暗示无条件释放。
-     *
-     * @param deploymentId 调度器业务 ID
-     * @param owner        持有者实例标识
-     * @return true=本次删除生效；false=不存在 / 已易主
-     */
-    boolean fireReleaseOwned(String deploymentId, String owner);
 }

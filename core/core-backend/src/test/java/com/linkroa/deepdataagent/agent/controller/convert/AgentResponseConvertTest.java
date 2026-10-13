@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * {@link AgentResponseConvert} 转换单测（Agent 对象与版本快照同形：{@code *Json} 配置列按提交形态
  * 回显为结构化 JSON 值，未配置时为空数组 / 空对象；落库文本形状非法即失败，不静默降级；
- * AGENTS.md / latest_version / active_version 等已废止或内部字段不出现在契约）。
+ * AGENTS.md / mcp_servers / latest_version / active_version 等已废止或内部字段不出现在契约）。
  */
 class AgentResponseConvertTest {
 
@@ -29,10 +29,9 @@ class AgentResponseConvertTest {
 
     @Test
     void should_mapJsonbFieldsToStructuredValues_when_toVersionResponse_given_configuredSnapshot() {
-        // given（四个 JSONB 配置列均有内容）
+        // given（三个 JSONB 配置列均有内容）
         AgentVersion version = snapshot(
-                "[{\"type\":\"mcp_toolset\",\"mcp_server_name\":\"fs\"}]",
-                "[{\"name\":\"fs\",\"type\":\"url\",\"url\":\"https://mcp.example.com/sse\"}]",
+                "[{\"type\":\"agent_toolset_20260401\",\"enabled_tools\":[\"Read\"]}]",
                 "[{\"type\":\"catalog\",\"skill_id\":\"skill_1\"}]",
                 "{\"team\":\"data\"}");
 
@@ -41,25 +40,21 @@ class AgentResponseConvertTest {
 
         // then（结构化数组/对象，调用方无需二次解析）
         assertEquals(1, response.tools().size());
-        assertEquals("mcp_toolset", asMap(response.tools().getFirst()).get("type"));
-        assertEquals(1, response.mcp_servers().size());
-        assertEquals("fs", asMap(response.mcp_servers().getFirst()).get("name"));
-        assertEquals("https://mcp.example.com/sse", asMap(response.mcp_servers().getFirst()).get("url"));
+        assertEquals("agent_toolset_20260401", asMap(response.tools().getFirst()).get("type"));
         assertEquals("skill_1", asMap(response.skills().getFirst()).get("skill_id"));
         assertEquals(Map.of("team", "data"), response.metadata());
     }
 
     @Test
     void should_returnEmptyContainers_when_toVersionResponse_given_blankJsonbFields() {
-        // given（四个配置列均未配置）
-        AgentVersion version = snapshot(null, null, null, null);
+        // given（配置列均未配置）
+        AgentVersion version = snapshot(null, null, null);
 
         // when
         AgentResponse response = AgentResponseConvert.INSTANCE.toVersionResponse(version, null);
 
         // then（形状稳定：数组恒为空数组、对象恒为空对象）
         assertEquals(List.of(), response.tools());
-        assertEquals(List.of(), response.mcp_servers());
         assertEquals(List.of(), response.skills());
         assertEquals(Map.of(), response.metadata());
     }
@@ -67,10 +62,10 @@ class AgentResponseConvertTest {
     @Test
     void should_echoSubmittedForm_when_toVersionResponse_given_stringAndObjectModel() {
         // given（字符串简写与对象形态两种等价提交）
-        AgentVersion shorthand = snapshot(null, null, null, null);
+        AgentVersion shorthand = snapshot(null, null, null);
         AgentVersion objectForm = AgentVersion.restore(
                 1L, "ver_2", "agent_1", 2, "v2", null, "系统提示词", null,
-                "{\"id\":\"ultimate\",\"effort\":\"high\"}", null, null, null, null, null,
+                "{\"id\":\"ultimate\",\"effort\":\"high\"}", null, null, null, null,
                 NOW, NOW, "1", "1");
 
         // when
@@ -85,7 +80,7 @@ class AgentResponseConvertTest {
     @Test
     void should_mapSystemPromptAndOmitAgentsMd_when_toVersionResponse_given_systemConfigured() {
         // given（系统提示词为版本快照唯一指令载体；AGENTS.md 已废止）
-        AgentVersion version = snapshot(null, null, null, null);
+        AgentVersion version = snapshot(null, null, null);
         ObjectMapper mapper = JsonMapper.builder().build();
 
         // when
@@ -98,22 +93,23 @@ class AgentResponseConvertTest {
 
     @Test
     void should_serializeContractFieldNames_when_serialize_given_versionSnapshot() {
-        // given（对外字段名 MUST 为 id / type / mcp_servers / version / archived_at / created_at / updated_at）
+        // given（对外字段名 MUST 为 id / type / skills / version / archived_at / created_at / updated_at；
+        // mcp_servers 字段已废止）
         AgentResponse response = AgentResponseConvert.INSTANCE.toVersionResponse(
-                snapshot(null, "[{\"name\":\"fs\",\"type\":\"url\",\"url\":\"https://mcp.example.com/sse\"}]",
-                        null, null), null);
+                snapshot(null, "[{\"type\":\"catalog\",\"skill_id\":\"skill_1\"}]", null), null);
         ObjectMapper mapper = JsonMapper.builder().build();
 
         // when
         String json = mapper.writeValueAsString(response);
 
         // then
-        assertTrue(json.contains("\"mcp_servers\":["));
+        assertTrue(json.contains("\"skills\":["));
         assertTrue(json.contains("\"archived_at\":"));
         assertTrue(json.contains("\"created_at\":"));
         assertTrue(json.contains("\"updated_at\":"));
         assertTrue(json.contains("\"version\":1"));
-        // 内部版本台账字段与旧命名一律不外泄
+        // 已废止 / 内部版本台账字段与旧命名一律不外泄
+        assertFalse(json.contains("mcp_servers"));
         assertFalse(json.contains("latest_version"));
         assertFalse(json.contains("active_version"));
         assertFalse(json.contains("version_id"));
@@ -124,7 +120,7 @@ class AgentResponseConvertTest {
     @Test
     void should_carryAgentIdAndSnapshotNumber_when_toVersionResponse_given_snapshot() {
         // given（版本快照对外以 id=Agent 业务 ID + version=发布号表达）
-        AgentVersion version = snapshot(null, null, null, null);
+        AgentVersion version = snapshot(null, null, null);
 
         // when
         AgentResponse response = AgentResponseConvert.INSTANCE.toVersionResponse(version, NOW);
@@ -141,7 +137,7 @@ class AgentResponseConvertTest {
         // given（多智能体编排配置为 coordinator + agents[] 对象简写）
         AgentVersion version = AgentVersion.restore(
                 1L, "ver_1", "agent_1", 1, "v1", "首版", "系统提示词", null,
-                "\"ultimate\"", null, null, null,
+                "\"ultimate\"", null, null,
                 "{\"type\":\"coordinator\",\"agents\":[{\"name\":\"child\"}]}", null,
                 NOW, NOW, "1", "1");
 
@@ -152,7 +148,7 @@ class AgentResponseConvertTest {
         assertEquals("coordinator", response.multiagent().get("type"));
         assertInstanceOf(List.class, response.multiagent().get("agents"));
         // 未配置时保持 null（契约声明可空）
-        assertNull(AgentResponseConvert.INSTANCE.toVersionResponse(snapshot(null, null, null, null), null).multiagent());
+        assertNull(AgentResponseConvert.INSTANCE.toVersionResponse(snapshot(null, null, null), null).multiagent());
     }
 
     @Test
@@ -161,7 +157,7 @@ class AgentResponseConvertTest {
         AgentDefinition definition = definition(null, 3, 2);
         AgentVersion currentVersion = AgentVersion.restore(
                 2L, "ver_2", "agent_1", 2, "v2", "第二版描述", "第二版提示词", null,
-                "\"ultimate\"", "[{\"type\":\"agent_toolset_20260401\"}]", null, null, null,
+                "\"ultimate\"", "[{\"type\":\"agent_toolset_20260401\"}]", null, null,
                 "{\"team\":\"data\"}", NOW, NOW, "1", "1");
 
         // when
@@ -195,7 +191,6 @@ class AgentResponseConvertTest {
         assertNull(response.model());
         assertNull(response.system());
         assertEquals(List.of(), response.tools());
-        assertEquals(List.of(), response.mcp_servers());
         assertEquals(List.of(), response.skills());
         assertEquals(Map.of(), response.metadata());
         assertNull(response.multiagent());
@@ -207,7 +202,7 @@ class AgentResponseConvertTest {
         AgentDefinition definition = definition(NOW, 1, 1);
 
         // when
-        AgentResponse response = AgentResponseConvert.INSTANCE.toResponse(definition, snapshot(null, null, null, null));
+        AgentResponse response = AgentResponseConvert.INSTANCE.toResponse(definition, snapshot(null, null, null));
 
         // then
         assertEquals(NOW, response.archived_at());
@@ -216,7 +211,7 @@ class AgentResponseConvertTest {
     @Test
     void should_throwIllegalState_when_toVersionResponse_given_toolsNotArray() {
         // given（落库文本形状非法：期望数组却为对象）
-        AgentVersion version = snapshot("{\"type\":\"custom\"}", null, null, null);
+        AgentVersion version = snapshot("{\"type\":\"custom\"}", null, null);
 
         // when // then（不静默降级为空数组，暴露脏数据）
         assertThrows(IllegalStateException.class,
@@ -226,7 +221,7 @@ class AgentResponseConvertTest {
     @Test
     void should_throwIllegalState_when_toVersionResponse_given_metadataNotObject() {
         // given（落库文本形状非法：期望对象却为数组）
-        AgentVersion version = snapshot(null, null, null, "[1,2]");
+        AgentVersion version = snapshot(null, null, "[1,2]");
 
         // when // then
         assertThrows(IllegalStateException.class,
@@ -240,12 +235,11 @@ class AgentResponseConvertTest {
                 NOW, NOW, "9", "9");
     }
 
-    /** 版本快照装配（模型引用固定为字符串简写，只需变更四个 JSONB 配置列）。 */
-    private static AgentVersion snapshot(String toolsJson, String mcpServersJson,
-                                         String skillsJson, String metadataJson) {
+    /** 版本快照装配（模型引用固定为字符串简写，只需变更三个 JSONB 配置列）。 */
+    private static AgentVersion snapshot(String toolsJson, String skillsJson, String metadataJson) {
         return AgentVersion.restore(
                 1L, "ver_1", "agent_1", 1, "v1", "首版", "系统提示词", null,
-                "\"ultimate\"", toolsJson, mcpServersJson, skillsJson, null, metadataJson,
+                "\"ultimate\"", toolsJson, skillsJson, null, metadataJson,
                 NOW, NOW, "1", "1");
     }
 

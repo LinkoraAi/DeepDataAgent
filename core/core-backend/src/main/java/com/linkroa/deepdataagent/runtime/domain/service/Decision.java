@@ -3,7 +3,6 @@ package com.linkroa.deepdataagent.runtime.domain.service;
 import com.linkroa.deepdataagent.runtime.domain.model.TerminalEventSpec;
 import com.linkroa.deepdataagent.runtime.domain.model.Transition;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.AgentSessionStatus;
-import com.linkroa.deepdataagent.runtime.domain.model.enums.DeploymentOutcome;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.TerminalEventKind;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.TerminalNoOpReason;
 
@@ -12,7 +11,7 @@ import java.util.List;
 /**
  * 终态决策输出（纯值，无 IO）：要么给出<b>有序的迁移尝试链</b>，要么给出 no-op 判定。
  * <p>尝试链是「首选 + 回退」的声明式表达：应用层按序执行各尝试的 CAS，<b>首个命中（受影响行数
- * &gt; 0）即为实际迁入终态</b>，其事件集与调度终局语义随之采纳；全部未命中即真 no-op
+ * &gt; 0）即为实际迁入终态</b>，其事件集随之采纳；全部未命中即真 no-op
  * （会话被并发归档 / 终止，显式指令胜出）。CAS 始终是终态资格的仲裁者，决策表不做任何写操作。</p>
  * <p>之所以是「链」而非单一目标态：迭代上限（{@code MAX_ITERATIONS}）与取消存在竞态——
  * 首选 {@code TO_TERMINATED}（前置仅 processing）未命中时必须同链回退 {@code TO_IDLE}
@@ -74,20 +73,16 @@ public record Decision(List<Attempt> attempts, TerminalNoOpReason noOpReason) {
     }
 
     /**
-     * 单次迁移尝试：一条状态机迁移声明 + 命中后应落的终态事件集 + 调度运行终局语义。
+     * 单次迁移尝试：一条状态机迁移声明 + 命中后应落的终态事件集。
      *
      * @param transition 迁移声明（前置集合由 {@code SessionStateMachine} 单一事实源生成 CAS 条件）
      * @param events     命中后同事务落库的终态事件集（顺序即落库顺序，末条必为状态事件）
-     * @param outcome    调度运行终局语义（应用层映射为 agent BC 发布语言值）
      */
-    public record Attempt(Transition transition, List<TerminalEventSpec> events, DeploymentOutcome outcome) {
+    public record Attempt(Transition transition, List<TerminalEventSpec> events) {
 
         public Attempt {
             if (transition == null) {
                 throw new IllegalArgumentException("迁移尝试必须声明状态迁移");
-            }
-            if (outcome == null) {
-                throw new IllegalArgumentException("迁移尝试必须声明调度运行终局语义");
             }
             events = events == null ? List.of() : List.copyOf(events);
             if (events.isEmpty()) {

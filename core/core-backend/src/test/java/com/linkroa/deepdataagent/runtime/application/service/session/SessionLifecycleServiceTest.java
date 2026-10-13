@@ -2,14 +2,12 @@ package com.linkroa.deepdataagent.runtime.application.service.session;
 
 import com.linkroa.deepdataagent.agent.api.dto.AgentSnapshotDTO;
 import com.linkroa.deepdataagent.file.api.dto.FileMountMetaDTO;
-import com.linkroa.deepdataagent.memory.api.dto.MemoryStoreReferenceDTO;
 import com.linkroa.deepdataagent.runtime.application.command.CreateSessionCommand;
 import com.linkroa.deepdataagent.runtime.application.command.SendMessageCommand;
 import com.linkroa.deepdataagent.runtime.application.command.UpdateSessionCommand;
 import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeServiceTestSupport;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignalType;
-import com.linkroa.deepdataagent.runtime.domain.event.TurnFinished;
 import com.linkroa.deepdataagent.runtime.domain.factory.BuiltAgent;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
@@ -19,10 +17,9 @@ import com.linkroa.deepdataagent.runtime.domain.model.Transition;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.AgentSessionStatus;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.ChatEventType;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.TurnPhase;
+import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import com.linkroa.deepdataagent.shared.exception.SessionBusyException;
-import com.linkroa.deepdataagent.vault.api.dto.VaultReferenceDTO;
-import com.linkroa.deepdataagent.vault.application.port.VaultCredentialResolutionPort;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
@@ -196,7 +193,7 @@ class SessionLifecycleServiceTest extends AgentRuntimeServiceTestSupport {
         //       ——环境变量形态校验与挂载校验同层同序，非法值 MUST 早于物化落盘与入库）
         wireTransactionTemplate();
         CreateSessionCommand command = new CreateSessionCommand("1", "agent-a", "1.0.0", "会话", "{}",
-                null, null, List.of(), null, List.of(), "{\"1BAD\":\"v\"}");
+                null, null, List.of(), null, "{\"1BAD\":\"v\"}");
 
         // when & then（400 语义：整批终止，零物化 + 零落库）
         assertThrows(IllegalArgumentException.class, () -> sessionLifecycleService.createSession(command));
@@ -255,52 +252,25 @@ class SessionLifecycleServiceTest extends AgentRuntimeServiceTestSupport {
     }
 
     @Test
-    void should_persistFullMounts_when_createSession_given_environmentVaultsMemoryStoreAndEnvVars() {
-        // given（全量挂载：cloud 环境 + 保管库 + 文件 / 记忆库混合挂载 + 环境变量）
+    void should_persistFullMounts_when_createSession_given_environmentFileMountAndEnvVars() {
+        // given（全量挂载：cloud 环境 + 文件挂载 + 环境变量）
         wireTransactionTemplate();
         when(sessionRepository.save(any(AgentSession.class))).thenAnswer(inv -> inv.getArgument(0));
         when(environmentApi.resolveType(1L, "env-1")).thenReturn("cloud");
-        when(vaultReferenceApi.resolveByIds(1L, List.of("vault_1")))
-                .thenReturn(List.of(new VaultReferenceDTO("vault_1", "保管库一")));
         when(fileApi.findReadyMountMeta("file_1", 1L))
                 .thenReturn(Optional.of(new FileMountMetaDTO("file_1", "a.txt", 1024L)));
-        when(memoryStoreApi.resolveByIds(1L, List.of("ms_1")))
-                .thenReturn(List.of(new MemoryStoreReferenceDTO("ms_1", "记忆库一")));
         CreateSessionCommand command = new CreateSessionCommand("1", "agent-a", "1.0.0", "会话", "{}",
                 null, null,
-                List.of(SessionResource.file("file_1", null), SessionResource.memoryStore("ms_1", "read_only", null)),
-                "env-1", List.of("vault_1"), "{\"K\":\"V\"}");
+                List.of(SessionResource.file("file_1", null)),
+                "env-1", "{\"K\":\"V\"}");
 
         // when
         AgentSession session = sessionLifecycleService.createSession(command);
 
-        // then（环境 / 保管库 / 环境变量透传落库，记忆库引用由挂载资源派生）
+        // then（环境 / 环境变量透传落库，挂载资源保留）
         assertEquals("env-1", session.environmentId());
-        assertEquals(List.of("vault_1"), session.vaultIds());
         assertEquals("{\"K\":\"V\"}", session.environmentVariables());
-        assertEquals(List.of("ms_1"), session.memoryStoreIds());
-        assertEquals(2, session.resources().size());
-    }
-
-    @Test
-    void should_notResolveCredentials_when_createSession_given_vaultIds() {
-        // given（D2.1 绑定与解析分离：创建路径只写引用，凭据解析推迟到运行时装配）
-        wireTransactionTemplate();
-        when(sessionRepository.save(any(AgentSession.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(vaultReferenceApi.resolveByIds(1L, List.of("vault_1")))
-                .thenReturn(List.of(new VaultReferenceDTO("vault_1", "保管库一")));
-        CreateSessionCommand command = new CreateSessionCommand("1", "agent-a", "1.0.0", "会话", "{}",
-                null, null, List.of(), null, List.of("vault_1"), null);
-
-        // when
-        AgentSession session = sessionLifecycleService.createSession(command);
-
-        // then（保管库只经元数据面校验；零装配、零凭据材料化——创建用例结构上不持有材料化端口）
-        verify(vaultReferenceApi).resolveByIds(1L, List.of("vault_1"));
-        verify(runtimeAgentAssemblyService, never()).assemble(any());
-        assertEquals(List.of("vault_1"), session.vaultIds());
-        assertTrue(Arrays.stream(SessionLifecycleService.class.getDeclaredFields())
-                .noneMatch(field -> VaultCredentialResolutionPort.class.equals(field.getType())));
+        assertEquals(1, session.resources().size());
     }
 
     @Test
@@ -556,40 +526,28 @@ class SessionLifecycleServiceTest extends AgentRuntimeServiceTestSupport {
     }
 
     @Test
-    void should_throwIllegalArgument_when_appendResources_given_nonFileType() {
-        // given（本期追加路径仅接受 file：memory_store → 400）
-        AgentSession session = idleSession();
-        when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
-
-        // when & then
-        assertThrows(IllegalArgumentException.class, () -> sessionLifecycleService.appendResources(session.sessionId(),
-                List.of(SessionResource.memoryStore("ms_1", null, null))));
-        verify(sessionRepository, never()).updateResources(anyString(), anyList());
-    }
-
-    @Test
-    void should_throwSessionBusy_when_appendResources_given_duplicateWithExistingMount() {
-        // given（file_1 已挂载，再挂同一文件 → 409 invalid_request_error，契约明文会话资源冲突）
+    void should_throwConflict_when_appendResources_given_duplicateWithExistingMount() {
+        // given（file_1 已挂载，再挂同一文件 → 409 conflict_error，通用资源冲突）
         AgentSession session = AgentSession.createWithTrigger("1", "agent-a", "1.0.0", "{}", null, null, null,
                 List.of(SessionResource.file("file_1", null)));
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
 
         // when & then
-        assertThrows(SessionBusyException.class, () -> sessionLifecycleService.appendResources(session.sessionId(),
+        assertThrows(ResourceConflictException.class, () -> sessionLifecycleService.appendResources(session.sessionId(),
                 List.of(SessionResource.file("file_1", "mounts/other.txt"))));
         verify(sessionRepository, never()).updateResources(anyString(), anyList());
     }
 
     @Test
-    void should_throwSessionBusy_when_appendResources_given_duplicateWithinBatch() {
-        // given（批内重复 fileId → 409 invalid_request_error，整批全有或全无）
+    void should_throwConflict_when_appendResources_given_duplicateWithinBatch() {
+        // given（批内重复 fileId → 409 conflict_error，整批全有或全无）
         AgentSession session = idleSession();
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         when(fileApi.findReadyMountMeta("file_2", 1L))
                 .thenReturn(Optional.of(new FileMountMetaDTO("file_2", "b.txt", 1024L)));
 
         // when & then
-        assertThrows(SessionBusyException.class, () -> sessionLifecycleService.appendResources(session.sessionId(),
+        assertThrows(ResourceConflictException.class, () -> sessionLifecycleService.appendResources(session.sessionId(),
                 List.of(SessionResource.file("file_2", null), SessionResource.file("file_2", "mounts/x.txt"))));
         verify(sessionRepository, never()).updateResources(anyString(), anyList());
     }
@@ -662,94 +620,37 @@ class SessionLifecycleServiceTest extends AgentRuntimeServiceTestSupport {
         verify(sessionMountMaterializer, never()).releaseAll(any(AgentSession.class));
     }
 
-    // ==================== 挂载资源管理（轮换 / 移除） ====================
-
-    @Test
-    void should_rotateTokenPreservingIdentity_when_rotateResourceToken_given_githubResource() {
-        // given（github 挂载：轮换保留资源 ID 与 url/checkout，仅换令牌）
-        SessionResource githubMount = SessionResource.githubRepository("https://github.com/o/r", "old-token", "main");
-        AgentSession session = mountedSession(List.of(githubMount), List.of(), AgentSessionStatus.IDLE);
-        when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
-        wireTransactionTemplate();
-
-        // when
-        SessionResource rotated = sessionLifecycleService.rotateResourceToken(session.sessionId(), githubMount.id(), "new-token");
-
-        // then（返回资源携带新令牌；仓储收到整列覆盖）
-        assertEquals(githubMount.id(), rotated.id());
-        assertEquals("new-token", rotated.authorizationToken());
-        assertEquals("https://github.com/o/r", rotated.url());
-        assertEquals("main", rotated.checkout());
-        verify(sessionRepository).updateResources(eq(session.sessionId()), argThat(list ->
-                list.size() == 1 && "new-token".equals(list.get(0).authorizationToken())));
-    }
-
-    @Test
-    void should_throwBadRequest_when_rotateResourceToken_given_blankToken() {
-        // given（空令牌轮换拒绝，避免清空既有凭证）
-        SessionResource githubMount = SessionResource.githubRepository("https://github.com/o/r", "old", null);
-        AgentSession session = mountedSession(List.of(githubMount), List.of(), AgentSessionStatus.IDLE);
-        when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
-
-        // when & then
-        assertThrows(IllegalArgumentException.class,
-                () -> sessionLifecycleService.rotateResourceToken(session.sessionId(), githubMount.id(), " "));
-        verify(sessionRepository, never()).updateResources(anyString(), anyList());
-    }
-
-    @Test
-    void should_throwBadRequest_when_rotateResourceToken_given_fileResource() {
-        // given（非 github_repository 资源类型门禁）
-        SessionResource fileMount = SessionResource.file("file_1", null);
-        AgentSession session = mountedSession(List.of(fileMount), List.of(), AgentSessionStatus.IDLE);
-        when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
-
-        // when & then
-        assertThrows(IllegalArgumentException.class,
-                () -> sessionLifecycleService.rotateResourceToken(session.sessionId(), fileMount.id(), "new"));
-    }
-
-    @Test
-    void should_throwNotFound_when_rotateResourceToken_given_unmountedResourceId() {
-        // given
-        AgentSession session = mountedSession(List.of(SessionResource.file("file_1", null)),
-                List.of(), AgentSessionStatus.IDLE);
-        when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
-
-        // when & then
-        assertThrows(ResourceNotFoundException.class,
-                () -> sessionLifecycleService.rotateResourceToken(session.sessionId(), "sesr_gone", "new"));
-    }
+    // ==================== 挂载资源管理（移除） ====================
 
     @Test
     void should_removeFileMount_when_removeResource_given_fileResourceId() {
-        // given（file + github 混合挂载：移除 file 后 github 原样保留）
+        // given（两文件挂载：移除其一后仅剩另一）
         SessionResource fileMount = SessionResource.file("file_1", null);
-        SessionResource githubMount = SessionResource.githubRepository("https://github.com/o/r", "tok", null);
-        AgentSession session = mountedSession(List.of(fileMount, githubMount), List.of(), AgentSessionStatus.IDLE);
+        SessionResource other = SessionResource.file("file_2", null);
+        AgentSession session = mountedSession(List.of(fileMount, other), AgentSessionStatus.IDLE);
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
         wireTransactionTemplate();
 
         // when
         sessionLifecycleService.removeResource(session.sessionId(), fileMount.id());
 
-        // then（整列覆盖：仅剩 github；file 项移除即释放宿主副本）
+        // then（整列覆盖：仅剩另一文件；被移除项移除即释放宿主副本）
         verify(sessionRepository).updateResources(eq(session.sessionId()), argThat(list ->
-                list.size() == 1 && githubMount.id().equals(list.get(0).id())));
+                list.size() == 1 && other.id().equals(list.get(0).id())));
         verify(sessionMountMaterializer).release(any(AgentSession.class), argThat(resource ->
                 "file_1".equals(resource.fileId())));
     }
 
     @Test
-    void should_throwSessionBusy_when_removeResource_given_githubResource() {
-        // given（github_repository / memory_store 挂载后不可摘除 → 409 invalid_request_error，会话资源冲突）
-        SessionResource memoryMount = SessionResource.memoryStore("ms_1", "read_only", null);
-        AgentSession session = mountedSession(List.of(memoryMount), List.of("ms_1"), AgentSessionStatus.IDLE);
+    void should_throwNotFound_when_removeResource_given_unmountedResourceId() {
+        // given（会话仅挂载 file_1：移除未命中 ID → 404）
+        AgentSession session = mountedSession(List.of(SessionResource.file("file_1", null)),
+                AgentSessionStatus.IDLE);
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
 
         // when & then
-        assertThrows(SessionBusyException.class,
-                () -> sessionLifecycleService.removeResource(session.sessionId(), memoryMount.id()));
+        assertThrows(ResourceNotFoundException.class,
+                () -> sessionLifecycleService.removeResource(session.sessionId(), "sesr_gone"));
         verify(sessionRepository, never()).updateResources(anyString(), anyList());
     }
 
@@ -870,7 +771,6 @@ class SessionLifecycleServiceTest extends AgentRuntimeServiceTestSupport {
         verify(sessionRepository).transition(session.sessionId(), Transition.PHASE_CANCEL);
         verify(chatEventRepository, never()).save(any(ChatEvent.class));
         verify(connectionHandle, never()).push(any(ChatEvent.class));
-        verify(applicationEventPublisher, never()).publishEvent(any(TurnFinished.class));
     }
 
     @Test
@@ -946,20 +846,17 @@ class SessionLifecycleServiceTest extends AgentRuntimeServiceTestSupport {
         verify(sessionRepository).transition(session.sessionId(), Transition.PHASE_AWAIT);
         assertTrue(savedChatEvents().stream().anyMatch(e -> e.type() == ChatEventType.AGENT_TOOL_USE),
                 "挂起现场须有未应答的工具调用事件表行");
-        verify(applicationEventPublisher, never()).publishEvent(any(TurnFinished.class));
 
         // when：等待期间中断作废（waiting → idle CAS 命中）
         when(sessionRepository.transition(session.sessionId(), Transition.ABANDON_WAITING_CONFIRMATION)).thenReturn(1);
         sessionLifecycleService.interruptSession(session.sessionId());
 
-        // then：挂起作废通道按中断收口，且此前驻留未发事件 → 全程仅一次
+        // then：挂起作废通道按中断收口
         verify(sessionRepository).transition(session.sessionId(), Transition.ABANDON_WAITING_CONFIRMATION);
-        verify(applicationEventPublisher, times(1))
-                .publishEvent(new TurnFinished(session.sessionId(), "cron", "terminated"));
     }
 
     @Test
-    void should_publishTerminatedTurnFinished_when_deleteSession_given_scheduledWaitingConfirmationSession() {
+    void should_deleteScheduledWaitingConfirmationSession_when_deleteSession_given_suspendedSession() {
         // given：等待确认中的调度会话被删除（挂起轮次随之作废，不经终态唯一出口）
         AgentSession session = scheduledIdleSession().withPhase(TurnPhase.AWAITING_CONFIRMATION);
         when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
@@ -969,10 +866,8 @@ class SessionLifecycleServiceTest extends AgentRuntimeServiceTestSupport {
         // when
         sessionLifecycleService.deleteSession(session.sessionId());
 
-        // then：挂起态删除通道按中断收口一次（终局事件带调度打标）
+        // then：挂起态删除通道落逻辑删
         verify(sessionRepository).deleteBySessionId(session.sessionId());
-        verify(applicationEventPublisher, times(1))
-                .publishEvent(new TurnFinished(session.sessionId(), "cron", "terminated"));
     }
 
 }

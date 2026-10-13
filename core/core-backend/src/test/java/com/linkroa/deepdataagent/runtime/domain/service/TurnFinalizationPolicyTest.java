@@ -3,7 +3,6 @@ package com.linkroa.deepdataagent.runtime.domain.service;
 import com.linkroa.deepdataagent.runtime.domain.model.TerminalEventSpec;
 import com.linkroa.deepdataagent.runtime.domain.model.Transition;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.AgentSessionStatus;
-import com.linkroa.deepdataagent.runtime.domain.model.enums.DeploymentOutcome;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.TerminalEventKind;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.TerminalNoOpReason;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.TerminalStopReason;
@@ -54,7 +53,6 @@ class TurnFinalizationPolicyTest {
                         TerminalStopReason.STOP),
                 TerminalEventSpec.statusEvent(AgentSessionStatus.IDLE, TerminalStopReason.STOP)),
                 attempt.events());
-        assertEquals(DeploymentOutcome.SUCCEEDED, attempt.outcome());
     }
 
     // ==================== 第 2 行：迭代上限 → 首选 terminated(max_iterations) ====================
@@ -74,7 +72,6 @@ class TurnFinalizationPolicyTest {
                         TerminalStopReason.MAX_ITERATIONS),
                 TerminalEventSpec.statusEvent(AgentSessionStatus.TERMINATED,
                         TerminalStopReason.MAX_ITERATIONS)), preferred.events());
-        assertEquals(DeploymentOutcome.FAILED, preferred.outcome());
         // CAS 仲裁：running 相位在 TERMINATE 前置集合内 ⇒ 首选命中，不会误落 idle
         assertEquals(AgentSessionStatus.TERMINATED,
                 adoptedTargetOf(decision, AgentSessionStatus.RUNNING, TurnPhase.RUNNING));
@@ -99,7 +96,6 @@ class TurnFinalizationPolicyTest {
                         TerminalStopReason.INTERRUPTED),
                 TerminalEventSpec.statusEvent(AgentSessionStatus.IDLE, TerminalStopReason.INTERRUPTED)),
                 fallback.events());
-        assertEquals(DeploymentOutcome.TERMINATED, fallback.outcome());
     }
 
     @ParameterizedTest
@@ -136,7 +132,6 @@ class TurnFinalizationPolicyTest {
                         TerminalStopReason.INTERRUPTED),
                 TerminalEventSpec.statusEvent(AgentSessionStatus.IDLE, TerminalStopReason.INTERRUPTED)),
                 attempt.events());
-        assertEquals(DeploymentOutcome.TERMINATED, attempt.outcome());
         assertEquals(AgentSessionStatus.IDLE,
                 adoptedTargetOf(decision, AgentSessionStatus.RUNNING, dbPhase));
     }
@@ -163,7 +158,6 @@ class TurnFinalizationPolicyTest {
                 attempt.events().get(1));
         assertEquals(TerminalEventSpec.statusEvent(AgentSessionStatus.IDLE, TerminalStopReason.ERROR),
                 attempt.events().get(2));
-        assertEquals(DeploymentOutcome.FAILED, attempt.outcome());
     }
 
     // ==================== 第 6 行：租约丢失 → no-op ====================
@@ -321,7 +315,6 @@ class TurnFinalizationPolicyTest {
     /** 尝试链内部一致性：事件集非空、以会话状态事件收尾、状态事件一律指向本迁移目标。 */
     private static void assertChainInternallyConsistent(Decision decision) {
         for (Decision.Attempt attempt : decision.attempts()) {
-            assertNotNull(attempt.outcome());
             assertFalse(attempt.events().isEmpty());
             TerminalEventSpec last = attempt.events().get(attempt.events().size() - 1);
             assertEquals(TerminalEventKind.SESSION_STATUS, last.kind());

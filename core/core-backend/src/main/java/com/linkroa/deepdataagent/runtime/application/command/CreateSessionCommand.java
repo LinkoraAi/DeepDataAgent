@@ -15,9 +15,8 @@ import java.util.List;
  * @param metadata             会话元数据（可空，JSON 文本）
  * @param triggerType          触发来源类型（manual / webhook / cron，源码小写；可空=普通用户会话）
  * @param triggerId            触发来源调度器业务 ID（deployment_id；triggerType 存在时必填）
- * @param resources            会话挂载资源引用（可空，file / github_repository / memory_store 三类）
+ * @param resources            会话挂载资源引用（可空，本期仅 file 类型）
  * @param environmentId        运行环境业务 ID（可空；存在性 / 归属 / 执行平面校验由应用服务承担）
- * @param vaultIds             保管库业务 ID 列表（可空，归一为空列表；存在性 / 归属校验由应用服务承担）
  * @param environmentVariables 会话级环境变量（可空，JSON 对象文本；领域模型空白归一为 {@code "{}"}）
  */
 public record CreateSessionCommand(
@@ -30,7 +29,6 @@ public record CreateSessionCommand(
         String triggerId,
         List<SessionResource> resources,
         String environmentId,
-        List<String> vaultIds,
         String environmentVariables
 ) {
 
@@ -50,30 +48,28 @@ public record CreateSessionCommand(
         }
         // 挂载资源归一：null 收敛为空列表、防御性复制（元素自身经 SessionResource 紧凑构造器校验）
         resources = resources == null ? List.of() : List.copyOf(resources);
-        // 保管库列表归一：null 收敛为空列表、防御性复制
-        vaultIds = vaultIds == null ? List.of() : List.copyOf(vaultIds);
     }
 
     /**
-     * 便捷构造：普通用户会话（无触发标记、无挂载资源、无环境 / 保管库挂载）。
+     * 便捷构造：普通用户会话（无触发标记、无挂载资源、无环境挂载）。
      */
     public CreateSessionCommand(String userId, String agentId, String agentVersion, String title, String metadata) {
-        this(userId, agentId, agentVersion, title, metadata, null, null, List.of(), null, List.of(), null);
+        this(userId, agentId, agentVersion, title, metadata, null, null, List.of(), null, null);
     }
 
     /**
-     * 便捷构造：调度器触发会话（携带触发标记、无挂载资源、无环境 / 保管库挂载）。
+     * 便捷构造：调度器触发会话（携带触发标记、无挂载资源、无环境挂载）。
      */
     public CreateSessionCommand(String userId, String agentId, String agentVersion, String title, String metadata,
                                 String triggerType, String triggerId) {
-        this(userId, agentId, agentVersion, title, metadata, triggerType, triggerId, List.of(), null, List.of(), null);
+        this(userId, agentId, agentVersion, title, metadata, triggerType, triggerId, List.of(), null, null);
     }
 
     /**
-     * 便捷构造：携带挂载资源、未挂接环境 / 保管库（旧 8 参形态，新列走默认值）。
+     * 便捷构造：携带挂载资源、未挂接环境。
      */
     public CreateSessionCommand(String userId, String agentId, String agentVersion, String title, String metadata,
                                 String triggerType, String triggerId, List<SessionResource> resources) {
-        this(userId, agentId, agentVersion, title, metadata, triggerType, triggerId, resources, null, List.of(), null);
+        this(userId, agentId, agentVersion, title, metadata, triggerType, triggerId, resources, null, null);
     }
 }

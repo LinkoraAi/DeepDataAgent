@@ -14,18 +14,13 @@ import org.apache.commons.lang3.StringUtils;
  *
  * <ul>
  *   <li>{@link #TURN}：turn 执行租约，会话级独占（同一会话同一时刻仅一个执行持有），
- *       进程崩溃后由启动恢复按 owner 二级索引枚举并回收（租约即执行权，key 在＝有权）；</li>
- *   <li>{@link #FIRE}：调度 fire lease，调度器触发防重（窗口内拒绝重复触发），
- *       触发流程结束后显式 owner-scoped 释放，异常退出由 TTL 兜底。</li>
+ *       进程崩溃后由启动恢复按 owner 二级索引枚举并回收（租约即执行权，key 在＝有权）。</li>
  * </ul>
  */
 public enum CoordLeaseType {
 
     /** turn 执行租约（会话级独占），键段承载会话 ID。 */
-    TURN("turn", "turn:session:", "sessionId"),
-
-    /** 调度触发防重租约（窗口内拒绝重复触发），键段承载调度器（Deployment）业务 ID。 */
-    FIRE("fire", "fire:scheduler:", "schedulerId");
+    TURN("turn", "turn:session:", "sessionId");
 
     /**
      * 租约键最大长度（防御性上限）。
@@ -59,7 +54,7 @@ public enum CoordLeaseType {
     /**
      * 按源码值解析租约类型（大小写不敏感）。
      *
-     * @param value 源码值（{@code turn} / {@code fire}）
+     * @param value 源码值（{@code turn}）
      * @return 对应枚举
      * @throws IllegalArgumentException 空白或未知值
      */
@@ -76,9 +71,9 @@ public enum CoordLeaseType {
     }
 
     /**
-     * 派生本类型的租约键（{@code TURN → turn:session:<sessionId>}、{@code FIRE → fire:scheduler:<schedulerId>}）。
+     * 派生本类型的租约键（{@code TURN → turn:session:<sessionId>}）。
      *
-     * @param bizId 业务 ID（会话 ID / 调度器 ID）
+     * @param bizId 业务 ID（会话 ID）
      * @return 租约键（存储侧寻址用，跨实现口径一致）
      * @throws IllegalArgumentException 业务 ID 空白或拼出的键超过 {@link #MAX_KEY_LENGTH}
      */
@@ -95,7 +90,7 @@ public enum CoordLeaseType {
      * 从租约键反解业务 ID（启动恢复据此把 turn 租约映射回会话）。
      *
      * @param leaseKey 租约键（须以本类型前缀开头）
-     * @return 业务 ID（{@link #TURN} 为会话 ID，{@link #FIRE} 为调度器 ID）
+     * @return 业务 ID（{@link #TURN} 为会话 ID）
      * @throws IllegalArgumentException 键空白、前缀与本类型不符，或键段业务 ID 为空
      */
     public String bizIdFromKey(String leaseKey) {

@@ -17,15 +17,10 @@ import java.util.function.Function;
 /**
  * 协调层租约应用服务（D8：协调层收口防重）。
  *
- * <p>统一封装两类租约的获取 / 续期 / 释放编排（存储经 {@link CoordinationLeaseStore} 端口倒置，
+ * <p>统一封装 turn 租约的获取 / 续期 / 释放编排（存储经 {@link CoordinationLeaseStore} 端口倒置，
  * 由 {@code move-coordination-leases-to-redis} PR-C4 起唯一实现为 Redis：owner-scoped Lua 原子裁决
- * + 服务端 TTL 自过期 + owner 二级索引枚举）：</p>
- * <ul>
- *   <li><b>turn 租约</b>：会话级独占，{@code executeRound} 启动事务内获取、终态唯一出口释放，
- *       进程崩溃后由启动恢复按租约承载恢复 / 回收（见 {@code StartupRecoveryLifecycle}）；</li>
- *   <li><b>fire lease</b>：调度器触发防重（窗口内拒绝重复触发），触发流程结束显式释放，
- *       异常退出由 TTL 兜底。</li>
- * </ul>
+ * + 服务端 TTL 自过期 + owner 二级索引枚举）：turn 租约会话级独占，{@code executeRound} 启动事务内获取、
+ * 终态唯一出口释放，进程崩溃后由启动恢复按租约承载恢复 / 回收（见 {@code StartupRecoveryLifecycle}）。</p>
  *
  * <p><b>过期回收已随本变更退役</b>（move-coordination-leases-to-redis D3-1）：租约到期由 Redis
  * 服务端 TTL 自过期（{@code PEXPIRE}），无需任何清扫任务或启动回收语句，故本服务不设
@@ -38,9 +33,6 @@ public class CoordinationLeaseService {
 
     /** turn 租约存活时长（覆盖单轮最长执行，含 HITL 等待；过期后可被接管；续约周期 = TTL/3，供执行子包共享）。 */
     public static final Duration TURN_LEASE_TTL = Duration.ofMinutes(10);
-
-    /** 调度 fire lease 存活时长（触发窗口防重；异常退出时的兜底过期上限）。 */
-    static final Duration FIRE_LEASE_TTL = Duration.ofSeconds(30);
 
     /** 实例标识环境变量（容器编排显式指定实例槽位，多实例部署必填）。 */
     static final String ENV_INSTANCE_ID = "APP_INSTANCE_ID";
@@ -219,29 +211,5 @@ public class CoordinationLeaseService {
      */
     public List<String> listOwnActiveTurnKeys() {
         return leaseStore.listOwnedTurnKeys(instanceId);
-    }
-
-    // ==================== 调度 fire lease ====================
-
-    /**
-     * 尝试获取调度器的触发防重租约（窗口内仅一个触发可进入执行编排）。
-     *
-     * @return true=获取成功；false=窗口内已有触发进行中（重复触发被拒）
-     */
-    public boolean tryAcquireFireLease(String schedulerId) {
-        boolean acquired = leaseStore.fireTryAcquire(schedulerId, instanceId);
-        if (!acquired) {
-            log.info("调度触发被防重租约拒绝（窗口内已有触发进行中）: schedulerId={}", schedulerId);
-        }
-        return acquired;
-    }
-
-    /**
-     * 释放调度器的触发防重租约（触发流程结束调用，幂等；仅释放本实例持有的租约——
-     * 触发超过 TTL 且租约被其他实例接管时，本实例的迟到释放不会误摘接管者租约
-     * 造成双触发窗口，审查修复 F11）。
-     */
-    public void releaseFireLease(String schedulerId) {
-        leaseStore.fireReleaseOwned(schedulerId, instanceId);
     }
 }

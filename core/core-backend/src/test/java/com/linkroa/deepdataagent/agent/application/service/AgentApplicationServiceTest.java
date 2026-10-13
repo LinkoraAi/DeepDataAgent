@@ -7,6 +7,9 @@ import com.linkroa.deepdataagent.agent.application.query.ListAgentQuery;
 import com.linkroa.deepdataagent.agent.domain.model.AgentDefinition;
 import com.linkroa.deepdataagent.agent.domain.model.AgentListFilter;
 import com.linkroa.deepdataagent.agent.domain.model.AgentVersion;
+import com.linkroa.deepdataagent.agent.domain.model.ModelProfile;
+import com.linkroa.deepdataagent.agent.domain.model.enums.ApiFormat;
+import com.linkroa.deepdataagent.agent.domain.model.enums.ModelType;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentDefinitionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.AgentVersionRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.ModelProfileRepository;
@@ -36,7 +39,6 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -51,7 +53,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Agent 创建 / 发布 / 归档 / 删除应用服务单测（含并发发布串行化语义验证）
+ * Agent 创建 / 发布 / 归档 / 删除应用服务单测（含并发发布串行化语义与模型配置归属校验验证）
  */
 @ExtendWith(MockitoExtension.class)
 class AgentApplicationServiceTest {
@@ -108,7 +110,14 @@ class AgentApplicationServiceTest {
 
     private CreateAgentCommand buildCreateCommand(String name) {
         return new CreateAgentCommand(name, null, "你是助手", MODEL_SHORTHAND,
-                null, null, null, null, null);
+                null, null, null, null);
+    }
+
+    /** 构造归属指定用户、状态 ENABLED 的模型配置（用于归属校验用例）。 */
+    private ModelProfile profileWithOwner(Long ownerId) {
+        return ModelProfile.create("profile-1", "指令模型", null, ApiFormat.OPENAI,
+                "https://api.example.com/v1", "gpt-4", "enc-cred", null, null, null,
+                10, ModelType.CHAT, null, ownerId);
     }
 
     @Test
@@ -171,6 +180,39 @@ class AgentApplicationServiceTest {
     }
 
     @Test
+    void should_throwNotFound_when_createAgent_given_modelProfileOwnedByOtherUser() {
+        // given（模型配置归属他人：创建期归属校验失败 → 404，不落任何数据）
+        when(modelCatalogService.resolveProfileId("ultimate", 1L)).thenReturn("profile-1");
+        when(modelProfileRepository.findByProfileId("profile-1"))
+                .thenReturn(Optional.of(profileWithOwner(2L)));
+
+        // when / then
+        ResourceNotFoundException ex = assertThrows(ResourceNotFoundException.class,
+                () -> service.createAgent(buildCreateCommand("销售助手")));
+        assertEquals("模型配置不存在", ex.getMessage());
+        verify(agentDefinitionRepository, never()).save(any());
+    }
+
+    @Test
+    void should_createAgent_when_createAgent_given_modelProfileOwnedByCurrentUser() {
+        // given（模型配置归属当前用户：归属校验通过，正常落库首版）
+        when(modelCatalogService.resolveProfileId("ultimate", 1L)).thenReturn("profile-1");
+        when(modelProfileRepository.findByProfileId("profile-1"))
+                .thenReturn(Optional.of(profileWithOwner(1L)));
+        when(agentDefinitionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(agentDefinitionRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(agentVersionRepository.findMaxVersionNumber(anyString())).thenReturn(0);
+        when(agentVersionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // when
+        AgentDefinition created = service.createAgent(buildCreateCommand("销售助手"));
+
+        // then
+        assertEquals(1, created.latestVersion());
+        verify(agentVersionRepository).save(any());
+    }
+
+    @Test
     void should_publishNewVersionWithIncrementedNumber_when_publishVersion_given_existingVersions() {
         // given
         AgentDefinition definition = buildDefinition("agent-1", "销售助手", 2, false);
@@ -181,7 +223,7 @@ class AgentApplicationServiceTest {
         when(agentDefinitionRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v3", null, "新版系统提示", MODEL_SHORTHAND, null, null, null, null, null);
+                "agent-1", "v3", null, "新版系统提示", MODEL_SHORTHAND, null, null, null, null);
 
         // when
         AgentVersion published = service.publishVersion(command);
@@ -206,7 +248,7 @@ class AgentApplicationServiceTest {
         when(skillAssetApi.versionExists("skill_1", EPOCH, 1L)).thenReturn(true);
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v2", null, "system", MODEL_SHORTHAND, null, null,
+                "agent-1", "v2", null, "system", MODEL_SHORTHAND, null,
                 "[{\"type\":\"custom\",\"skill_id\":\"skill_1\",\"version\":\"1759178010641129\"}]", null, null);
 
         // when
@@ -230,7 +272,7 @@ class AgentApplicationServiceTest {
         when(skillAssetApi.exists("skill_1", 1L)).thenReturn(true);
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v2", null, "system", MODEL_SHORTHAND, null, null,
+                "agent-1", "v2", null, "system", MODEL_SHORTHAND, null,
                 "[{\"type\":\"custom\",\"skill_id\":\"skill_1\"}]", null, null);
 
         // when
@@ -249,7 +291,7 @@ class AgentApplicationServiceTest {
         when(agentDefinitionRepository.findByAgentIdForUpdate("agent-1")).thenReturn(Optional.of(archived));
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v2", null, "system", MODEL_SHORTHAND, null, null, null, null, null);
+                "agent-1", "v2", null, "system", MODEL_SHORTHAND, null, null, null, null);
 
         // when / then
         assertThrows(ResourceConflictException.class, () -> service.publishVersion(command));
@@ -263,7 +305,7 @@ class AgentApplicationServiceTest {
         when(agentDefinitionRepository.findByAgentIdForUpdate("agent-1")).thenReturn(Optional.empty());
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v2", null, "system", MODEL_SHORTHAND, null, null, null, null, null);
+                "agent-1", "v2", null, "system", MODEL_SHORTHAND, null, null, null, null);
 
         // when / then
         assertThrows(ResourceNotFoundException.class, () -> service.publishVersion(command));
@@ -276,7 +318,7 @@ class AgentApplicationServiceTest {
         when(skillAssetApi.exists("skill_ghost", 1L)).thenReturn(false);
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v2", null, "system", MODEL_SHORTHAND, null, null,
+                "agent-1", "v2", null, "system", MODEL_SHORTHAND, null,
                 "[{\"type\":\"custom\",\"skill_id\":\"skill_ghost\"}]", null, null);
 
         // when / then（无任何数据变更）
@@ -286,17 +328,17 @@ class AgentApplicationServiceTest {
     }
 
     @Test
-    void should_throwInvalidArgument_when_publishVersion_given_mcpToolsetReferencingUndeclaredServer() {
-        // given（mcp_toolset 引用未声明的 MCP 服务器：跨列表结构校验须在开事务前拒绝发布）
+    void should_throwInvalidArgument_when_publishVersion_given_mcpToolset() {
+        // given（mcp_toolset 工具类型已废止：跨列表结构校验须在开事务前拒绝发布）
         when(modelCatalogService.resolveProfileId("ultimate", 1L)).thenReturn(null);
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
                 "agent-1", "v2", null, "system", MODEL_SHORTHAND,
-                "[{\"type\":\"mcp_toolset\",\"mcp_server_name\":\"ghost_server\"}]", null, null, null, null);
+                "[{\"type\":\"mcp_toolset\",\"mcp_server_name\":\"ghost_server\"}]", null, null, null);
 
         // when / then（无任何数据变更：事务未开启、未锁行、未落版本）
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> service.publishVersion(command));
-        assertTrue(ex.getMessage().contains("未声明的 MCP 服务器"));
+        assertTrue(ex.getMessage().contains("工具类型非法"));
         verify(transactionTemplate, never()).execute(any());
         verify(agentDefinitionRepository, never()).findByAgentIdForUpdate(anyString());
         verify(agentVersionRepository, never()).save(any());
@@ -308,7 +350,7 @@ class AgentApplicationServiceTest {
         when(modelCatalogService.resolveProfileId("ultimate", 1L)).thenReturn(null);
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v2", null, "system", MODEL_SHORTHAND, null, null, null,
+                "agent-1", "v2", null, "system", MODEL_SHORTHAND, null, null,
                 "{\"type\":\"coordinator\"}", null);
 
         // when / then
@@ -388,7 +430,7 @@ class AgentApplicationServiceTest {
         when(agentDefinitionRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         PublishAgentVersionCommand command = new PublishAgentVersionCommand(
-                "agent-1", "v", null, "system", MODEL_SHORTHAND, null, null, null, null, null);
+                "agent-1", "v", null, "system", MODEL_SHORTHAND, null, null, null, null);
 
         // when
         AgentVersion first = service.publishVersion(command);
@@ -409,7 +451,7 @@ class AgentApplicationServiceTest {
                 .thenReturn(Optional.of(buildDefinition("agent-1", "销售助手", 3, false)));
         when(agentVersionRepository.findByAgentIdAndVersionNumber("agent-1", 2))
                 .thenReturn(Optional.of(AgentVersion.create("v-2", "agent-1", 2, "v2", null, "sys",
-                        "mp-1", null, null, null, null, null, null)));
+                        "mp-1", null, null, null, null, null)));
         when(agentDefinitionRepository.findByAgentId("agent-1"))
                 .thenReturn(Optional.of(AgentDefinition.restore(1L, "agent-1", "销售助手", null,
                         null, 3, 2, 1L, null, null, null, null)));
@@ -540,7 +582,7 @@ class AgentApplicationServiceTest {
                 .thenReturn(Optional.of(buildDefinition("agent-1", "销售助手", 2, false)));
         when(agentVersionRepository.findByAgentIdAndVersionNumber("agent-1", 2)).thenReturn(Optional.of(
                 AgentVersion.create("v-2", "agent-1", 2, "v2", null, "sys",
-                        "mp-1", null, null, null, null, null, null)));
+                        "mp-1", null, null, null, null, null)));
 
         // when
         AgentVersion result = service.getVersion("agent-1", null);
@@ -577,9 +619,9 @@ class AgentApplicationServiceTest {
                 .thenReturn(Optional.of(buildDefinition("agent-1", "销售助手", 5, false)));
         when(agentVersionRepository.findByAgentIdCursor("agent-1", 3, false, 3)).thenReturn(List.of(
                 AgentVersion.create("v-2", "agent-1", 2, "v2", null, "sys",
-                        "mp-1", null, null, null, null, null, null),
+                        "mp-1", null, null, null, null, null),
                 AgentVersion.create("v-1", "agent-1", 1, "v1", null, "sys",
-                        "mp-1", null, null, null, null, null, null)));
+                        "mp-1", null, null, null, null, null)));
 
         // when
         CursorPage<AgentVersion> page = service.listVersionPage("agent-1", new CursorPageParams(2, "3", null));
@@ -601,11 +643,11 @@ class AgentApplicationServiceTest {
                 .thenReturn(Optional.of(buildDefinition("agent-1", "销售助手", 5, false)));
         when(agentVersionRepository.findByAgentIdCursor("agent-1", null, false, 3)).thenReturn(List.of(
                 AgentVersion.create("v-3", "agent-1", 3, "v3", null, "sys",
-                        "mp-1", null, null, null, null, null, null),
+                        "mp-1", null, null, null, null, null),
                 AgentVersion.create("v-2", "agent-1", 2, "v2", null, "sys",
-                        "mp-1", null, null, null, null, null, null),
+                        "mp-1", null, null, null, null, null),
                 AgentVersion.create("v-1", "agent-1", 1, "v1", null, "sys",
-                        "mp-1", null, null, null, null, null, null)));
+                        "mp-1", null, null, null, null, null)));
 
         // when
         CursorPage<AgentVersion> page = service.listVersionPage("agent-1", new CursorPageParams(2, null, null));
@@ -650,7 +692,7 @@ class AgentApplicationServiceTest {
                 .thenReturn(Optional.of(buildDefinition("agent-1", "销售助手", 2, false)));
         when(agentVersionRepository.findByAgentIdAndVersionNumber("agent-1", 2)).thenReturn(Optional.of(
                 AgentVersion.create("v-2", "agent-1", 2, "v2", null, "sys",
-                        "mp-1", MODEL_SHORTHAND, null, null, null, null, "{\"team\":\"data\"}")));
+                        "mp-1", MODEL_SHORTHAND, null, null, null, "{\"team\":\"data\"}")));
         when(agentVersionRepository.findMaxVersionNumber("agent-1")).thenReturn(2);
         when(agentVersionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(agentDefinitionRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -705,7 +747,6 @@ class AgentApplicationServiceTest {
         when(agentVersionRepository.findByAgentIdAndVersionNumber("agent-1", 2)).thenReturn(Optional.of(
                 AgentVersion.create("v-2", "agent-1", 2, "v2", "旧描述", "sys", "mp-1",
                         MODEL_SHORTHAND, "[{\"type\":\"custom\",\"skill_id\":\"skill_1\"}]",
-                        "[{\"name\":\"github\",\"type\":\"url\",\"url\":\"https://mcp.example.com\"}]",
                         "[{\"type\":\"custom\",\"skill_id\":\"skill_1\"}]", null, null)));
         when(agentVersionRepository.findMaxVersionNumber("agent-1")).thenReturn(2);
         when(agentVersionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -719,7 +760,6 @@ class AgentApplicationServiceTest {
         verify(agentVersionRepository).save(captor.capture());
         assertEquals("旧描述", captor.getValue().description());
         assertEquals("[{\"type\":\"custom\",\"skill_id\":\"skill_1\"}]", captor.getValue().toolsJson());
-        assertNotNull(captor.getValue().mcpServersJson());
     }
 
     // ==================== multiagent 空形态归一（D8） ====================
@@ -736,7 +776,7 @@ class AgentApplicationServiceTest {
     /** 走 {@code createAgent} 发布首版并捕获落库的 {@link AgentVersion} 入参。 */
     private AgentVersion captureFirstPublishedVersion(String multiagentJson) {
         service.createAgent(new CreateAgentCommand("销售助手", null, "你是助手", MODEL_SHORTHAND,
-                null, null, null, multiagentJson, null));
+                null, null, multiagentJson, null));
         ArgumentCaptor<AgentVersion> captor = ArgumentCaptor.forClass(AgentVersion.class);
         verify(agentVersionRepository).save(captor.capture());
         return captor.getValue();

@@ -2,7 +2,6 @@ package com.linkroa.deepdataagent.runtime.application.service.execution;
 
 import com.linkroa.deepdataagent.runtime.domain.event.ChatEventFactory;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
-import com.linkroa.deepdataagent.runtime.domain.model.McpToolRuntimeName;
 import com.linkroa.deepdataagent.runtime.domain.model.runstate.TurnRunState;
 
 import java.util.Map;
@@ -12,10 +11,6 @@ import java.util.Map;
  * <p>工具域不在 {@code event_deltas[]} 增量协商值域（仅 agent.message / agent.thinking）：START 仅惰性分配
  * 确定性 {@code evt_} ID，DELTA 聚合入参，END 取出入参与事件 ID 后登记 HITL 待确认候选现场并以同一
  * {@code evt_} ID 落库。逐字平移自 {@code handleSignal} 对应 case。</p>
- * <p><b>MCP 执行侧分离（D15）</b>：运行时实名带 {@code mcp__} 前缀者由平台侧（JVM 内）执行，
- * 落库 {@code agent.mcp_tool_use} 并在载荷附加 {@code mcp_server_name} 与 {@code evaluated_permission}
- * （版本 {@code permission_policy} 求值结果）；其余内置工具照旧落 {@code agent.tool_use}。
- * 两类事件与客户端执行语义的 {@code agent.custom_tool_use} 据此三分。</p>
  */
 final class ToolCallSignalHandler implements SignalHandler {
 
@@ -44,14 +39,9 @@ final class ToolCallSignalHandler implements SignalHandler {
         }
     }
 
-    /** 工具调用事件装配：MCP 实名走 {@code agent.mcp_tool_use}（含服务器名与权限求值），其余走内置形态。 */
+    /** 工具调用事件装配：落库 {@code agent.tool_use}。 */
     private static ChatEventFactory.AssembledEvent toolUseEvent(TurnRunState runState, String toolCallId,
                                                                 String toolName, Map<String, Object> input) {
-        String mcpServerName = McpToolRuntimeName.serverNameOf(toolName);
-        if (mcpServerName == null) {
-            return ChatEventFactory.INSTANCE.toolUse(toolCallId, toolName, input);
-        }
-        return ChatEventFactory.INSTANCE.mcpToolUse(toolCallId, toolName, mcpServerName, input,
-                runState.evaluatedPermissionOf(toolName));
+        return ChatEventFactory.INSTANCE.toolUse(toolCallId, toolName, input);
     }
 }

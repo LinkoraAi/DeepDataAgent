@@ -20,9 +20,7 @@ import java.util.Map;
  * 领域对象 → 响应 DTO 转换器（会话部分手工装配，承载 snake_case 契约字段映射）。
  * <p>会话 {@code metadata} 以 JSON 文本持久化，此处解析为对象后返回；{@code agent}
  * 嵌入快照经双参重载接收应用层裁剪装配的完整快照（3.9），单参便捷入口降级为
- * {@code id / type / version} 摘要；{@code resources} 按类型回显（file：file_id / mount_path；github_repository：url /
- * checkout；git_repository：url / checkout；memory_store：memory_store_id / access / instructions），空值省略，
- * <b>MUST NOT 返回 authorization_token / password</b>（仓库凭证只写不读）。</p>
+ * {@code id / type / version} 摘要；{@code resources} 按类型回显（本期仅 file：file_id / mount_path），空值省略。</p>
  */
 @Mapper
 public interface AgentRuntimeResponseConvert {
@@ -60,7 +58,6 @@ public interface AgentRuntimeResponseConvert {
                 session.title(),
                 parseMetadata(session.metadata()),
                 toResources(session.resources()),
-                session.vaultIds(),
                 session.triggerId(),
                 session.archivedAt(),
                 session.createdAt(),
@@ -81,7 +78,6 @@ public interface AgentRuntimeResponseConvert {
 
     /**
      * 挂载资源值对象列表 → 响应对象数组（snake_case，按类型回显，空值省略）。
-     * <p>GitHub 令牌（authorization_token）只写不读，MUST NOT 出现在回显中。</p>
      */
     private List<Map<String, Object>> toResources(List<SessionResource> resources) {
         if (resources == null || resources.isEmpty()) {
@@ -89,18 +85,10 @@ public interface AgentRuntimeResponseConvert {
         }
         return resources.stream().map(resource -> {
             Map<String, Object> item = new LinkedHashMap<>();
-            // memory_store 资源 MUST NOT 携带资源 id 与时间戳（挂载顺序承载于数组下标）
-            if (!"memory_store".equals(resource.type())) {
-                item.put("id", resource.id());
-            }
+            item.put("id", resource.id());
             item.put("type", resource.type());
             putIfPresent(item, "file_id", resource.fileId());
             putIfPresent(item, "mount_path", resource.mountPath());
-            putIfPresent(item, "url", resource.url());
-            putIfPresent(item, "checkout", resource.checkout());
-            putIfPresent(item, "memory_store_id", resource.memoryStoreId());
-            putIfPresent(item, "access", resource.access());
-            putIfPresent(item, "instructions", resource.instructions());
             return item;
         }).toList();
     }
@@ -132,12 +120,9 @@ public interface AgentRuntimeResponseConvert {
     }
 
     /**
-     * 挂载资源 → 资源管理端点响应（list / get / update 共用形态：按类型全字段回显 +
-     * 挂载时间戳）。
+     * 挂载资源 → 资源管理端点响应（list / get 共用形态：全字段回显 + 挂载时间戳）。
      * <p>资源项不持有独立时间戳，挂载时刻取会话 {@code updated_at}（created_at 与
-     * updated_at 同值）；GitHub 令牌（authorization_token）与通用 Git 密码（password）
-     * 均只写不读，MUST NOT 出现。memory_store 资源 MUST NOT 携带资源 {@code id} 与时间戳
-     * （挂载顺序承载于数组下标，对齐 sessions 规格）。</p>
+     * updated_at 同值）。本期仅 file 类型。</p>
      *
      * @param resource  挂载资源值对象
      * @param mountedAt 挂载时刻（所属会话的 updated_at）
@@ -145,23 +130,12 @@ public interface AgentRuntimeResponseConvert {
      */
     default Map<String, Object> toResourceDetail(SessionResource resource, OffsetDateTime mountedAt) {
         Map<String, Object> item = new LinkedHashMap<>();
-        boolean memoryStore = "memory_store".equals(resource.type());
-        // memory_store 资源不携带资源 id 与时间戳（对齐 sessions 规格）
-        if (!memoryStore) {
-            item.put("id", resource.id());
-        }
+        item.put("id", resource.id());
         item.put("type", resource.type());
         putIfPresent(item, "file_id", resource.fileId());
         putIfPresent(item, "mount_path", resource.mountPath());
-        putIfPresent(item, "url", resource.url());
-        putIfPresent(item, "checkout", resource.checkout());
-        putIfPresent(item, "memory_store_id", resource.memoryStoreId());
-        putIfPresent(item, "access", resource.access());
-        putIfPresent(item, "instructions", resource.instructions());
-        if (!memoryStore) {
-            item.put("created_at", mountedAt);
-            item.put("updated_at", mountedAt);
-        }
+        item.put("created_at", mountedAt);
+        item.put("updated_at", mountedAt);
         return item;
     }
 

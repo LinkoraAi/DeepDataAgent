@@ -5,7 +5,6 @@ import com.linkroa.deepdataagent.runtime.application.command.SendMessageCommand;
 import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeServiceTestSupport;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignalType;
-import com.linkroa.deepdataagent.runtime.domain.event.TurnFinished;
 import com.linkroa.deepdataagent.runtime.domain.factory.BuiltAgent;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
@@ -330,35 +329,5 @@ class HumanConfirmationServiceTest extends AgentRuntimeServiceTestSupport {
                 eq(session.sessionId()), eq("1"), eq(true), isNull());
         assertEquals("tc-legacy", specsCaptor.getValue().get(0).toolCallId());
         verify(sessionRepository).transition(session.sessionId(), Transition.PHASE_RESUME);
-    }
-
-    @Test
-    void should_publishSucceededTurnFinishedOnce_when_resolveHumanConfirmation_given_suspendThenResumeEpisode() {
-        // given：调度会话触发轮真实挂起（批次两成员入事件表）
-        AgentSession session = scheduledIdleSession();
-        when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
-        wireHappyPathForExecution();
-        bindConnection(session);
-        wireLedgerQueries();
-        when(agentRunExecutor.streamEvents(any(BuiltAgent.class), anyString(), anyString(), anyString()))
-                .thenReturn(suspendBatchSignals());
-        turnExecutionService.sendMessageAsync(new SendMessageCommand(session.sessionId(), "执行"));
-        String headEventId = savedChatEvents().stream()
-                .filter(e -> e.type() == ChatEventType.AGENT_TOOL_USE)
-                .findFirst().orElseThrow().eventId();
-        when(agentRunExecutor.resumeConfirmation(any(BuiltAgent.class), anyList(), anyString(), anyString(),
-                anyBoolean(), any()))
-                .thenReturn(Flux.just(AgentStreamSignal.of(AgentStreamSignalType.AGENT_END, null, null)));
-
-        // when：确认续跑轮正常收口（同一 episode 的终局出口）
-        humanConfirmationService.resolveHumanConfirmation(new ResolveHumanConfirmationCommand(
-                session.sessionId(), true, headEventId, null));
-
-        // then：终局事件发生在续跑轮且仅一次（挂起轮驻留零发布），按成功收口、无中断/失败终局
-        verify(sessionRepository).transition(session.sessionId(), Transition.FINISH_TURN);
-        verify(applicationEventPublisher, times(1))
-                .publishEvent(new TurnFinished(session.sessionId(), "cron", "succeeded"));
-        verify(applicationEventPublisher, never()).publishEvent(new TurnFinished(session.sessionId(), "cron", "terminated"));
-        verify(applicationEventPublisher, never()).publishEvent(new TurnFinished(session.sessionId(), "cron", "failed"));
     }
 }

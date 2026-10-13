@@ -1,8 +1,6 @@
 package com.linkroa.deepdataagent.agent.application.dto;
 
 import com.linkroa.deepdataagent.agent.api.dto.EnvironmentReferenceDTO;
-import com.linkroa.deepdataagent.memory.api.dto.MemoryStoreReferenceDTO;
-import com.linkroa.deepdataagent.vault.application.dto.ResolvedVaultCredentialDTO;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -15,8 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link ResolvedAgentAssemblyDTO} 装配契约边界校验单测。
- * <p>覆盖发布语言 DTO 的全部不变量：空值 / 非法数值 / 超长系统提示词，
- * 以及 environment / memory_store / vault 引用字段的可空 / 空归一化。</p>
+ * <p>覆盖装配契约的全部不变量：空值 / 非法数值 / 超长系统提示词，
+ * 以及 environment 引用字段的可空归一化与调优 / 工具策略 / 可见性字段的兼容构造器归一。</p>
  */
 class ResolvedAgentAssemblyDTOTest {
 
@@ -42,8 +40,6 @@ class ResolvedAgentAssemblyDTOTest {
         assertEquals("https://api.example.com/v1", dto.apiEndpointUrl());
         assertTrue(dto.skills().isEmpty());
         assertNull(dto.environment());
-        assertTrue(dto.memoryStores().isEmpty());
-        assertTrue(dto.vaultCredentials().isEmpty());
     }
 
     @Test
@@ -54,7 +50,7 @@ class ResolvedAgentAssemblyDTOTest {
         // when & then
         ResolvedAgentAssemblyDTO dto = new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", system, null, "openai:gpt-4", 10, null,
-                "https://api.example.com/v1", null, null, null, null);
+                "https://api.example.com/v1", null, null);
         assertEquals(MAX_SYSTEM_LENGTH, dto.sysPrompt().length());
     }
 
@@ -66,7 +62,7 @@ class ResolvedAgentAssemblyDTOTest {
         // when
         ResolvedAgentAssemblyDTO dto = new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "system", agentsMd, "openai:gpt-4", 10, null,
-                "https://api.example.com/v1", null, null, null, null);
+                "https://api.example.com/v1", null, null);
 
         // then
         assertEquals(agentsMd, dto.agentsMd());
@@ -81,7 +77,7 @@ class ResolvedAgentAssemblyDTOTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO("agent-a", 1, "v1", "system", agentsMd,
                         "openai:gpt-4", 10, null, "https://api.example.com/v1",
-                        null, null, null, null));
+                        null, null));
     }
 
     @Test
@@ -89,7 +85,7 @@ class ResolvedAgentAssemblyDTOTest {
         // given & when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO(" ", 1, "v1", "system", null, "openai:gpt-4",
-                        10, null, "https://api.example.com/v1", null, null, null, null));
+                        10, null, "https://api.example.com/v1", null, null));
     }
 
     @Test
@@ -97,7 +93,7 @@ class ResolvedAgentAssemblyDTOTest {
         // given & when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO("agent-a", 0, "v1", "system", null, "openai:gpt-4",
-                        10, null, "https://api.example.com/v1", null, null, null, null));
+                        10, null, "https://api.example.com/v1", null, null));
     }
 
     @Test
@@ -105,7 +101,7 @@ class ResolvedAgentAssemblyDTOTest {
         // given & when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO("agent-a", 1, "", "system", null, "openai:gpt-4",
-                        10, null, "https://api.example.com/v1", null, null, null, null));
+                        10, null, "https://api.example.com/v1", null, null));
     }
 
     @Test
@@ -113,7 +109,7 @@ class ResolvedAgentAssemblyDTOTest {
         // given & when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO("agent-a", 1, "v1", "system", null, "",
-                        10, null, "https://api.example.com/v1", null, null, null, null));
+                        10, null, "https://api.example.com/v1", null, null));
     }
 
     @Test
@@ -121,7 +117,7 @@ class ResolvedAgentAssemblyDTOTest {
         // given & when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO("agent-a", 1, "v1", "system", null, "openai:gpt-4",
-                        0, null, "https://api.example.com/v1", null, null, null, null));
+                        0, null, "https://api.example.com/v1", null, null));
     }
 
     @Test
@@ -132,40 +128,33 @@ class ResolvedAgentAssemblyDTOTest {
         // when & then
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO("agent-a", 1, "v1", system, null, "openai:gpt-4",
-                        10, null, "https://api.example.com/v1", null, null, null, null));
+                        10, null, "https://api.example.com/v1", null, null));
     }
 
     @Test
-    void should_normalizeNullReferences_when_construct_given_nullEnvironmentAndMemory() {
-        // given（环境可空、记忆库 / 保管库凭证空归一化为不可变空列表）
+    void should_normalizeNullReferences_when_construct_given_nullEnvironment() {
+        // given（环境可空；技能列表空归一化为不可变空列表）
         // when
         ResolvedAgentAssemblyDTO dto = sample();
 
         // then
         assertNull(dto.environment());
-        assertTrue(dto.memoryStores().isEmpty());
-        assertTrue(dto.vaultCredentials().isEmpty());
+        assertTrue(dto.skills().isEmpty());
     }
 
     @Test
-    void should_keepReferences_when_construct_given_environmentAndMemory() {
+    void should_keepEnvironment_when_construct_given_environment() {
         // given
         EnvironmentReferenceDTO environment = new EnvironmentReferenceDTO(
                 "env-1", "数据分析沙箱", "cloud", "pip install pandas");
-        MemoryStoreReferenceDTO memory = new MemoryStoreReferenceDTO("mem-1", "会话记忆");
-        ResolvedVaultCredentialDTO vaultCredential = new ResolvedVaultCredentialDTO(
-                "vault-1", "cr-1", "static_bearer", "https://dify.example.com", "sk-plain");
 
         // when
         ResolvedAgentAssemblyDTO dto = new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "system", null, "openai:gpt-4", 10, null,
-                "https://api.example.com/v1", null, environment,
-                List.of(memory), List.of(vaultCredential));
+                "https://api.example.com/v1", null, environment);
 
-        // then（格式化字段原样保留，列表不可变）
+        // then（格式化字段原样保留）
         assertEquals(environment, dto.environment());
-        assertEquals(List.of(memory), dto.memoryStores());
-        assertEquals(List.of(vaultCredential), dto.vaultCredentials());
     }
 
     @Test
@@ -174,7 +163,7 @@ class ResolvedAgentAssemblyDTOTest {
         // when
         ResolvedAgentAssemblyDTO dto = new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "system", null, "openai:gpt-4", 10, null,
-                "https://api.example.com/v1", null, null, null, null, "high", 200000);
+                "https://api.example.com/v1", null, null, "high", 200000);
 
         // then
         assertEquals("high", dto.modelEffort());
@@ -182,7 +171,7 @@ class ResolvedAgentAssemblyDTOTest {
     }
 
     @Test
-    void should_defaultTuningToEmpty_when_construct_given_legacyThirteenArgForm() {
+    void should_defaultTuningToEmpty_when_construct_given_legacyElevenArgForm() {
         // given（兼容构造器：无调优语义的旧装配链）
         // when
         ResolvedAgentAssemblyDTO dto = sample();
@@ -197,7 +186,7 @@ class ResolvedAgentAssemblyDTOTest {
         // given & when & then（上下文窗口档位必须为正）
         assertThrows(IllegalArgumentException.class,
                 () -> new ResolvedAgentAssemblyDTO("agent-a", 1, "v1", "system", null, "openai:gpt-4",
-                        10, null, "https://api.example.com/v1", null, null, null, null, "high", 0));
+                        10, null, "https://api.example.com/v1", null, null, "high", 0));
     }
 
     @Test
@@ -209,8 +198,8 @@ class ResolvedAgentAssemblyDTOTest {
         // when
         ResolvedAgentAssemblyDTO dto = new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "system", null, "openai:gpt-4", 10, null,
-                "https://api.example.com/v1", null, null, null, null, null, null,
-                List.of(ask, deny));
+                "https://api.example.com/v1", null, null, null, null,
+                List.of(ask, deny), null);
 
         // then（保持声明顺序，列表不可变）
         assertEquals(List.of(ask, deny), dto.toolPolicies());
@@ -222,11 +211,11 @@ class ResolvedAgentAssemblyDTOTest {
         // given & when（canonical 形态显式传 null → 空归一化）
         ResolvedAgentAssemblyDTO canonical = new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "system", null, "openai:gpt-4", 10, null,
-                "https://api.example.com/v1", null, null, null, null, null, null, null);
-        // when（15 参兼容构造器：无策略配置）
+                "https://api.example.com/v1", null, null, null, null, null, null);
+        // when（13 参兼容构造器：无策略配置）
         ResolvedAgentAssemblyDTO legacy = new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "system", null, "openai:gpt-4", 10, null,
-                "https://api.example.com/v1", null, null, null, null, "high", 200000);
+                "https://api.example.com/v1", null, null, "high", 200000);
 
         // then
         assertTrue(canonical.toolPolicies().isEmpty());
@@ -235,15 +224,12 @@ class ResolvedAgentAssemblyDTOTest {
 
     @Test
     void should_defaultToolVisibilityToEmpty_when_construct_given_nullOrLegacyForm() {
-        // given & when（canonical 17 参形态显式传 null → 空归一化）
+        // given & when（canonical 形态显式传 null → 空归一化）
         ResolvedAgentAssemblyDTO canonical = new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "system", null, "openai:gpt-4", 10, null,
-                "https://api.example.com/v1", null, null, null, null, null, null, null, null);
-        // when（16 参兼容构造器：无可见性约束的旧装配链）
-        ResolvedAgentAssemblyDTO legacy = new ResolvedAgentAssemblyDTO(
-                "agent-a", 1, "v1", "system", null, "openai:gpt-4", 10, null,
-                "https://api.example.com/v1", null, null, null, null, null, null,
-                List.of(new AgentToolPolicyDTO("Bash", AgentToolPolicyDTO.POLICY_ALWAYS_ASK)));
+                "https://api.example.com/v1", null, null, null, null, null, null);
+        // when（11 参兼容构造器：无可见性约束的旧装配链）
+        ResolvedAgentAssemblyDTO legacy = sample();
 
         // then
         assertFalse(canonical.toolVisibility().hasConstraint());
@@ -260,7 +246,7 @@ class ResolvedAgentAssemblyDTOTest {
         // when
         ResolvedAgentAssemblyDTO dto = new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "system", null, "openai:gpt-4", 10, null,
-                "https://api.example.com/v1", null, null, null, null, null, null, null, visibility);
+                "https://api.example.com/v1", null, null, null, null, null, visibility);
 
         // then（原样透传，不做二次加工）
         assertEquals(visibility, dto.toolVisibility());
@@ -271,7 +257,7 @@ class ResolvedAgentAssemblyDTOTest {
         return new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "你是数据分析专家", "# 项目约定\n\n统一使用中文回复。",
                 "openai:gpt-4", 10, "sk-plain",
-                "https://api.example.com/v1", null, null, null, null);
+                "https://api.example.com/v1", null, null);
     }
 
     @Test
@@ -288,22 +274,5 @@ class ResolvedAgentAssemblyDTOTest {
         // AGENTS.md 全文不随日志输出，仅暴露长度
         assertFalse(text.contains("统一使用中文回复"));
         assertTrue(text.contains("agentsMdLength="));
-    }
-
-    @Test
-    void should_maskVaultToken_when_toString_given_plainTextVaultToken() {
-        // given（装配契约内嵌保管库解密凭证明文）
-        ResolvedAgentAssemblyDTO dto = new ResolvedAgentAssemblyDTO(
-                "agent-a", 1, "v1", "system", null, "openai:gpt-4", 10, null,
-                "https://api.example.com/v1", null, null, null,
-                List.of(new ResolvedVaultCredentialDTO(
-                        "vault-1", "cr-1", "static_bearer", "https://dify.example.com", "sk-vault-secret")));
-
-        // when
-        String text = dto.toString();
-
-        // then（保管库凭证明文不得随日志 / 异常链输出）
-        assertFalse(text.contains("sk-vault-secret"));
-        assertTrue(text.contains("token=****"));
     }
 }

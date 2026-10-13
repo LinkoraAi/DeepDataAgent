@@ -108,9 +108,15 @@ public class HarnessAgentRunExecutor implements AgentRunExecutor {
                 });
     }
 
-    /** 领域明细 → SDK 工具调用块重建。 */
+    /** 领域明细 → SDK 工具调用块重建。
+     *  <p>{@code content} 原始串 MUST 同时提供：SDK 工具执行按 {@code ToolUseBlock#getContent()}
+     *  做参数 schema 校验（而非 input Map），durable 重建若缺 content 会报
+     *  {@code argument "content" is null} 致 allow 后工具无法执行、模型重试再挂起，会话永不收口。</p> */
     private static ToolUseBlock toToolUseBlock(PendingToolCallSpec spec) {
-        return new ToolUseBlock(spec.toolCallId(), spec.toolName(), parseInput(spec.inputJson()));
+        String inputJson = spec.inputJson();
+        String rawContent = (inputJson == null || inputJson.isBlank()) ? "{}" : inputJson;
+        return new ToolUseBlock(spec.toolCallId(), spec.toolName(), parseInput(rawContent), rawContent,
+                Map.of());
     }
 
     /** 入参 JSON 解析（非法 / 空收敛为空 Map，不阻断续流）。 */

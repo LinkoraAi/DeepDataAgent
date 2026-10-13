@@ -213,46 +213,6 @@ class AgentSessionMapperTest {
     }
 
     @Test
-    void should_queryVaultIdsContainment_when_countByVaultId_given_vaultId() {
-        // given
-        AgentSessionMapper mapper = mock(AgentSessionMapper.class);
-        when(mapper.selectCount(any(Wrapper.class))).thenReturn(0L);
-        doCallRealMethod().when(mapper).countByVaultId(any());
-
-        // when
-        mapper.countByVaultId("vault_x");
-
-        // then（vault_ids JSONB 数组包含判定，参数为 ["vault_x"] 序列化文本）
-        ArgumentCaptor<Wrapper<AgentSessionEntity>> captor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(mapper).selectCount(captor.capture());
-        LambdaQueryWrapper<AgentSessionEntity> wrapper =
-                (LambdaQueryWrapper<AgentSessionEntity>) captor.getValue();
-        assertTrue(wrapper.getSqlSegment().contains("vault_ids @> cast("), wrapper.getSqlSegment());
-        Collection<Object> params = wrapper.getParamNameValuePairs().values();
-        assertTrue(params.contains("[\"vault_x\"]"), String.valueOf(params));
-    }
-
-    @Test
-    void should_queryMemoryStoreIdsContainment_when_countByMemoryStoreId_given_storeId() {
-        // given
-        AgentSessionMapper mapper = mock(AgentSessionMapper.class);
-        when(mapper.selectCount(any(Wrapper.class))).thenReturn(0L);
-        doCallRealMethod().when(mapper).countByMemoryStoreId(any());
-
-        // when
-        mapper.countByMemoryStoreId("ms_x");
-
-        // then（memory_store_ids JSONB 数组包含判定）
-        ArgumentCaptor<Wrapper<AgentSessionEntity>> captor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(mapper).selectCount(captor.capture());
-        LambdaQueryWrapper<AgentSessionEntity> wrapper =
-                (LambdaQueryWrapper<AgentSessionEntity>) captor.getValue();
-        assertTrue(wrapper.getSqlSegment().contains("memory_store_ids @> cast("), wrapper.getSqlSegment());
-        assertTrue(wrapper.getParamNameValuePairs().values().contains("[\"ms_x\"]"),
-                String.valueOf(wrapper.getParamNameValuePairs().values()));
-    }
-
-    @Test
     void should_queryEnvironmentIdEquality_when_countByEnvironmentId_given_environmentId() {
         // given
         AgentSessionMapper mapper = mock(AgentSessionMapper.class);

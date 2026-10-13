@@ -1,6 +1,5 @@
 package com.linkroa.deepdataagent.agent.infrastructure.assembly;
 
-import com.linkroa.deepdataagent.agent.application.dto.AgentMcpServerDTO;
 import com.linkroa.deepdataagent.agent.application.dto.AgentToolPolicyDTO;
 import com.linkroa.deepdataagent.agent.application.dto.AgentToolVisibilityDTO;
 import com.linkroa.deepdataagent.agent.application.dto.ResolvedAgentAssemblyDTO;
@@ -79,20 +78,16 @@ public class DefaultAgentVersionAssemblyPort implements AgentVersionAssemblyPort
                 credential,
                 validated.profile().apiEndpointUrl(),
                 resolveSkills(validated.versionRow(), ownerId),
-                // 环境 / 记忆库 / 保管库挂载不再来自版本快照（Session 执行时选择）；
+                // 环境挂载不再来自版本快照（Session 执行时选择）；
                 // 空位由 Session 挂载装配（阶段三）填充，版本快照本身不参与解析
                 null,
-                List.of(),
-                List.of(),
                 // 目录引用解析出的生效调优参数（显式档位优先，目录默认次之），随契约进入 Harness 模型配置
                 tuning.effort(),
                 tuning.contextWindow(),
                 // 逐工具权限策略（tools_json configs 中 permission_policy 非空项），供 runtime 装配权限引擎
                 resolveToolPolicies(validated.versionRow()),
                 // 内置工具可见性约束（agent_toolset 白名单/隐藏名单聚合），供 runtime 生成 Harness 过滤指令
-                resolveToolVisibility(validated.versionRow()),
-                // 版本声明的 MCP 服务器清单（结构化发布，不含凭据材料），供 runtime 装配 JVM 侧 MCP 客户端
-                resolveMcpServers(validated.versionRow())
+                resolveToolVisibility(validated.versionRow())
         );
     }
 
@@ -114,21 +109,16 @@ public class DefaultAgentVersionAssemblyPort implements AgentVersionAssemblyPort
     /**
      * 解析版本快照 {@code tools_json} 中逐工具权限策略：遍历各工具集 {@code configs[]}，
      * 仅收集 {@code permission_policy} 非空的配置项（always_allow / always_ask / always_deny），
-     * 跨 toolset 类型统一展平（保持声明顺序）。
+     * 跨工具集类型统一展平（保持声明顺序）。
      * <p>{@code enabled=false}（隐藏并拒绝）与 {@code disallowed_tools} 属工具可见性语义，
      * 由 {@link #resolveToolVisibility(AgentVersion)} 单独聚合，不混入权限策略。</p>
-     * <p>{@code mcp_toolset} 条目的 {@code configs[].name} 是<b>服务端暴露的原始工具名</b>，
-     * 随策略项携带其 {@code mcp_server_name} 归属出站——运行时实名
-     * {@code mcp__{server_name}__{tool_name}} 的翻译是 runtime 侧知识，agent BC 不越界。</p>
      */
     private List<AgentToolPolicyDTO> resolveToolPolicies(AgentVersion versionRow) {
         List<AgentToolPolicyDTO> policies = new ArrayList<>();
         for (AgentTool tool : versionRow.parseTools()) {
-            boolean mcpToolset = AgentTool.TYPE_MCP_TOOLSET.equals(tool.type());
             for (AgentTool.ToolConfig config : tool.configs()) {
                 if (config.permissionPolicy() != null) {
-                    policies.add(new AgentToolPolicyDTO(config.name(), config.permissionPolicy(),
-                            mcpToolset ? tool.mcpServerName() : null));
+                    policies.add(new AgentToolPolicyDTO(config.name(), config.permissionPolicy()));
                 }
             }
         }
@@ -137,7 +127,7 @@ public class DefaultAgentVersionAssemblyPort implements AgentVersionAssemblyPort
 
     /**
      * 解析版本快照 {@code tools_json} 中内置工具可见性约束（仅 {@code agent_toolset_20260401}
-     * 条目参与，browser_toolset / mcp_toolset / custom 类型不产生可见性约束）：
+     * 条目参与，浏览器工具集 / custom 类型不产生可见性约束）：
      * 白名单为各条目 {@code enabled_tools} 并集（全缺省 = 空名单 = 无白名单约束，全量基座暴露）；
      * 隐藏名单为 {@code disallowed_tools} 与 {@code configs[].enabled=false} 并集，再扣除
      * {@code configs[].enabled=true}（对齐公开契约叠加顺序：默认集 → disallowed → configs[].enabled，
@@ -163,19 +153,6 @@ public class DefaultAgentVersionAssemblyPort implements AgentVersionAssemblyPort
         }
         hidden.removeAll(revived);
         return new AgentToolVisibilityDTO(List.copyOf(allowed), List.copyOf(hidden));
-    }
-
-    /**
-     * 解析版本快照 {@code mcp_servers_json} 为 MCP 服务器装配契约清单
-     * （{@code [{name, type:"url", url}]}，顺序与声明一致）。
-     * <p>复用领域解析器 {@link AgentVersion#parseMcpServers()}：结构非法抛
-     * {@link IllegalStateException}，与版本快照其它配方字段（tools / skills）同一失败语义，
-     * <b>不静默降级为「未声明 MCP」</b>。本清单不含任何凭据材料，可安全随装配缓存驻留。</p>
-     */
-    private List<AgentMcpServerDTO> resolveMcpServers(AgentVersion versionRow) {
-        return versionRow.parseMcpServers().stream()
-                .map(server -> new AgentMcpServerDTO(server.name(), server.type(), server.url()))
-                .toList();
     }
 
     /**

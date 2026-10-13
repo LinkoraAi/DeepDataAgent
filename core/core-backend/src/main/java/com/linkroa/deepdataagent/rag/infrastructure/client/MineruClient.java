@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.core.io.ByteArrayResource;
@@ -102,6 +101,9 @@ public class MineruClient {
 
     /** 结果条目的类型字段。 */
     private static final String JSON_FIELD_TYPE = "type";
+
+    /** 任务状态字段。 */
+    private static final String JSON_FIELD_STATUS = "status";
 
     /** 结果条目的页码字段。 */
     private static final String JSON_FIELD_PAGE_IDX = "page_idx";
@@ -341,30 +343,43 @@ public class MineruClient {
      */
     private String awaitResult(String taskId) {
         while (true) {
-            String status = pollTaskStatus(taskId);
-            if (StringUtils.equals(status, STATUS_COMPLETED)) {
+            TaskStatus taskStatus = pollTaskStatus(taskId);
+            if (StringUtils.equals(taskStatus.status(), STATUS_COMPLETED)) {
                 String resultJson = fetchResult(taskId);
                 if (StringUtils.isNotBlank(resultJson)) {
                     return resultJson;
                 }
-            } else if (StringUtils.equals(status, STATUS_FAILED)) {
-                throw new IllegalStateException(ERROR_TASK_PARSE_FAILED);
+            } else if (StringUtils.equals(taskStatus.status(), STATUS_FAILED)) {
+                throw new IllegalStateException(parseFailedMessage(taskStatus.error()));
             }
             sleepQuietly();
         }
     }
 
     /**
+     * 组装任务失败异常消息：MinerU 任务详情带 {@code error} 时并入（便于根因定位），否则保留通用文案。
+     *
+     * @param error MinerU 任务详情 {@code error} 字段（可空）
+     * @return 失败异常消息
+     */
+    private static String parseFailedMessage(String error) {
+        return StringUtils.isBlank(error) ? ERROR_TASK_PARSE_FAILED : ERROR_TASK_PARSE_FAILED + ": " + error;
+    }
+
+    /**
      * 第 2 步：查询任务状态（GET /tasks/{taskId}）。404 视为任务失联，503 视为任务管理器不可用。
      *
-     * @return 任务状态字符串
+     * @return 任务状态与失败原因（{@code error} 缺失时为 null）
      */
-    private String pollTaskStatus(String taskId) {
+    private TaskStatus pollTaskStatus(String taskId) {
         ResponseEntity<String> response = restTemplate.exchange(
                 apiBaseUrl + API_PATH_TASKS + "/" + taskId, HttpMethod.GET, HttpEntity.EMPTY, String.class);
         int status = response.getStatusCode().value();
         if (status == 200) {
-            return readJson(response.getBody()).path("status").asText();
+            JsonNode root = readJson(response.getBody());
+            String taskStatus = root.path(JSON_FIELD_STATUS).asText();
+            String error = StringUtils.trimToNull(root.path(JSON_FIELD_ERROR).asText(null));
+            return new TaskStatus(taskStatus, error);
         }
         if (status == 404) {
             throw new IllegalStateException(ERROR_TASK_LOST);
@@ -373,6 +388,15 @@ public class MineruClient {
             throw new IllegalStateException(ERROR_TASK_MANAGER_UNAVAILABLE);
         }
         throw new IllegalStateException("查询 MinerU 任务状态失败，HTTP " + status);
+    }
+
+    /**
+     * 任务状态查询结果：状态名与失败原因（{@code error} 字段，可空）。
+     *
+     * @param status 任务状态（pending / processing / completed / failed）
+     * @param error  失败原因（MinerU 任务详情 {@code error}，缺失为 null）
+     */
+    private record TaskStatus(String status, String error) {
     }
 
     /**
@@ -399,8 +423,10 @@ public class MineruClient {
     }
 
     /**
-     * 第 4 步：解析产物 —— results 中每项取 content_list 数组（逐条映射 Block，缺失或空视为解析失败）
-     * 与 images 对象（{@code {图片文件名: base64}}，缺失 / 非对象时为空头，不影响解析成功判定）。
+     * 第 4 步：解析产物 —— results 中每项取 content_list 数组（逐条映射 Block；字段缺失或
+     * 非数组视为协议破坏抛异常，空数组为「解析成功但无有效内容」的合法形态、产出空块列表交由
+     * 解析器层产占位块）与 images 对象（{@code {图片文件名: base64}}，缺失 / 非对象时为空头，
+     * 不影响解析成功判定）。
      * <p>两个字段均先经 {@link #normalizeStructuredNode(JsonNode)} 归一：MinerU 3.4.2
      * 以 JSON 序列化字符串返回，须兼容数组 / 对象与字符串两形态（集成测试 D13）。</p>
      */
@@ -413,7 +439,9 @@ public class MineruClient {
         while (fields.hasNext()) {
             Map.Entry<String, JsonNode> entry = fields.next();
             JsonNode contentList = normalizeStructuredNode(entry.getValue().path(JSON_FIELD_CONTENT_LIST));
-            if (CollectionUtils.isEmpty(toList(contentList))) {
+            // 空数组是「解析成功但无有效内容」的合法形态（如空白图片 content_list=[]），不视为协议破坏——
+            // 占位 TEXT 块由解析器层产出（与本地 Tika / 直读的空文本口径一致）；仅字段缺失或非数组才是契约破坏
+            if (ObjectUtils.isEmpty(contentList) || !contentList.isArray()) {
                 throw new IllegalStateException(ERROR_RESULT_MISSING_CONTENT_LIST);
             }
             List<Block> blocks = new ArrayList<>();
@@ -432,7 +460,7 @@ public class MineruClient {
      * <p>MinerU 3.4.2（protocol_version=2）将 {@code content_list} 等结构化字段以
      * JSON 序列化<b>字符串</b>返回：文本节点尝试反序列化；数组 / 对象 / 缺失节点原样返回。</p>
      * <p><b>失败软处理</b>：字符串不是合法 JSON 时原样返回，交由字段各自的既有容错口径处置——
-     * {@code content_list} 经 {@link #toList} 得空集合从而按「结果缺少 content_list」失败；
+     * {@code content_list} 归一后非数组即按「结果缺少 content_list」失败；
      * {@code images} 非对象从而归一为空映射（既有契约：图片载荷形态异常不构成解析失败）。</p>
      *
      * @param node 原始节点（可能为字符串化的 JSON）
@@ -484,17 +512,6 @@ public class MineruClient {
         Map<String, Object> fields = objectMapper.convertValue(item, new TypeReference<Map<String, Object>>() {
         });
         return new Block(type, pageIdx, fields);
-    }
-
-    /**
-     * JsonNode 转 List（content_list 数组为空数组 / Missing 节点时返回空列表）。
-     */
-    private List<JsonNode> toList(JsonNode node) {
-        List<JsonNode> list = new ArrayList<>();
-        if (!ObjectUtils.isEmpty(node) && node.isArray()) {
-            node.forEach(list::add);
-        }
-        return list;
     }
 
     /**

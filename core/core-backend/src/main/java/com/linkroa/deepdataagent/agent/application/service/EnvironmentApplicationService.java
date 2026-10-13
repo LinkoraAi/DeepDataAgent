@@ -6,7 +6,6 @@ import com.linkroa.deepdataagent.agent.application.query.ListEnvironmentQuery;
 import com.linkroa.deepdataagent.agent.application.validation.EnvironmentValidator;
 import com.linkroa.deepdataagent.agent.domain.model.Environment;
 import com.linkroa.deepdataagent.agent.domain.model.EnvironmentListFilter;
-import com.linkroa.deepdataagent.agent.domain.repository.DeploymentRepository;
 import com.linkroa.deepdataagent.agent.domain.repository.EnvironmentRepository;
 import com.linkroa.deepdataagent.runtime.api.SessionReferenceApi;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
@@ -32,8 +31,6 @@ public class EnvironmentApplicationService {
 
     @Resource
     private EnvironmentRepository environmentRepository;
-    @Resource
-    private DeploymentRepository deploymentRepository;
     @Resource
     private SessionReferenceApi sessionReferenceApi;
     @Resource
@@ -133,19 +130,13 @@ public class EnvironmentApplicationService {
 
     /**
      * 归档运行环境（{@code archived_at} 单列写入）：归档后不可被新 Session 引用
-     * （{@code EnvironmentApi} 解析返回 null → 消费方 404）；仍被未删除会话或未归档
-     * 调度器引用时拒绝（409）。
+     * （{@code EnvironmentApi} 解析返回 null → 消费方 404）；仍被未删除会话引用时拒绝（409）。
      */
     public Environment archive(String environmentId) {
         return transactionTemplate.execute(status -> {
             Environment environment = requireOwnedForUpdate(environmentId);
             long refCount = sessionReferenceApi.countSessionsByEnvironmentId(environmentId);
             EnvironmentValidator.validateArchive(environment, refCount);
-            long deploymentRefCount = deploymentRepository.countActiveByEnvironmentId(environmentId);
-            if (deploymentRefCount > 0) {
-                throw new ResourceConflictException("运行环境「" + environment.name()
-                        + "」仍被 " + deploymentRefCount + " 个调度器引用，无法归档");
-            }
             return environmentRepository.update(
                     environment.withArchivedAt(OffsetDateTime.now(ZoneId.of("Asia/Shanghai"))));
         });
@@ -167,11 +158,11 @@ public class EnvironmentApplicationService {
     }
 
     /**
-     * 删除运行环境：锁行后复核实时会话与调度器引用，均无引用方在<b>同一事务内</b>逻辑删除。
+     * 删除运行环境：锁行后复核实时会话引用，无引用方在<b>同一事务内</b>逻辑删除。
      *
      * @param environmentId 环境业务 ID
      * @throws ResourceNotFoundException 环境不存在或不属于当前用户
-     * @throws ResourceConflictException 仍被未删除会话或未归档调度器引用
+     * @throws ResourceConflictException 仍被未删除会话引用
      */
     public void delete(String environmentId) {
         transactionTemplate.executeWithoutResult(status -> {
@@ -179,13 +170,6 @@ public class EnvironmentApplicationService {
             // 删除守卫依据实时会话引用：仍有会话挂载该环境时拒绝删除（409）
             long refCount = sessionReferenceApi.countSessionsByEnvironmentId(environmentId);
             EnvironmentValidator.validateDelete(environment, refCount);
-            // 删除守卫扩展（审查修复 F10）：仍有未归档调度器引用时拒绝删除（409），
-            // 否则调度器带着悬空环境引用继续被轮询领取，触发链静默停摆
-            long deploymentRefCount = deploymentRepository.countActiveByEnvironmentId(environmentId);
-            if (deploymentRefCount > 0) {
-                throw new ResourceConflictException("运行环境「" + environment.name()
-                        + "」仍被 " + deploymentRefCount + " 个调度器引用，无法删除");
-            }
             environmentRepository.deleteByEnvironmentId(environmentId);
         });
     }

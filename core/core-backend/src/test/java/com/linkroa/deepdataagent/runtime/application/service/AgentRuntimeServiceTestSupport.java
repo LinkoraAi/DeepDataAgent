@@ -3,7 +3,6 @@ package com.linkroa.deepdataagent.runtime.application.service;
 import com.linkroa.deepdataagent.agent.api.AgentSnapshotApi;
 import com.linkroa.deepdataagent.agent.api.EnvironmentApi;
 import com.linkroa.deepdataagent.file.api.FileApi;
-import com.linkroa.deepdataagent.memory.api.MemoryStoreApi;
 import com.linkroa.deepdataagent.runtime.application.port.AgentRunExecutor;
 import com.linkroa.deepdataagent.runtime.application.port.ArtifactDeliveryPort;
 import com.linkroa.deepdataagent.runtime.application.port.ChatEventPersister;
@@ -39,13 +38,11 @@ import com.linkroa.deepdataagent.runtime.domain.repository.ChatEventRepository;
 import com.linkroa.deepdataagent.runtime.domain.repository.SessionThreadRepository;
 import com.linkroa.deepdataagent.runtime.infrastructure.execution.InMemorySessionRegistry;
 import com.linkroa.deepdataagent.shared.security.AuthContext;
-import com.linkroa.deepdataagent.vault.api.VaultReferenceApi;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
@@ -98,10 +95,6 @@ public abstract class AgentRuntimeServiceTestSupport {
     @Mock protected FileApi fileApi;
     /** 环境查询契约 mock：创建会话环境存在性 / 执行平面校验（未挂环境用例不触碰）。 */
     @Mock protected EnvironmentApi environmentApi;
-    /** 保管库引用契约 mock：创建会话保管库挂载校验（未挂载用例不触碰）。 */
-    @Mock protected VaultReferenceApi vaultReferenceApi;
-    /** 记忆库查询契约 mock：创建会话挂载记忆库校验（未挂载用例不触碰）。 */
-    @Mock protected MemoryStoreApi memoryStoreApi;
     /** 会话挂载物化编排 mock：创建 / 追加物化与补偿、移除与删除清理（默认空操作）。 */
     @Mock protected SessionMountMaterializer sessionMountMaterializer;
     /** 会话产出投递端口 mock：会话删除（终止）时清理 scope=session 产出文件。 */
@@ -110,8 +103,6 @@ public abstract class AgentRuntimeServiceTestSupport {
     @Mock protected SessionThreadRepository sessionThreadRepository;
     /** Agent 快照契约 mock：主线程快照装配（默认返回 null 收敛空快照）。 */
     @Mock protected AgentSnapshotApi agentSnapshotApi;
-    /** Spring 事件发布器 mock：验证终局出口在终态事务内直发 TurnFinished。 */
-    @Mock protected ApplicationEventPublisher applicationEventPublisher;
     /** turn 租约定时续约调度端口 mock：捕获续约任务与周期，验证启停 / fail-closed 行为。 */
     @Mock protected LeaseRenewalScheduler leaseRenewalScheduler;
     /** 续约停止句柄 mock：验证轮次全部出口统一 cancel（无虚续约）。 */
@@ -189,7 +180,6 @@ public abstract class AgentRuntimeServiceTestSupport {
         ReflectionTestUtils.setField(finalizer, "transactionTemplate", transactionTemplate);
         ReflectionTestUtils.setField(finalizer, "turnEventWriter", writer);
         ReflectionTestUtils.setField(finalizer, "coordinationLeaseService", coordinationLeaseService);
-        ReflectionTestUtils.setField(finalizer, "applicationEventPublisher", applicationEventPublisher);
         return finalizer;
     }
 
@@ -241,13 +231,11 @@ public abstract class AgentRuntimeServiceTestSupport {
         return hitl;
     }
 
-    /** 反射装配真实挂载校验器（2.1：四类前置校验规则本体）。 */
+    /** 反射装配真实挂载校验器（2.1：环境 / 文件两类前置校验规则本体）。 */
     protected SessionMountValidator newSessionMountValidator() {
         SessionMountValidator validator = new SessionMountValidator();
         ReflectionTestUtils.setField(validator, "fileApi", fileApi);
         ReflectionTestUtils.setField(validator, "environmentApi", environmentApi);
-        ReflectionTestUtils.setField(validator, "vaultReferenceApi", vaultReferenceApi);
-        ReflectionTestUtils.setField(validator, "memoryStoreApi", memoryStoreApi);
         return validator;
     }
 
@@ -278,7 +266,6 @@ public abstract class AgentRuntimeServiceTestSupport {
         ReflectionTestUtils.setField(svc, "artifactDeliveryPort", artifactDeliveryPort);
         ReflectionTestUtils.setField(svc, "sessionThreadRepository", sessionThreadRepository);
         ReflectionTestUtils.setField(svc, "agentSnapshotApi", agentSnapshotApi);
-        ReflectionTestUtils.setField(svc, "applicationEventPublisher", applicationEventPublisher);
         return svc;
     }
 
@@ -486,18 +473,17 @@ public abstract class AgentRuntimeServiceTestSupport {
         AgentSession base = idleSession();
         return new AgentSession(base.id(), base.sessionId(), base.userId(), base.agentId(), base.agentVersion(),
                 base.status(), base.turnPhase(), metadata, base.title(), base.environmentId(),
-                base.vaultIds(), base.memoryStoreIds(), base.environmentVariables(), base.resources(),
+                base.environmentVariables(), base.resources(),
                 base.triggerType(), base.triggerId(), base.lastActiveAt(), base.archivedAt(),
                 base.createdAt(), base.updatedAt(), base.createdBy(), base.updatedBy());
     }
 
-    /** 挂载会话夹具（resources 与 memoryStoreIds 显式给定，资源管理用例输入）。 */
-    protected AgentSession mountedSession(List<SessionResource> resources, List<String> memoryStoreIds,
-                                          AgentSessionStatus status) {
+    /** 挂载会话夹具（resources 显式给定，资源管理用例输入）。 */
+    protected AgentSession mountedSession(List<SessionResource> resources, AgentSessionStatus status) {
         OffsetDateTime now = OffsetDateTime.now();
         return new AgentSession(1L, "sess_mount_" + System.nanoTime(), "1", "agent-a", "1.0.0",
                 status, status == AgentSessionStatus.IDLE ? TurnPhase.IDLE : TurnPhase.RUNNING,
-                "{}", null, null, List.of(), memoryStoreIds, "{}",
+                "{}", null, null, "{}",
                 resources, null, null, now, null, now, now, null, null);
     }
 
@@ -506,7 +492,7 @@ public abstract class AgentRuntimeServiceTestSupport {
         AgentSession base = idleSession();
         return new AgentSession(base.id(), base.sessionId(), base.userId(), base.agentId(), base.agentVersion(),
                 AgentSessionStatus.IDLE, base.turnPhase(), base.metadata(), base.title(), base.environmentId(),
-                base.vaultIds(), base.memoryStoreIds(), base.environmentVariables(), base.resources(),
+                base.environmentVariables(), base.resources(),
                 base.triggerType(), base.triggerId(), base.lastActiveAt(), OffsetDateTime.now(),
                 base.createdAt(), base.updatedAt(), base.createdBy(), base.updatedBy());
     }
@@ -521,7 +507,7 @@ public abstract class AgentRuntimeServiceTestSupport {
                 .withMaxIters(10)
                 .withSandbox(AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L))
                 .withMountView(new AgentAssemblySpec.MountView(
-                        List.of(), List.of(), List.of(), java.util.Map.of(), List.of()))
+                        List.of(), java.util.Map.of(), List.of()))
                 .withToolGovernance(AgentAssemblySpec.ToolGovernance.empty())
                 .withArtifactOwnership(AgentAssemblySpec.ArtifactOwnership.empty())
                 .build();

@@ -83,79 +83,35 @@ class AgentRuntimeResponseConvertTest {
 
     @Test
     void should_mapFullContractFields_when_toSessionResponse_given_sessionWithFullMounts() {
-        // given（全量挂载会话：环境 / 保管库 / 文件 + 记忆库混合挂载 / 环境变量）
+        // given（全量挂载会话：环境 / 两文件挂载 / 环境变量）
         AgentSession session = AgentSession.createWithMounts(
                 "1", "agent-a", "1", "{\"biz\":\"1\"}", "会话",
                 null, null,
                 List.of(SessionResource.file("file_1", null),
-                        SessionResource.memoryStore("ms_1", "read_only", null)),
-                "env-1", List.of("vault_1"), "{\"K\":\"V\"}");
+                        SessionResource.file("file_2", "mounts/dataset/a.csv")),
+                "env-1", "{\"K\":\"V\"}");
 
         // when
         SessionResponse response = converter.toSessionResponse(session);
 
-        // then（字段全集：status / environment_id / vault_ids / 时间戳；响应 MUST NOT 回显环境变量）
+        // then（字段全集：status / environment_id / 时间戳；响应 MUST NOT 回显环境变量）
         assertEquals("idle", response.status());
         assertEquals("env-1", response.environment_id());
-        assertEquals(List.of("vault_1"), response.vault_ids());
         assertEquals(null, response.deployment_id());
         assertEquals(null, response.archived_at());
         assertEquals(session.createdAt(), response.created_at());
         assertEquals(session.updatedAt(), response.updated_at());
-        // 挂载回显：file 项携资源 id 与缺省挂载路径，memory_store 项不携资源 id
+        // 挂载回显：file 项携资源 id 与缺省挂载路径
         Map<String, Object> fileItem = response.resources().get(0);
         assertEquals("file", fileItem.get("type"));
         assertEquals("mounts/file_1", fileItem.get("mount_path"));
-        Map<String, Object> memoryItem = response.resources().get(1);
-        assertEquals("memory_store", memoryItem.get("type"));
-        assertEquals("ms_1", memoryItem.get("memory_store_id"));
-        assertEquals("read_only", memoryItem.get("access"));
-        assertTrue(!memoryItem.containsKey("id"));
+        Map<String, Object> secondItem = response.resources().get(1);
+        assertEquals("file", secondItem.get("type"));
+        assertEquals("mounts/dataset/a.csv", secondItem.get("mount_path"));
         // 环境变量仅入参接受：MUST NOT 出现在任何响应形态中
         String json = new ObjectMapper().writeValueAsString(response);
         assertTrue(!json.contains("environment_variables"));
         assertTrue(!json.contains("\"K\""));
-    }
-
-    @Test
-    void should_neverExposeGithubToken_when_toSessionResponse_given_repoMount() {
-        // given（GitHub 仓库挂载：令牌只写不读）
-        AgentSession session = AgentSession.createWithMounts(
-                "1", "agent-a", "1", "{}", null, null, null,
-                List.of(SessionResource.githubRepository(
-                        "https://github.com/acme/repo.git", "ghp_secret", "main")),
-                null, List.of(), null);
-
-        // when
-        SessionResponse response = converter.toSessionResponse(session);
-
-        // then（回显 url / checkout，MUST NOT 出现 authorization_token）
-        Map<String, Object> item = response.resources().get(0);
-        assertEquals("github_repository", item.get("type"));
-        assertEquals("https://github.com/acme/repo.git", item.get("url"));
-        assertEquals("main", item.get("checkout"));
-        assertTrue(item.keySet().stream().noneMatch(k -> k.contains("token")));
-    }
-
-    @Test
-    void should_neverExposeGitPassword_when_toSessionResponse_given_gitRepositoryMount() {
-        // given（通用 Git 仓库挂载：用户名在 URL、密码只写不读）
-        AgentSession session = AgentSession.createWithMounts(
-                "1", "agent-a", "1", "{}", null, null, null,
-                List.of(SessionResource.gitRepository(
-                        "https://alice@git.example.com/acme/app.git", "s3cr3t_pwd", "main")),
-                null, List.of(), null);
-
-        // when
-        SessionResponse response = converter.toSessionResponse(session);
-
-        // then（回显 url / checkout，MUST NOT 出现 password）
-        Map<String, Object> item = response.resources().get(0);
-        assertEquals("git_repository", item.get("type"));
-        assertEquals("https://alice@git.example.com/acme/app.git", item.get("url"));
-        assertEquals("main", item.get("checkout"));
-        assertTrue(item.keySet().stream().noneMatch(k -> k.contains("password")));
-        assertTrue(item.values().stream().noneMatch(v -> String.valueOf(v).contains("s3cr3t_pwd")));
     }
 
     @Test

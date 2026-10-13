@@ -13,7 +13,7 @@ import java.time.OffsetDateTime;
  * Agent 会话持久化实体（agent_session）。
  * <p>双列模型：{@code status}（对外四态 idle/running/rescheduling/terminated）+
  * {@code turnPhase}（内部相位 idle/running/awaiting_confirmation/cancelling，永不外显）；
- * 挂载列：environment_id / vault_ids / memory_store_ids / environment_variables / resources。</p>
+ * 挂载列：environment_id / environment_variables / resources。</p>
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -38,19 +38,11 @@ public class AgentSessionEntity extends BaseEntity {
     /** 会话挂载执行环境业务ID（env_ 前缀，可空） */
     private String environmentId;
 
-    /** 保管库业务ID列表 jsonb 数组（["vault_xxx"]） */
-    @TableField(typeHandler = PostgresJsonbTypeHandler.class)
-    private String vaultIds;
-
-    /** 记忆库业务ID列表 jsonb 数组（["ms_xxx"]） */
-    @TableField(typeHandler = PostgresJsonbTypeHandler.class)
-    private String memoryStoreIds;
-
     /** 会话级环境变量 jsonb 对象（装配时注入 Harness） */
     @TableField(typeHandler = PostgresJsonbTypeHandler.class)
     private String environmentVariables;
 
-    /** 会话挂载资源引用 jsonb 数组（三类: file/github_repository/memory_store，snake_case 键） */
+    /** 会话挂载资源引用 jsonb 数组（本期仅 file 类型，snake_case 键） */
     @TableField(typeHandler = PostgresJsonbTypeHandler.class)
     private String resources;
 

@@ -2,18 +2,14 @@ package com.linkroa.deepdataagent.runtime.application.validation;
 
 import com.linkroa.deepdataagent.agent.api.EnvironmentApi;
 import com.linkroa.deepdataagent.file.api.FileApi;
-import com.linkroa.deepdataagent.memory.api.MemoryStoreApi;
-import com.linkroa.deepdataagent.memory.api.dto.MemoryStoreReferenceDTO;
 import com.linkroa.deepdataagent.runtime.application.command.CreateSessionCommand;
 import com.linkroa.deepdataagent.runtime.application.service.UserIds;
 import com.linkroa.deepdataagent.runtime.domain.model.MountViolationException;
 import com.linkroa.deepdataagent.runtime.domain.model.SessionResource;
-import com.linkroa.deepdataagent.runtime.domain.model.enums.MountViolationType;
 import com.linkroa.deepdataagent.runtime.domain.service.SessionMountPolicy;
+import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import com.linkroa.deepdataagent.shared.exception.SessionBusyException;
-import com.linkroa.deepdataagent.vault.api.VaultReferenceApi;
-import com.linkroa.deepdataagent.vault.api.dto.VaultReferenceDTO;
 import jakarta.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
@@ -21,27 +17,23 @@ import org.springframework.stereotype.Component;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * 会话挂载校验器（应用级挂载契约校验，创建会话前置校验链的 400 / 404 语义权威）。
- * <p>承载创建会话的五项挂载前置校验，全部由 {@code SessionLifecycleService#createSession} 在
- * <b>任何物化落盘与落库之前</b>按「环境 → 文件 → 记忆库 → 保管库」顺序逐项调用，
- * 任一失败即整批拒绝、会话整体不落库（全有或全无）：</p>
+ * <p>承载创建会话的挂载前置校验，全部由 {@code SessionLifecycleService#createSession} 在
+ * <b>任何物化落盘与落库之前</b>按「环境 → 文件」顺序逐项调用，任一失败即整批拒绝、
+ * 会话整体不落库（全有或全无）：</p>
  * <ul>
  *   <li>运行环境存在性 / 归属 / 执行平面（{@code self_hosted} → 400）；</li>
- *   <li>挂载文件批内判重（→ 400）、逐项归属门禁（不存在 / 越权 → 404；存在但未就绪
- *       → 409 {@code invalid_request_error}）与批内总量配额（→ 400）；</li>
- *   <li>挂载记忆库存在性与归属（差集非空 → 404）；</li>
- *   <li>保管库存在性与归属（差集非空 → 404）。</li>
+ *   <li>挂载文件批内判重（→ 409 {@code conflict_error}）、逐项归属门禁（不存在 / 越权 → 404；存在但未就绪
+ *       → 409 {@code invalid_request_error}）与批内总量配额（→ 400）。</li>
  * </ul>
+ * <p>本期挂载资源仅支持 file；非 file 类型在协议 / 命令转换层即被拒绝（400）。</p>
  * <p>判重与配额 MUST 早于任何物化落盘（超配额请求不得留下宿主副本）——该时序由调用方
  * （创建会话用例）保证，本类只做校验、零副作用。挂载字节总量判定所需的文件字节数经
  * {@link #mountedSizeBytes} 材料化为清单入参后交领域聚合（规则权威
  * {@link SessionMountPolicy#validateAppend}），保证聚合不触达跨 BC 端口。</p>
- * <p>调度器触发路径（{@code DefaultSchedulerSessionApi}）与 HTTP 入口同走创建会话用例，
- * 覆盖面即同一校验。入参一律为已归一的类型化命令对象，MUST NOT 接收
+ * <p>入参一律为已归一的类型化命令对象，MUST NOT 接收
  * {@code controller.request} 类型。校验规则与异常类型逐字平移自原命令服务私有方法
  * （decompose-command-facade 2.1）。</p>
  */
@@ -57,12 +49,6 @@ public class SessionMountValidator {
     /** 文件服务契约：校验挂载文件归属当前用户且状态 ready（跨 BC 只读查询 + ready 门禁）。 */
     @Resource
     private FileApi fileApi;
-    /** 记忆库查询契约：校验挂载记忆库存在且归属当前用户（跨 BC 只读查询）。 */
-    @Resource
-    private MemoryStoreApi memoryStoreApi;
-    /** 保管库引用契约：校验挂载保管库存在且归属当前用户（跨 BC 只读查询）。 */
-    @Resource
-    private VaultReferenceApi vaultReferenceApi;
 
     /**
      * 运行环境校验：环境 ID 空白跳过（会话可后挂环境）；经环境服务契约解析类型，
@@ -85,13 +71,12 @@ public class SessionMountValidator {
     }
 
     /**
-     * 挂载文件校验（创建路径）：批内 {@code fileId} / {@code mount_path} 判重（→ 400）、
+     * 挂载文件校验（创建路径）：批内 {@code fileId} / {@code mount_path} 判重（→ 409）、
      * 逐项归属 / 就绪门禁（不存在 / 越权 → 404 不泄露存在性；存在但未就绪 →
      * 409 {@code invalid_request_error}）与批内总量配额（500MB，→ 400）。
      * <p>规则权威在领域（{@link SessionMountPolicy#validateAppend}）：创建路径「既有挂载」恒为空，
      * 文件字节数经 {@link #mountedSizeBytes} 材料化后作入参传入（聚合不触达跨 BC 端口）。
-     * 判重与配额 MUST 早于任何物化落盘（超配额请求不得留下宿主副本）。
-     * 调度器触发路径经 {@code createSession} 复用同一校验。</p>
+     * 判重与配额 MUST 早于任何物化落盘（超配额请求不得留下宿主副本）。</p>
      */
     public void validateMountedFiles(CreateSessionCommand command) {
         List<SessionResource> fileResources = command.resources().stream()
@@ -104,15 +89,19 @@ public class SessionMountValidator {
         try {
             SessionMountPolicy.validateAppend(List.of(), fileResources, mountedSizeBytes(fileResources, ownerId));
         } catch (MountViolationException ex) {
-            // 创建路径口径：先区分「存在但未就绪」（409 invalid_request_error，契约明文）
-            // 与「不存在 / 越权」（404 不泄露存在性）；判重 / 配额维持「批量单条非法→整批 400」基线契约
-            if (ex.violation() == MountViolationType.FILE_NOT_MOUNTABLE) {
-                if (fileApi.existsOwnedBy(ex.subject(), ownerId)) {
-                    throw new SessionBusyException("挂载文件尚未就绪: " + ex.subject());
+            // 创建路径口径：批内判重（fileId / mount_path）与追加路径一致 → 409 conflict_error；
+            // 「存在但未就绪」→ 409 invalid_request_error（契约明文）；「不存在 / 越权」→ 404 不泄露存在性；
+            // 配额超限维持 400（异常继承 IllegalArgumentException 直透）
+            switch (ex.violation()) {
+                case DUPLICATE_FILE, DUPLICATE_MOUNT_PATH -> throw new ResourceConflictException(ex.getMessage());
+                case FILE_NOT_MOUNTABLE -> {
+                    if (fileApi.existsOwnedBy(ex.subject(), ownerId)) {
+                        throw new SessionBusyException("挂载文件尚未就绪: " + ex.subject());
+                    }
+                    throw new ResourceNotFoundException("挂载文件不存在或无权访问: " + ex.subject());
                 }
-                throw new ResourceNotFoundException("挂载文件不存在或无权访问: " + ex.subject());
+                default -> throw ex;
             }
-            throw ex;
         }
     }
 
@@ -136,50 +125,5 @@ public class SessionMountValidator {
                     .ifPresent(meta -> sizeBytesByFileId.put(resource.fileId(), meta.sizeBytes()));
         }
         return sizeBytesByFileId;
-    }
-
-    /**
-     * 挂载记忆库存在性与归属校验：提取 {@code memory_store} 类挂载资源去重后
-     * 经记忆库服务契约批量解析，差集（缺失 / 越权）非空统一映射 404。
-     */
-    public void validateMountedMemoryStores(CreateSessionCommand command) {
-        List<String> storeIds = command.resources().stream()
-                .filter(resource -> SessionResource.MEMORY_STORE_TYPE.equals(resource.type()))
-                .map(SessionResource::memoryStoreId)
-                .distinct()
-                .toList();
-        if (storeIds.isEmpty()) {
-            return;
-        }
-        Long ownerId = UserIds.parse(command.userId());
-        Set<String> resolved = ownerId == null ? Set.of()
-                : memoryStoreApi.resolveByIds(ownerId, storeIds).stream()
-                        .map(MemoryStoreReferenceDTO::storeId)
-                        .collect(Collectors.toSet());
-        for (String storeId : storeIds) {
-            if (!resolved.contains(storeId)) {
-                throw new ResourceNotFoundException("挂载记忆库不存在或无权访问: " + storeId);
-            }
-        }
-    }
-
-    /**
-     * 保管库挂载校验：经保管库引用契约批量解析（存在、未归档且归属该 owner），
-     * 差集（缺失 / 越权）非空统一映射 404（不泄露存在性）。
-     */
-    public void validateVaults(CreateSessionCommand command) {
-        if (command.vaultIds().isEmpty()) {
-            return;
-        }
-        Long ownerId = UserIds.parse(command.userId());
-        Set<String> resolved = ownerId == null ? Set.of()
-                : vaultReferenceApi.resolveByIds(ownerId, command.vaultIds()).stream()
-                        .map(VaultReferenceDTO::vaultId)
-                        .collect(Collectors.toSet());
-        for (String vaultId : command.vaultIds()) {
-            if (!resolved.contains(vaultId)) {
-                throw new ResourceNotFoundException("保管库不存在或无权访问: " + vaultId);
-            }
-        }
     }
 }

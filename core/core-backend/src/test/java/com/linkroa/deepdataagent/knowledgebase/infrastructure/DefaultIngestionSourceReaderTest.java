@@ -127,6 +127,7 @@ class DefaultIngestionSourceReaderTest {
         assertEquals(DOC_ID, context.documentId());
         assertEquals(KB_ID, context.kbId());
         assertEquals("手册.pdf", context.fileName());
+        assertEquals(FileType.PDF, context.fileType());
         assertEquals(DocumentStatus.PENDING, context.status());
         assertEquals(new S3File("rag/100/source/100/手册.pdf"), context.s3File());
         assertEquals(docChunkStrategyJson, context.documentChunkStrategyJson());

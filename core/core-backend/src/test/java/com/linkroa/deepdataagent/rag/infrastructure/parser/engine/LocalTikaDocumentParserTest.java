@@ -106,19 +106,42 @@ class LocalTikaDocumentParserTest {
 
     /**
      * 场景：源文件内容为空（0 字节，Tika 无法提取任何文本）。
-     * 预期：切分后无任何内容块，抛出 {@link IllegalArgumentException} 提示解析失败。
+     * 预期：不再抛异常，改为产出含文件名的占位 TEXT 块（切片数 ≥ 1 的不变量），meta 携带 page 占位。
      */
     @Test
-    void should_throwException_when_parse_given_blankContent() {
+    void should_returnPlaceholderBlock_when_parse_given_blankContent() {
         // given
         stubOpen(new byte[0]);
         S3File s3File = new S3File(OBJECT_KEY);
 
-        // when / then
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> parser.parse(s3File, "auto", new MultiModelConfig("profile-1")));
-        assertTrue(exception.getMessage().contains("未提取到任何文本内容"),
-                "空白内容应提示解析失败，实际提示: " + exception.getMessage());
+        // when
+        ParsedDocument parsed = parser.parse(s3File, "auto", new MultiModelConfig("profile-1"));
+
+        // then：占位块为单个 TEXT 块，正文含对象键基名，page 元数据存在
+        assertEquals(1, parsed.blocks().size(), "无有效文本应产出单个占位块");
+        ContentBlockVO placeholder = parsed.blocks().get(0);
+        assertEquals(ContentBlockVO.TYPE_TEXT, placeholder.type(), "占位块应为 TEXT 类型");
+        assertTrue(placeholder.text().contains("sample.txt"), "占位块正文应含文件名，实际: " + placeholder.text());
+        assertEquals(0, placeholder.meta().get("page"), "占位块应携带 page 占位");
+        assertTrue(parsed.images().isEmpty(), "本地解析图片映射应为空");
+    }
+
+    /**
+     * 场景：查询本地 Tika 引擎声明的支持类型集合。
+     * 预期：集合含文本 / 办公文档类类型，不含图片类型（图片走本地直读兜底）。
+     */
+    @Test
+    void should_declareOfficeTypes_when_supportedTypes_given_localEngine() {
+        // when
+        java.util.Set<com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType> supported =
+                parser.supportedTypes();
+
+        // then
+        assertTrue(supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.PDF));
+        assertTrue(supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.TXT));
+        assertTrue(supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.CSV));
+        assertFalse(supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.PNG),
+                "LOCAL 不支持图片类型");
     }
 
     /**

@@ -1,7 +1,6 @@
 package com.linkroa.deepdataagent.runtime.application.service.session;
 
 import com.linkroa.deepdataagent.agent.api.AgentSnapshotApi;
-import com.linkroa.deepdataagent.agent.api.DeploymentRunLifecycleApi;
 import com.linkroa.deepdataagent.agent.api.dto.AgentSnapshotDTO;
 import com.linkroa.deepdataagent.runtime.application.command.CreateSessionCommand;
 import com.linkroa.deepdataagent.runtime.application.command.UpdateSessionCommand;
@@ -20,7 +19,6 @@ import com.linkroa.deepdataagent.runtime.application.validation.SessionEnvironme
 import com.linkroa.deepdataagent.runtime.application.validation.SessionMountValidator;
 import com.linkroa.deepdataagent.runtime.domain.event.ChatEventFactory;
 import com.linkroa.deepdataagent.runtime.domain.event.ChatEventFactory.AssembledEvent;
-import com.linkroa.deepdataagent.runtime.domain.event.TurnFinished;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSessionContext;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
@@ -45,7 +43,6 @@ import jakarta.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.core.type.TypeReference;
@@ -59,7 +56,7 @@ import java.util.function.Supplier;
 
 /**
  * 会话生命周期入口服务（decompose-command-facade 4.3）：会话写操作（创建 / 更新 / 归档 / 删除 /
- * 中断）与挂载资源管理（追加 / 轮换令牌 / 移除）自原命令门面（decompose-command-facade 4.4 已物理删除）的会话分区
+ * 中断）与挂载资源管理（追加 / 移除）自原命令门面（decompose-command-facade 4.4 已物理删除）的会话分区
  * 纯搬移，事务边界、异常类型与包装、日志语义、调用次序零变化。
  * <p><b>依赖方向（design D3）</b>：本服务只向下依赖
  * {@link com.linkroa.deepdataagent.runtime.application.validation.SessionMountValidator}
@@ -108,9 +105,9 @@ public class SessionLifecycleService {
     private CoordinationLeaseService coordinationLeaseService;
     @Resource
     private ObjectMapper objectMapper;
-    /** 会话挂载校验器（decompose-command-facade 2.1）：环境 / 文件 / 记忆库 / 保管库四类
-     *  前置校验与挂载字节清单材料化；原直注的四个跨 BC 契约端口（FileApi / EnvironmentApi /
-     *  VaultReferenceApi / MemoryStoreApi）随校验规则一并迁入该组件。 */
+    /** 会话挂载校验器（decompose-command-facade 2.1）：环境 / 文件两类
+     *  前置校验与挂载字节清单材料化；原直注的跨 BC 契约端口（FileApi / EnvironmentApi）
+     *  随校验规则一并迁入该组件。 */
     @Resource
     private SessionMountValidator sessionMountValidator;
     /** turn 事件写入器（decompose-command-facade 2.3）：轮外落库点的会话级 seq 分配与静默广播。 */
@@ -128,11 +125,6 @@ public class SessionLifecycleService {
     /** Agent 快照契约：主线程嵌入 Agent 快照装配（裁剪规则权威在 agent BC，跨 BC 只读）。 */
     @Resource
     private AgentSnapshotApi agentSnapshotApi;
-    /** Spring 原生事件发布器（工具性设施直注，迭代裁决 2026-09-13）：挂起态会话被删除 / 作废时
-     *  在事务内发布 {@link TurnFinished}，由 {@code infrastructure.assembly.DeploymentRunOutcomeListener}
-     *  于 AFTER_COMMIT 回写调度运行终态（回滚不发）。 */
-    @Resource
-    private ApplicationEventPublisher applicationEventPublisher;
 
     // ==================== 会话管理（写操作） ====================
 
@@ -141,9 +133,8 @@ public class SessionLifecycleService {
      * <p>前置校验链（全有或全无，任一失败会话整体不落库）：agentId + 发布号必须绑定真实
      * Agent 版本台账（发布号非十进制 / Agent 不存在或已归档 → 404），不允许无全局回退；
      * 挂接运行环境时校验存在性 / 归属（不存在 / 越权 → 404）与执行平面
-     * （{@code self_hosted} → 400，本期运行时不可执行）；携带挂载资源时逐项校验文件 /
-     * 记忆库存在且归属当前用户（不存在 / 越权 → 404）；携带保管库挂载时同样逐项校验
-     * 存在且归属当前用户（不存在 / 越权 → 404）；携带会话环境变量时校验其形态
+     * （{@code self_hosted} → 400，本期运行时不可执行）；携带挂载资源时逐项校验文件
+     * 存在且归属当前用户（不存在 / 越权 → 404，本期仅支持 file 类型）；携带会话环境变量时校验其形态
      * （变量名 / 值类型 / 保留名与前缀 / 单值与总量体积 → 违规 400，见
      * {@link SessionEnvironmentVariablesValidator}）。</p>
      */
@@ -151,19 +142,17 @@ public class SessionLifecycleService {
         // 省略版本时物化激活版本；显式版本时走轻量校验链（发布号格式 / Agent 存在未归档 / 版本 / profile）
         String versionNumber = resolveVersion(command);
         // 挂载前置校验（decompose-command-facade 2.1：规则本体迁至 SessionMountValidator，
-        // 门面只保留调用编排）：环境存在性 / 归属 / 执行平面 → 文件判重 + 就绪 + 配额 →
-        // 记忆库归属 → 保管库归属；全有或全无，任一失败会话整体不落库且零物化
+        // 门面只保留调用编排）：环境存在性 / 归属 / 执行平面 → 文件判重 + 就绪 + 配额；
+        // 全有或全无，任一失败会话整体不落库且零物化
         sessionMountValidator.validateEnvironment(command);
         sessionMountValidator.validateMountedFiles(command);
-        sessionMountValidator.validateMountedMemoryStores(command);
-        sessionMountValidator.validateVaults(command);
         // 会话环境变量形态校验（D11：与挂载校验同层、与更新路径共用同一判定；非法的键值 / 体积
         // 在此即整批 400，会话零落库零物化——校验位置先于物化与入库，与挂载校验同一时序）
         SessionEnvironmentVariablesValidator.validate(command.environmentVariables());
         CreateSessionCommand resolved = new CreateSessionCommand(
                 command.userId(), command.agentId(), versionNumber, command.title(), command.metadata(),
                 command.triggerType(), command.triggerId(), command.resources(),
-                command.environmentId(), command.vaultIds(), command.environmentVariables());
+                command.environmentId(), command.environmentVariables());
         AgentSession session = AgentRuntimeConvert.INSTANCE.toSession(resolved);
         // 先物化、后入库（D5）：校验（判重 + 配额）已全部前置，此处只负责落盘；
         // 任一项物化失败以可读错误拒绝创建，本轮已物化副本由物化器内部补偿删除，会话不落库
@@ -247,13 +236,6 @@ public class SessionLifecycleService {
             chatEventRepository.deleteBySessionId(sessionId);
             sessionThreadRepository.deleteBySessionId(sessionId);
             sessionRepository.deleteBySessionId(sessionId);
-            // 调度运行回写（事件化）：等待确认中的会话被删除，挂起轮次随之作废（不经终态唯一出口），
-            // 事务内发布终局事件、提交后按中断收口回写；其余状态：idle/terminated 已由此前出口收口，
-            // running（轮内相位 running）经下方 cancel 走中断终态出口回写
-            if (session.turnPhase() == TurnPhase.AWAITING_CONFIRMATION) {
-                applicationEventPublisher.publishEvent(new TurnFinished(sessionId, session.triggerType(),
-                        DeploymentRunLifecycleApi.OUTCOME_TERMINATED));
-            }
         });
         // 幂等取消运行中的执行并标记中断（事件流已删除，本轮经中断路径静默收尾）
         sessionRegistry.get(sessionId).ifPresent(ctx -> ctx.cancel());
@@ -374,9 +356,6 @@ public class SessionLifecycleService {
                     chatEventRepository.save(chatEvent);
                     saved.add(chatEvent);
                 }
-                // 调度运行回写（事件化）：作废事务内发布终局事件，提交后按中断收口回写
-                applicationEventPublisher.publishEvent(new TurnFinished(sessionId, session.triggerType(),
-                        DeploymentRunLifecycleApi.OUTCOME_TERMINATED));
                 return Boolean.TRUE;
             }
             return Boolean.FALSE;
@@ -513,7 +492,7 @@ public class SessionLifecycleService {
         }
     }
 
-    // ==================== 挂载资源管理（追加 / 轮换令牌 / 移除） ====================
+    // ==================== 挂载资源管理（追加 / 移除） ====================
 
     /**
      * 创建后追加挂载文件资源（契约端点 {@code POST /sessions/{id}/resources}，仅 file 类型）。
@@ -542,7 +521,7 @@ public class SessionLifecycleService {
             throw new IllegalArgumentException("会话归属用户非法，不可追加挂载资源");
         }
         // 类型门禁（领域规则，先于材料化执行，避免为必然非法的批次做无谓就绪查询）：
-        // 本期追加路径仅允许 file 资源（github_repository / memory_store 创建后不可追加）
+        // 本期追加路径仅允许 file 资源
         SessionMountPolicy.requireFileOnly(resources);
         // 字节清单材料化（既有 + 新增一次取齐）后交聚合判定：fileId / mount_path 判重 → 就绪结论 →
         // 总量配额（规则权威 SessionMountPolicy，与创建路径同一实现；判定顺序即状态码优先级）
@@ -564,31 +543,8 @@ public class SessionLifecycleService {
     }
 
     /**
-     * 轮换 GitHub 仓库挂载令牌（资源管理契约 {@code update}）。
-     * <p>门禁与派生均在聚合（{@code AgentSession#rotateResourceToken}）：空令牌 400 →
-     * 资源未命中 404 → 类型门禁 400，判定顺序即状态码优先级。
-     * 新旧令牌均不写日志、不进响应（响应装配层剔除令牌字段）。</p>
-     *
-     * @param sessionId  会话业务 ID
-     * @param resourceId 挂载资源业务 ID（{@code sesr_}）
-     * @param newToken   新访问令牌（非空）
-     * @return 轮换后的资源值对象（含派生字段，令牌字段调用方不得回显）
-     */
-    public SessionResource rotateResourceToken(String sessionId, String resourceId, String newToken) {
-        AgentSession session = requireOwnedSession(sessionId);
-        requireMutableSession(session, "轮换挂载资源令牌");
-        AgentSession rotated = mutateMounts(() -> session.rotateResourceToken(resourceId, newToken));
-        // 轮换后的资源条目（聚合已保证其存在）：仅用于返回值装配，令牌字段由响应层剔除
-        SessionResource target = requireMountedResource(rotated, resourceId);
-        transactionTemplate.executeWithoutResult(status ->
-                sessionRepository.updateResources(sessionId, rotated.resources()));
-        return target;
-    }
-
-    /**
-     * 移除挂载资源（资源管理契约 {@code delete}）：仅 {@code file} 类型可移除（聚合门禁，
-     * 非 file → 409），移除后文件脱离挂载；{@code github_repository / memory_store}
-     * 创建后不可摘除。
+     * 移除挂载资源（资源管理契约 {@code delete}）：本期挂载仅 {@code file} 类型，故一律可移除；
+     * 移除后文件脱离挂载。
      *
      * @param sessionId  会话业务 ID
      * @param resourceId 待移除的挂载资源业务 ID（{@code sesr_}）
@@ -606,7 +562,7 @@ public class SessionLifecycleService {
     }
 
     /**
-     * 执行聚合挂载变更并把领域冲突映射为写操作面协议异常（追加 / 轮换 / 移除共用）。
+     * 执行聚合挂载变更并把领域冲突映射为写操作面协议异常（追加 / 移除共用）。
      *
      * @param mutation 聚合动作（纯内存派生，不含 IO）
      * @return 派生后的会话
@@ -621,16 +577,24 @@ public class SessionLifecycleService {
     }
 
     /**
-     * 挂载规则冲突 → 写操作面协议异常映射：判重 / 不就绪 / 不可移除升级为 409
-     * {@code invalid_request_error}（api-conventions「会话忙与会话资源冲突」特例：
-     * 契约明文规定的会话资源冲突不落通用 {@code conflict_error}；消息文本单点定义于领域），
-     * 资源未命中 404；配额超限与类型 / 令牌门禁本即 400（异常继承
-     * {@link IllegalArgumentException}）直接透传。
+     * 挂载规则冲突 → 写操作面协议异常映射：
+     * <ul>
+     *   <li>批内重复挂载同一文件（{@code DUPLICATE_FILE}）→ 409 {@code conflict_error}
+     *       （{@link ResourceConflictException}，通用资源冲突）；</li>
+     *   <li>挂载路径占用 / 文件未就绪 → 409 {@code invalid_request_error}
+     *       （{@link SessionBusyException}，api-conventions「会话忙与会话资源冲突」特例）；
+     *       消息文本单点定义于领域；</li>
+     *   <li>资源未命中 → 404；配额超限与类型门禁本即 400（异常继承
+     *       {@link IllegalArgumentException}）直接透传。</li>
+     * </ul>
      */
     private RuntimeException toMountRejection(MountViolationException ex) {
         return switch (ex.violation()) {
-            case DUPLICATE_FILE, DUPLICATE_MOUNT_PATH, FILE_NOT_MOUNTABLE, REMOVE_TYPE_UNSUPPORTED ->
-                    new SessionBusyException(ex.getMessage());
+            // 批内重复挂载同一文件：409 conflict_error（通用资源冲突；MUST NOT 复用 SessionBusyException，
+            // 后者是 invalid_request_error 的 409 特例，仅承载会话忙 / 契约明文会话资源冲突）
+            case DUPLICATE_FILE -> new ResourceConflictException(ex.getMessage());
+            // 挂载路径占用 / 文件未就绪：409 invalid_request_error（api-conventions 会话资源冲突特例）
+            case DUPLICATE_MOUNT_PATH, FILE_NOT_MOUNTABLE -> new SessionBusyException(ex.getMessage());
             case MOUNTED_RESOURCE_NOT_FOUND -> new ResourceNotFoundException(ex.getMessage());
             default -> ex;
         };

@@ -3,7 +3,6 @@ package com.linkroa.deepdataagent.runtime.domain.service;
 import com.linkroa.deepdataagent.runtime.domain.model.TerminalEventSpec;
 import com.linkroa.deepdataagent.runtime.domain.model.Transition;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.AgentSessionStatus;
-import com.linkroa.deepdataagent.runtime.domain.model.enums.DeploymentOutcome;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.TerminalNoOpReason;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.TerminalStopReason;
 import org.junit.jupiter.api.Test;
@@ -54,9 +53,8 @@ class DecisionTest {
                         List.of(TerminalEventSpec.threadStatusEvent(AgentSessionStatus.TERMINATED,
                                         TerminalStopReason.MAX_ITERATIONS),
                                 TerminalEventSpec.statusEvent(AgentSessionStatus.TERMINATED,
-                                        TerminalStopReason.MAX_ITERATIONS)),
-                        DeploymentOutcome.FAILED),
-                new Decision.Attempt(Transition.FINISH_TURN, IDLE_EVENTS, DeploymentOutcome.TERMINATED)));
+                                        TerminalStopReason.MAX_ITERATIONS))),
+                new Decision.Attempt(Transition.FINISH_TURN, IDLE_EVENTS)));
 
         // when / then：primaryTarget 只表示首选，实际采纳由 CAS 链式仲裁（顺序即优先级）
         assertEquals(AgentSessionStatus.TERMINATED, decision.primaryTarget());
@@ -82,8 +80,7 @@ class DecisionTest {
     @Test
     void should_throwIllegalArgument_when_constructor_given_noOpReasonWithChain() {
         // given：no-op 与尝试链互斥（二者并存说明决策构造有误）
-        Decision.Attempt attempt = new Decision.Attempt(Transition.FINISH_TURN, IDLE_EVENTS,
-                DeploymentOutcome.TERMINATED);
+        Decision.Attempt attempt = new Decision.Attempt(Transition.FINISH_TURN, IDLE_EVENTS);
 
         // when / then
         assertThrows(IllegalArgumentException.class,
@@ -94,7 +91,7 @@ class DecisionTest {
     void should_copyAttemptsDefensively_when_of_given_mutableList() {
         // given：显式传入可变列表
         List<Decision.Attempt> mutable = new ArrayList<>();
-        mutable.add(new Decision.Attempt(Transition.FINISH_TURN, IDLE_EVENTS, DeploymentOutcome.TERMINATED));
+        mutable.add(new Decision.Attempt(Transition.FINISH_TURN, IDLE_EVENTS));
 
         // when：构造后修改原列表
         Decision decision = Decision.of(mutable);
@@ -106,21 +103,19 @@ class DecisionTest {
     }
 
     @Test
-    void should_throwIllegalArgument_when_attempt_given_missingTransitionOrOutcome() {
+    void should_throwIllegalArgument_when_attempt_given_missingTransition() {
         // given / when / then
         assertThrows(IllegalArgumentException.class,
-                () -> new Decision.Attempt(null, IDLE_EVENTS, DeploymentOutcome.TERMINATED));
-        assertThrows(IllegalArgumentException.class,
-                () -> new Decision.Attempt(Transition.FINISH_TURN, IDLE_EVENTS, null));
+                () -> new Decision.Attempt(null, IDLE_EVENTS));
     }
 
     @Test
     void should_throwIllegalArgument_when_attempt_given_missingEvents() {
         // given / when / then：迁移必须声明终态事件集（否则状态已迁而事件表无痕）
         assertThrows(IllegalArgumentException.class,
-                () -> new Decision.Attempt(Transition.FINISH_TURN, List.of(), DeploymentOutcome.TERMINATED));
+                () -> new Decision.Attempt(Transition.FINISH_TURN, List.of()));
         assertThrows(IllegalArgumentException.class,
-                () -> new Decision.Attempt(Transition.FINISH_TURN, null, DeploymentOutcome.TERMINATED));
+                () -> new Decision.Attempt(Transition.FINISH_TURN, null));
     }
 
     @Test
@@ -133,10 +128,9 @@ class DecisionTest {
 
         // when / then
         assertThrows(IllegalArgumentException.class,
-                () -> new Decision.Attempt(Transition.FINISH_TURN, noSessionStatusEvent,
-                        DeploymentOutcome.TERMINATED));
+                () -> new Decision.Attempt(Transition.FINISH_TURN, noSessionStatusEvent));
         assertThrows(IllegalArgumentException.class,
-                () -> new Decision.Attempt(Transition.FINISH_TURN, wrongTarget, DeploymentOutcome.TERMINATED));
+                () -> new Decision.Attempt(Transition.FINISH_TURN, wrongTarget));
     }
 
     @Test
@@ -148,15 +142,14 @@ class DecisionTest {
 
         // when / then：末条虽与目标一致，但前一条状态事件已错位
         assertThrows(IllegalArgumentException.class,
-                () -> new Decision.Attempt(Transition.FINISH_TURN, mixed, DeploymentOutcome.TERMINATED));
+                () -> new Decision.Attempt(Transition.FINISH_TURN, mixed));
     }
 
     @Test
     void should_exposeImmutableEvents_when_attempt_given_constructedChain() {
         // given
         List<TerminalEventSpec> mutable = new ArrayList<>(IDLE_EVENTS);
-        Decision.Attempt attempt = new Decision.Attempt(Transition.FINISH_TURN, mutable,
-                DeploymentOutcome.TERMINATED);
+        Decision.Attempt attempt = new Decision.Attempt(Transition.FINISH_TURN, mutable);
 
         // when
         mutable.clear();

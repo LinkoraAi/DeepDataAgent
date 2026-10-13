@@ -10,16 +10,12 @@ import java.util.Map;
  * <p>工厂（infrastructure.client）据此装配 AgentScope HarnessAgent，规格本身保持框架无关注。</p>
  * <p><b>分组构造（R13 / D1）</b>：位置参数按语义拆为 8 个分组子 record
  * （{@link AgentIdentity} / {@link ModelBinding} / {@link PromptContent} / {@link Sandbox} /
- * {@link MountView} / {@link ToolGovernance} / {@link ArtifactOwnership}）+ {@code maxIters} 标量
- * + {@code mcpConnections} 清单（版本级 MCP 连接声明，非会话挂载，直挂顶层），
+ * {@link MountView} / {@link ToolGovernance} / {@link ArtifactOwnership}）+ {@code maxIters} 标量，
  * 位置参数错配在编译期不可能；构造一律经 {@link Builder}（逐组 withX），不再提供历史兼容构造器。</p>
  * <p><b>消费面兼容</b>：顶层保留与旧签名一致的扁平访问器（{@code agentId()} / {@code model()} /
  * {@code credential()} 等），它们委托各分组，工厂与执行器读取方式不变。</p>
- * <p><b>凭证明文面</b>：解密后的模型凭证与保管库明文分别由 {@link ModelBinding}（{@code toString}
- * 恒掩码）与 {@link VaultCredentialRef}（{@code toString} 恒掩码）持有；装配缓存仅存
- * 无凭证明文快照，凭证每轮实时注入（见 {@code RuntimeAgentAssemblyService}）。保管库明文<b>永不
- * 进沙箱数据面</b>——仅供 JVM 侧 MCP 凭据解析器（{@code McpCredentialResolver}）按 Target 匹配
- * 连接后注入请求鉴权头。</p>
+ * <p><b>凭证明文面</b>：解密后的模型凭证由 {@link ModelBinding}（{@code toString} 恒掩码）持有；
+ * 装配缓存仅存无凭证明文快照，凭证每轮实时注入（见 {@code RuntimeAgentAssemblyService}）。</p>
  */
 public record AgentAssemblySpec(
         AgentIdentity identity,
@@ -29,8 +25,7 @@ public record AgentAssemblySpec(
         Sandbox sandbox,
         MountView mountView,
         ToolGovernance toolGovernance,
-        ArtifactOwnership artifactOwnership,
-        List<McpConnection> mcpConnections
+        ArtifactOwnership artifactOwnership
 ) {
 
     public AgentAssemblySpec {
@@ -58,7 +53,6 @@ public record AgentAssemblySpec(
         if (artifactOwnership == null) {
             throw new IllegalArgumentException("产出归属分组不能为空");
         }
-        mcpConnections = mcpConnections == null ? List.of() : List.copyOf(mcpConnections);
     }
 
     // ==================== 扁平访问器（消费面无感：委托分组，签名与旧 record 一致） ====================
@@ -113,16 +107,6 @@ public record AgentAssemblySpec(
         return mountView.skills();
     }
 
-    /** 记忆库引用（框架无关注）。 */
-    public List<MemoryStoreRef> memoryStoreRefs() {
-        return mountView.memoryStoreRefs();
-    }
-
-    /** 保管库凭证引用（明文仅内存持有，toString 脱敏）。 */
-    public List<VaultCredentialRef> vaultCredentials() {
-        return mountView.vaultCredentials();
-    }
-
     /** 会话级环境变量（toString 仅输出键名）。 */
     public Map<String, String> environmentVariables() {
         return mountView.envVars();
@@ -154,8 +138,7 @@ public record AgentAssemblySpec(
     }
 
     /**
-     * 组合 toString：委托各分组（凭证 / 保管库明文分别由 {@link ModelBinding}、
-     * {@link VaultCredentialRef}、{@link MountView} 各自掩码），明文不随日志 / 异常链泄露。
+     * 组合 toString：委托各分组（凭证由 {@link ModelBinding} 掩码），明文不随日志 / 异常链泄露。
      */
     @Override
     public String toString() {
@@ -166,15 +149,13 @@ public record AgentAssemblySpec(
                 + ", sandbox=" + sandbox
                 + ", mountView=" + mountView
                 + ", toolGovernance=" + toolGovernance
-                + ", artifactOwnership=" + artifactOwnership
-                + ", mcpConnections=" + mcpConnections + "]";
+                + ", artifactOwnership=" + artifactOwnership + "]";
     }
 
     /**
      * 分组建造者（唯一构造入口）：逐组 withX 装配，{@code build()} 走顶层规范构造器校验不变量。
-     * <p>未设置的可选分组（{@link ToolGovernance} / {@link ArtifactOwnership}）与未设置的
-     * {@code mcpConnections} 清单在 {@code build()} 时按语义归一为空（空分组 / 空清单），
-     * 等价旧「不携带工具策略 / 未绑定会话 / 版本未声明 MCP」的兼容构造器效果。</p>
+     * <p>未设置的可选分组（{@link ToolGovernance} / {@link ArtifactOwnership}）在 {@code build()} 时
+     * 按语义归一为空（空分组），等价旧「不携带工具策略 / 未绑定会话」的兼容构造器效果。</p>
      */
     public static final class Builder {
         private AgentIdentity identity;
@@ -185,7 +166,6 @@ public record AgentAssemblySpec(
         private MountView mountView;
         private ToolGovernance toolGovernance;
         private ArtifactOwnership artifactOwnership;
-        private List<McpConnection> mcpConnections;
 
         private Builder() {
         }
@@ -279,18 +259,7 @@ public record AgentAssemblySpec(
         }
 
         /**
-         * 设置版本级 MCP 连接声明（可空；未设置时 {@link #build()} 归一为空清单）。
-         *
-         * @param mcpConnections MCP 连接清单
-         * @return 本建造者（链式调用）
-         */
-        public Builder withMcpConnections(List<McpConnection> mcpConnections) {
-            this.mcpConnections = mcpConnections;
-            return this;
-        }
-
-        /**
-         * 构建装配规格：未设置的可选分组按空分组、未设置的 MCP 清单按空清单归一，再走顶层规范构造器校验不变量。
+         * 构建装配规格：未设置的可选分组按空分组归一，再走顶层规范构造器校验不变量。
          *
          * @return 装配规格
          * @throws IllegalArgumentException 必填分组缺失或标量 / 子 record 字段违反不变量
@@ -304,8 +273,7 @@ public record AgentAssemblySpec(
                     sandbox,
                     mountView,
                     toolGovernance == null ? ToolGovernance.empty() : toolGovernance,
-                    artifactOwnership == null ? ArtifactOwnership.empty() : artifactOwnership,
-                    mcpConnections == null ? List.of() : mcpConnections);
+                    artifactOwnership == null ? ArtifactOwnership.empty() : artifactOwnership);
         }
     }
 
@@ -453,41 +421,30 @@ public record AgentAssemblySpec(
     }
 
     /**
-     * 挂载视图分组：技能内容 + 记忆库引用 + 保管库凭证 + 环境变量 + 文件挂载视图。
-     * <p>{@code vaultCredentials} 携解密密文材料，属明文凭据，<b>MUST NOT 进装配缓存</b>；
-     * 缓存快照仅取其非密成分（skills / memoryStoreRefs / envVars / fileMounts，见
-     * {@code CachedAssemblySnapshot}），保管库明文每轮实时注入。</p>
+     * 挂载视图分组：技能内容 + 环境变量 + 文件挂载视图。
      *
-     * @param skills          挂载技能（已物化的框架无关注内容，可空/空）
-     * @param memoryStoreRefs 记忆库引用（框架无关注，可空/空，未引用不装配记忆检索工具）
-     * @param vaultCredentials 挂载保管库解密后的凭证（框架无关注值对象，明文仅内存持有，toString 脱敏）
-     * @param envVars         会话级环境变量（Session 挂载注入沙箱数据面，可空/空；toString 仅输出键名）
-     * @param fileMounts      会话文件挂载视图（reconcile 产出清单，工厂据此拼系统提示段落并判定 bind mount）
+     * @param skills     挂载技能（已物化的框架无关注内容，可空/空）
+     * @param envVars    会话级环境变量（Session 挂载注入沙箱数据面，可空/空；toString 仅输出键名）
+     * @param fileMounts 会话文件挂载视图（reconcile 产出清单，工厂据此拼系统提示段落并判定 bind mount）
      */
     public record MountView(
             List<Skill> skills,
-            List<MemoryStoreRef> memoryStoreRefs,
-            List<VaultCredentialRef> vaultCredentials,
             Map<String, String> envVars,
             List<FileMountRef> fileMounts
     ) {
         public MountView {
             skills = skills == null ? List.of() : List.copyOf(skills);
-            memoryStoreRefs = memoryStoreRefs == null ? List.of() : List.copyOf(memoryStoreRefs);
-            vaultCredentials = vaultCredentials == null ? List.of() : List.copyOf(vaultCredentials);
             envVars = envVars == null ? Map.of() : Map.copyOf(envVars);
             fileMounts = fileMounts == null ? List.of() : List.copyOf(fileMounts);
         }
 
         /**
          * 脱敏 toString：技能仅列名称、环境变量仅输出键名（值可能含敏感材料），
-         * 保管库凭证随 {@link VaultCredentialRef} 各自掩码 token，挂载清单为元数据直接列出。
+         * 挂载清单为元数据直接列出。
          */
         @Override
         public String toString() {
             return "MountView[skills=" + skills.stream().map(Skill::name).toList()
-                    + ", memoryStoreRefs=" + memoryStoreRefs
-                    + ", vaultCredentials=" + vaultCredentials
                     + ", envVars=" + envVars.keySet()
                     + ", fileMounts=" + fileMounts + "]";
         }
@@ -536,87 +493,14 @@ public record AgentAssemblySpec(
     // ==================== 既有值对象 ====================
 
     /**
-     * MCP 连接声明（框架无关注值对象，agent 版本快照 {@code mcp_servers} 的本 BC 映射）。
-     * <p>描述版本声明的一路 MCP 服务器连接：{@code name} 为服务器名（MCP 配置 Map 的键），
-     * {@code url} 为 streamable-http 端点。工厂据此结合 {@link VaultCredentialRef}
-     * 经 {@code McpCredentialResolver} 注入鉴权头。</p>
-     *
-     * @param name 服务器名称（非空）
-     * @param url  MCP 端点 URL（非空）
-     */
-    public record McpConnection(String name, String url) {
-
-        public McpConnection {
-            if (StringUtils.isBlank(name)) {
-                throw new IllegalArgumentException("MCP 连接名称不能为空");
-            }
-            if (StringUtils.isBlank(url)) {
-                throw new IllegalArgumentException("MCP 连接 URL 不能为空");
-            }
-        }
-    }
-
-    /**
-     * 保管库凭证引用（运行时解密材料化的框架无关注值对象）。
-     * <p>承载解密后的 {@code token} 明文，<b>仅作 JVM 侧 MCP 鉴权头注入的瞬态数据</b>，
-     * 永不进沙箱数据面（环境变量）；不参与持久化与响应序列化，且 {@link #toString()}
-     * 强制脱敏防止随日志 / 异常链泄露。</p>
-     *
-     * @param vaultId      所属保管库业务ID
-     * @param credentialId 凭证业务ID
-     * @param authType     凭证鉴权类型（static_bearer / mcp_oauth / environment_variable）
-     * @param target       凭证 Target（URL Target 型为 MCP 服务器 URL；变量名 Target 型为环境变量名），
-     *                     运行时按此精确匹配 MCP 连接后注入鉴权
-     * @param token        解密后的凭证明文
-     */
-    public record VaultCredentialRef(
-            String vaultId,
-            String credentialId,
-            String authType,
-            String target,
-            String token
-    ) {
-
-        public VaultCredentialRef {
-            if (StringUtils.isBlank(vaultId)) {
-                throw new IllegalArgumentException("保管库ID不能为空");
-            }
-            if (StringUtils.isBlank(credentialId)) {
-                throw new IllegalArgumentException("凭证ID不能为空");
-            }
-            if (StringUtils.isBlank(authType)) {
-                throw new IllegalArgumentException("凭证鉴权类型不能为空");
-            }
-            if (StringUtils.isBlank(target)) {
-                throw new IllegalArgumentException("凭证 Target 不能为空");
-            }
-        }
-
-        /**
-         * 脱敏 toString：凭证明文不随日志 / 异常链输出。
-         */
-        @Override
-        public String toString() {
-            return "VaultCredentialRef[vaultId=" + vaultId
-                    + ", credentialId=" + credentialId
-                    + ", authType=" + authType
-                    + ", target=" + target
-                    + ", token=****]";
-        }
-    }
-
-    /**
      * 逐工具执行权限策略（框架无关注值对象，agent 契约 tools_json 权限策略的本 BC 映射）。
      * <p>工厂据此装配 Harness 权限引擎：always_ask → 每次调用触发 HITL 确认暂停、
      * always_deny → 直接拒绝；always_allow 与未配置工具走框架放行路径。</p>
      *
-     * @param name             工具名（内置工具为公开契约名，MCP 工具为服务端暴露的原始工具名，非空）
+     * @param name             工具名（内置工具为公开契约名，非空）
      * @param permissionPolicy 权限策略（always_allow / always_ask / always_deny，非空）
-     * @param mcpServerName    所属 MCP 服务器名（仅 {@code mcp_toolset} 来源的策略项非空；内置工具为 null）。
-     *                         非空时工厂 MUST 先把 {@code name} 翻译为运行时实名
-     *                         {@code mcp__{mcpServerName}__{name}} 再落为权限规则（按原始工具名落表永不命中）
      */
-    public record ToolExecutionPolicy(String name, String permissionPolicy, String mcpServerName) {
+    public record ToolExecutionPolicy(String name, String permissionPolicy) {
 
         /** 恒允许策略。 */
         public static final String POLICY_ALWAYS_ALLOW = "always_allow";
@@ -648,13 +532,6 @@ public record AgentAssemblySpec(
                 return EVALUATED_DENY;
             }
             return EVALUATED_ALLOW;
-        }
-
-        /**
-         * 兼容构造器：内置工具策略（无 MCP 服务器归属）。
-         */
-        public ToolExecutionPolicy(String name, String permissionPolicy) {
-            this(name, permissionPolicy, null);
         }
 
         /**

@@ -45,7 +45,7 @@ import static org.mockito.Mockito.when;
  * <p>覆盖：发布号十进制解析、Agent 存在/归档校验、owner 归属隔离（agent / profile /
  * 版本号解析）、版本/profile 存在性、凭证解密链路、模型标识拼接
  * （AGENTSCOPE 原样，其余 format:modelName）、技能引用缺失显式失败。
- * 环境 / 记忆库 / 保管库挂载已移出版本快照（Session 执行时选择），装配契约对应槽位恒为空。</p>
+ * 环境挂载已移出版本快照（Session 执行时选择），装配契约对应槽位恒为空。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class DefaultAgentVersionAssemblyPortTest {
@@ -102,10 +102,8 @@ class DefaultAgentVersionAssemblyPortTest {
         assertEquals(0, resolved.skills().size());
         // AGENTS.md 能力已废止：装配侧不再读 agents_md，契约占位恒 null
         assertNull(resolved.agentsMd());
-        // 环境 / 记忆库 / 保管库不再来自版本快照：装配恒为空位（由 Session 挂载装配填充）
+        // 环境挂载不再来自版本快照：装配恒为空位（由 Session 挂载装配填充）
         assertNull(resolved.environment());
-        assertEquals(0, resolved.memoryStores().size());
-        assertEquals(0, resolved.vaultCredentials().size());
     }
 
     @Test
@@ -114,7 +112,7 @@ class DefaultAgentVersionAssemblyPortTest {
         stubDefinition(false);
         AgentVersion versionRow = AgentVersion.restore(
                 1L, "v-id-dyn", "agent-a", 1, "v1", null, "",
-                "p-1", null, null, null, "[{\"type\":\"custom\",\"skill_id\":\"skill_1\"}]", null, null,
+                "p-1", null, null, "[{\"type\":\"custom\",\"skill_id\":\"skill_1\"}]", null, null,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
         when(agentVersionRepository.findByAgentIdAndVersionNumber("agent-a", 1))
@@ -141,7 +139,7 @@ class DefaultAgentVersionAssemblyPortTest {
         stubDefinition(false);
         AgentVersion versionRow = AgentVersion.restore(
                 1L, "v-id-1", "agent-a", 1, "v1", null, "",
-                "p-1", null, null, null,
+                "p-1", null, null,
                 "[{\"type\":\"custom\",\"skill_id\":\"skill_1\",\"version\":\"1759178010641129\"}]", null, null,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
@@ -271,7 +269,7 @@ class DefaultAgentVersionAssemblyPortTest {
         stubDefinition(false);
         AgentVersion versionRow = AgentVersion.restore(
                 1L, "v-id-5", "agent-a", 1, "v1", null, "",
-                "p-1", null, null, null,
+                "p-1", null, null,
                 "[{\"type\":\"custom\",\"skill_id\":\"skill_ghost\",\"version\":\"1759178010641129\"}]", null, null,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
@@ -389,9 +387,7 @@ class DefaultAgentVersionAssemblyPortTest {
                         "[{\"type\":\"agent_toolset_20260401\",\"configs\":["
                                 + "{\"name\":\"Bash\",\"permission_policy\":\"always_ask\"},"
                                 + "{\"name\":\"Read\",\"permission_policy\":\"always_allow\"},"
-                                + "{\"name\":\"Write\"}]},"
-                                + "{\"type\":\"mcp_toolset\",\"mcp_server_name\":\"db-mcp\",\"configs\":["
-                                + "{\"name\":\"query\",\"permission_policy\":\"always_deny\"}]}]")));
+                                + "{\"name\":\"Write\"}]}]")));
         when(modelProfileRepository.findByProfileId("p-1"))
                 .thenReturn(Optional.of(profile(ApiFormat.OPENAI, "gpt-4", "enc-cred")));
         when(credentialEncryptionUtil.decrypt("enc-cred")).thenReturn("sk-plain");
@@ -399,13 +395,11 @@ class DefaultAgentVersionAssemblyPortTest {
         // when
         ResolvedAgentAssemblyDTO resolved = port.resolve("agent-a", "1", OWNER);
 
-        // then（跨 toolset 统一展平；无策略的 Write 不产出契约项）
-        assertEquals(3, resolved.toolPolicies().size());
+        // then（统一展平；无策略的 Write 不产出契约项）
+        assertEquals(2, resolved.toolPolicies().size());
         assertEquals("Bash", resolved.toolPolicies().get(0).name());
         assertEquals("always_ask", resolved.toolPolicies().get(0).permissionPolicy());
         assertEquals("always_allow", resolved.toolPolicies().get(1).permissionPolicy());
-        assertEquals("query", resolved.toolPolicies().get(2).name());
-        assertEquals("always_deny", resolved.toolPolicies().get(2).permissionPolicy());
     }
 
     @Test
@@ -469,25 +463,6 @@ class DefaultAgentVersionAssemblyPortTest {
         // then（复活后无残余约束）
         assertFalse(resolved.toolVisibility().hasConstraint());
         assertEquals(List.of(), resolved.toolVisibility().hiddenTools());
-    }
-
-    @Test
-    void should_ignoreNonAgentToolset_when_resolve_given_mcpToolsetVisibilityFields() {
-        // given（非 agent_toolset 条目不参与可见性聚合）
-        stubDefinition(false);
-        when(agentVersionRepository.findByAgentIdAndVersionNumber("agent-a", 1))
-                .thenReturn(Optional.of(versionWithTools(1, "v1",
-                        "[{\"type\":\"mcp_toolset\",\"mcp_server_name\":\"db-mcp\",\"configs\":["
-                                + "{\"name\":\"query\",\"enabled\":false}]}]")));
-        when(modelProfileRepository.findByProfileId("p-1"))
-                .thenReturn(Optional.of(profile(ApiFormat.OPENAI, "gpt-4", "enc-cred")));
-        when(credentialEncryptionUtil.decrypt("enc-cred")).thenReturn("sk-plain");
-
-        // when
-        ResolvedAgentAssemblyDTO resolved = port.resolve("agent-a", "1", OWNER);
-
-        // then
-        assertFalse(resolved.toolVisibility().hasConstraint());
     }
 
     @Test
@@ -574,7 +549,7 @@ class DefaultAgentVersionAssemblyPortTest {
         stubDefinition(false);
         AgentVersion versionRow = AgentVersion.restore(
                 1L, "v-id-narrow", "agent-a", 1, "v1", null, "",
-                "p-1", null, null, null,
+                "p-1", null, null,
                 "[{\"type\":\"custom\",\"skill_id\":\"skill_1\",\"version\":\"1759178010641129\"}]", null, null,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
@@ -673,7 +648,7 @@ class DefaultAgentVersionAssemblyPortTest {
         return AgentVersion.restore(
                 1L, "v-id-" + versionNumber, "agent-a", versionNumber, name, null,
                 sysPrompt != null ? sysPrompt : "", profileId, null,
-                null, null, null, null, null,
+                null, null, null, null,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
     }
@@ -681,7 +656,7 @@ class DefaultAgentVersionAssemblyPortTest {
     private AgentVersion versionWithTools(int versionNumber, String name, String toolsJson) {
         return AgentVersion.restore(
                 1L, "v-tools-" + versionNumber, "agent-a", versionNumber, name, null,
-                "", "p-1", null, toolsJson, null, null, null, null,
+                "", "p-1", null, toolsJson, null, null, null,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
     }
@@ -689,7 +664,7 @@ class DefaultAgentVersionAssemblyPortTest {
     private AgentVersion versionWithModel(int versionNumber, String name, String modelJson) {
         return AgentVersion.restore(
                 1L, "v-model-" + versionNumber, "agent-a", versionNumber, name, null,
-                "", null, modelJson, null, null, null, null, null,
+                "", null, modelJson, null, null, null, null,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
     }

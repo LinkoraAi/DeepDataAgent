@@ -45,19 +45,14 @@ class SessionMountPolicyTest {
     }
 
     @Test
-    void should_throwAppendTypeUnsupported_when_requireFileOnly_given_memoryStoreAddition() {
-        // given
-        List<SessionResource> additions = List.of(SessionResource.memoryStore("ms_1", "read_only", null));
+    void should_ignoreNonFileResources_when_validateAppend_given_existingFileMounted() {
+        // given（既有项参与判重基准与配额求和）
+        List<SessionResource> existing = List.of(EXISTING_FILE);
+        Map<String, Long> sizes = Map.of("file_1", 300 * MB, "file_2", 200 * MB);
 
-        // when
-        MountViolationException ex = assertThrows(MountViolationException.class,
-                () -> SessionMountPolicy.requireFileOnly(additions));
-
-        // then（冲突种类 + 冲突对象为资源类型 + 消息文本单点口径）
-        assertEquals(MountViolationType.APPEND_TYPE_UNSUPPORTED, ex.violation());
-        assertEquals(SessionResource.MEMORY_STORE_TYPE, ex.subject());
-        assertTrue(ex.getMessage().contains("追加挂载仅支持 file 类型资源"));
-        assertTrue(ex instanceof IllegalArgumentException);
+        // when & then（file_1 的 300MB 参与求和，追加 200MB 恰好达标）
+        SessionMountPolicy.validateAppend(existing,
+                List.of(SessionResource.file("file_2", "mounts/b.txt")), sizes);
     }
 
     // ==================== validateAppend：合法批次 ====================
@@ -221,12 +216,9 @@ class SessionMountPolicyTest {
     }
 
     @Test
-    void should_ignoreNonFileResources_when_validateAppend_given_githubAndMemoryStoreMounted() {
-        // given（非 file 既有项不参与判重基准与配额求和）
-        List<SessionResource> existing = List.of(
-                EXISTING_FILE,
-                SessionResource.githubRepository("https://github.com/acme/app.git", "ghp_t", "main"),
-                SessionResource.memoryStore("ms_1", null, null));
+    void should_ignoreNonFileResources_when_validateAppend_given_existingFile() {
+        // given（既有 file 项参与判重基准与配额求和）
+        List<SessionResource> existing = List.of(EXISTING_FILE);
         Map<String, Long> sizes = Map.of("file_1", 300 * MB, "file_2", 200 * MB);
 
         // when & then（仅 file_1 的 300MB 参与求和，追加 200MB 恰好达标）
@@ -276,21 +268,6 @@ class SessionMountPolicyTest {
 
         // then
         assertEquals(MountViolationType.FILE_NOT_MOUNTABLE, ex.violation());
-    }
-
-    @Test
-    void should_preferTypeGate_when_validateAppend_given_nonFileAdditionWithoutMetadata() {
-        // given（类型非法与元数据缺失同时成立）
-        Map<String, Long> sizes = Map.of();
-
-        // when
-        MountViolationException ex = assertThrows(MountViolationException.class,
-                () -> SessionMountPolicy.validateAppend(List.of(),
-                        List.of(SessionResource.githubRepository("https://github.com/acme/app.git", "ghp_t", null)),
-                        sizes));
-
-        // then
-        assertEquals(MountViolationType.APPEND_TYPE_UNSUPPORTED, ex.violation());
     }
 
     @Test

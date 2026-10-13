@@ -115,18 +115,6 @@ public class JdbcAgentSessionRepository implements AgentSessionRepository {
     }
 
     @Override
-    public long countByMemoryStoreId(String storeId) {
-        Long count = mapper.countByMemoryStoreId(storeId);
-        return count == null ? 0L : count;
-    }
-
-    @Override
-    public long countByVaultId(String vaultId) {
-        Long count = mapper.countByVaultId(vaultId);
-        return count == null ? 0L : count;
-    }
-
-    @Override
     public void touchLastActive(String sessionId) {
         mapper.touchLastActive(sessionId);
     }

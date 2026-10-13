@@ -7,6 +7,7 @@ import com.linkroa.deepdataagent.knowledgebase.domain.model.MultiModelConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.RagEngineConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.S3File;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.DocumentStatus;
+import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
@@ -24,6 +25,7 @@ import java.util.List;
  * @param documentId                文档主键
  * @param kbId                      所属知识库ID
  * @param fileName                  文件名
+ * @param fileType                  文档类型（源自 {@code document.file_type} 列）；可为 null（未知类型）
  * @param status                    文档当前处理状态（读取时刻快照）
  * @param s3File                    源文件对象存储引用；可为 null（s3_file 列空白，
  *                                  表示无源文件可取，由消费方判定 FAILED 并回写原因）
@@ -46,6 +48,7 @@ public record IngestionDocumentContext(
         Long documentId,
         Long kbId,
         String fileName,
+        FileType fileType,
         DocumentStatus status,
         S3File s3File,
         String documentChunkStrategyJson,

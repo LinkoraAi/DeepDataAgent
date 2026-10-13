@@ -4,7 +4,6 @@ import com.linkroa.deepdataagent.agent.application.dto.AgentToolPolicyDTO;
 import com.linkroa.deepdataagent.agent.application.dto.AgentToolVisibilityDTO;
 import com.linkroa.deepdataagent.agent.application.dto.ResolvedAgentAssemblyDTO;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec;
-import com.linkroa.deepdataagent.runtime.domain.model.MemoryStoreRef;
 import com.linkroa.deepdataagent.runtime.domain.model.Skill;
 import org.junit.jupiter.api.Test;
 
@@ -31,13 +30,12 @@ class AgentAssemblyConvertTest {
         ResolvedAgentAssemblyDTO dto = new ResolvedAgentAssemblyDTO(
                 "agent-a", 3, "v3", "台账系统提示词", "---\nname: 台账\ndescription: 客户台账助手\n---\n\n统一使用中文回复。",
                 "openai:gpt-4",
-                10, "sk-plain", "https://api.example.com/v1", List.of(), null, null,
-                List.of());
+                10, "sk-plain", "https://api.example.com/v1", List.of(), null);
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
 
         // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), Map.of(),
-                "sess_1", 7L, List.of(), List.of());
+        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), Map.of(),
+                "sess_1", 7L, List.of());
 
         // then（契约字段按运行时语义映射）
         assertEquals("agent-a", spec.agentId());
@@ -60,40 +58,11 @@ class AgentAssemblyConvertTest {
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
 
         // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(skill), List.of(), List.of(), Map.of(),
-                "sess_1", 7L, List.of(), List.of());
+        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(skill), Map.of(),
+                "sess_1", 7L, List.of());
 
         // then
         assertEquals(List.of(skill), spec.skills());
-    }
-
-    @Test
-    void should_passThroughMemoryStoreRefs_when_toSpec_given_memoryStoreRefs() {
-        // given
-        MemoryStoreRef ref = new MemoryStoreRef("ms-1", "会话记忆");
-        ResolvedAgentAssemblyDTO dto = sampleDto();
-        AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
-
-        // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(ref), List.of(), Map.of(),
-                "sess_1", 7L, List.of(), List.of());
-
-        // then
-        assertEquals(List.of(ref), spec.memoryStoreRefs());
-    }
-
-    @Test
-    void should_normalizeEmptyMemoryStoreRefs_when_toSpec_given_emptyMemoryStoreRefs() {
-        // given
-        ResolvedAgentAssemblyDTO dto = sampleDto();
-        AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
-
-        // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), null, List.of(), Map.of(),
-                "sess_1", 7L, List.of(), List.of());
-
-        // then（空记忆引用归一化为空列表）
-        assertTrue(spec.memoryStoreRefs().isEmpty());
     }
 
     @Test
@@ -103,8 +72,8 @@ class AgentAssemblyConvertTest {
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
 
         // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), Map.of(),
-                "sess_1", 7L, List.of(), List.of());
+        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), Map.of(),
+                "sess_1", 7L, List.of());
 
         // then
         assertNull(spec.agentsMd());
@@ -115,31 +84,15 @@ class AgentAssemblyConvertTest {
         // given & when & then（空契约导致映射字段为空，规格不变量拒绝空 agentId）
         assertThrows(IllegalArgumentException.class, () -> assembler.toSpec(
                 null, AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L),
-                List.of(), List.of(), List.of(), Map.of(), "sess_1", 7L, List.of(), List.of()));
+                List.of(), Map.of(), "sess_1", 7L, List.of()));
     }
 
     @Test
     void should_reject_when_toSpec_given_nullSandbox() {
         // given & when & then（沙箱规格缺失，规格构造拒绝）
         assertThrows(IllegalArgumentException.class,
-                () -> assembler.toSpec(sampleDto(), null, List.of(), List.of(), List.of(), Map.of(),
-                        "sess_1", 7L, List.of(), List.of()));
-    }
-
-    @Test
-    void should_passThroughVaultCredentials_when_toSpec_given_vaultCredentials() {
-        // given
-        AgentAssemblySpec.VaultCredentialRef ref = new AgentAssemblySpec.VaultCredentialRef(
-                "vault-1", "cr-1", "static_bearer", "https://db.example.com", "sk-plain");
-        ResolvedAgentAssemblyDTO dto = sampleDto();
-        AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
-
-        // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(ref), Map.of(),
-                "sess_1", 7L, List.of(), List.of());
-
-        // then（保管库凭证引用原样透传进装配规格）
-        assertEquals(List.of(ref), spec.vaultCredentials());
+                () -> assembler.toSpec(sampleDto(), null, List.of(), Map.of(),
+                        "sess_1", 7L, List.of()));
     }
 
     @Test
@@ -151,41 +104,11 @@ class AgentAssemblyConvertTest {
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
 
         // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), Map.of(),
-                "sess_1", 7L, List.of(mount), List.of());
+        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), Map.of(),
+                "sess_1", 7L, List.of(mount));
 
         // then
         assertEquals(List.of(mount), spec.fileMounts());
-    }
-
-    @Test
-    void should_passThroughMcpConnections_when_toSpec_given_mcpConnections() {
-        // given（版本声明的 MCP 连接清单：防腐层原样透传至顶层组件，供工厂装配 ToolsConfig.mcpServers）
-        AgentAssemblySpec.McpConnection connection = new AgentAssemblySpec.McpConnection(
-                "github", "https://api.githubcopilot.com/mcp");
-        ResolvedAgentAssemblyDTO dto = sampleDto();
-        AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
-
-        // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), Map.of(),
-                "sess_1", 7L, List.of(), List.of(connection));
-
-        // then
-        assertEquals(List.of(connection), spec.mcpConnections());
-    }
-
-    @Test
-    void should_defaultEmptyMcpConnections_when_toSpec_given_nullMcpConnections() {
-        // given（未显式给出连接清单：规格紧凑构造器归一为空）
-        ResolvedAgentAssemblyDTO dto = sampleDto();
-        AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
-
-        // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), Map.of(),
-                "sess_1", 7L, List.of(), null);
-
-        // then
-        assertTrue(spec.mcpConnections().isEmpty());
     }
 
     @Test
@@ -193,13 +116,13 @@ class AgentAssemblyConvertTest {
         // given（装配期解析的生效调优参数：防腐层原样透传，供工厂注入 Harness 模型配置）
         ResolvedAgentAssemblyDTO dto = new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "提示词", null, "openai:gpt-4",
-                10, null, "https://api.example.com/v1", List.of(), null, null,
-                List.of(), "high", 200000);
+                10, null, "https://api.example.com/v1", List.of(), null,
+                "high", 200000);
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
 
         // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), Map.of(),
-                "sess_1", 7L, List.of(), List.of());
+        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), Map.of(),
+                "sess_1", 7L, List.of());
 
         // then
         assertEquals("high", spec.modelEffort());
@@ -214,8 +137,8 @@ class AgentAssemblyConvertTest {
         Map<String, String> envVars = Map.of("LOG_LEVEL", "debug", "TZ", "Asia/Shanghai");
 
         // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), envVars,
-                "sess_1", 7L, List.of(), List.of());
+        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), envVars,
+                "sess_1", 7L, List.of());
 
         // then
         assertEquals(envVars, spec.environmentVariables());
@@ -228,8 +151,8 @@ class AgentAssemblyConvertTest {
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
 
         // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), null,
-                "sess_1", 7L, List.of(), List.of());
+        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), null,
+                "sess_1", 7L, List.of());
 
         // then
         assertTrue(spec.environmentVariables().isEmpty());
@@ -240,15 +163,15 @@ class AgentAssemblyConvertTest {
         // given（契约逐工具权限策略：防腐层映射为本 BC 值对象，供工厂装配权限引擎）
         ResolvedAgentAssemblyDTO dto = new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "提示词", null, "openai:gpt-4",
-                10, null, "https://api.example.com/v1", List.of(), null, null,
-                List.of(), null, null,
+                10, null, "https://api.example.com/v1", List.of(), null, null, null,
                 List.of(new AgentToolPolicyDTO("Bash", AgentToolPolicyDTO.POLICY_ALWAYS_ASK),
-                        new AgentToolPolicyDTO("WebFetch", AgentToolPolicyDTO.POLICY_ALWAYS_DENY)));
+                        new AgentToolPolicyDTO("WebFetch", AgentToolPolicyDTO.POLICY_ALWAYS_DENY)),
+                null);
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
 
         // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), Map.of(),
-                "sess_1", 7L, List.of(), List.of());
+        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), Map.of(),
+                "sess_1", 7L, List.of());
 
         // then（同名组件逐条映射，保持声明顺序）
         assertEquals(2, spec.toolPolicies().size());
@@ -265,8 +188,8 @@ class AgentAssemblyConvertTest {
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
 
         // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), Map.of(),
-                "sess_1", 7L, List.of(), List.of());
+        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), Map.of(),
+                "sess_1", 7L, List.of());
 
         // then
         assertTrue(spec.toolPolicies().isEmpty());
@@ -279,8 +202,8 @@ class AgentAssemblyConvertTest {
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
 
         // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), Map.of(),
-                "sess_artifact_9", 42L, List.of(), List.of());
+        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), Map.of(),
+                "sess_artifact_9", 42L, List.of());
 
         // then
         assertEquals("sess_artifact_9", spec.sessionId());
@@ -294,8 +217,8 @@ class AgentAssemblyConvertTest {
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
 
         // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), Map.of(),
-                null, null, List.of(), List.of());
+        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), Map.of(),
+                null, null, List.of());
 
         // then
         assertNull(spec.sessionId());
@@ -307,14 +230,13 @@ class AgentAssemblyConvertTest {
         // given（契约可见性名单映射为本 BC 值对象，契约名原样透传不翻译）
         ResolvedAgentAssemblyDTO dto = new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "提示词", null, "openai:gpt-4",
-                10, null, "https://api.example.com/v1", List.of(), null, null,
-                List.of(), null, null, List.of(),
+                10, null, "https://api.example.com/v1", List.of(), null, null, null, List.of(),
                 new AgentToolVisibilityDTO(List.of("Bash", "Read"), List.of("Write")));
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
 
         // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), Map.of(),
-                "sess_1", 7L, List.of(), List.of());
+        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), Map.of(),
+                "sess_1", 7L, List.of());
 
         // then
         assertTrue(spec.toolVisibility().hasConstraint());
@@ -329,8 +251,8 @@ class AgentAssemblyConvertTest {
         AgentAssemblySpec.Sandbox sandbox = AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L);
 
         // when
-        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), List.of(), List.of(), Map.of(),
-                "sess_1", 7L, List.of(), List.of());
+        AgentAssemblySpec spec = assembler.toSpec(dto, sandbox, List.of(), Map.of(),
+                "sess_1", 7L, List.of());
 
         // then
         assertFalse(spec.toolVisibility().hasConstraint());
@@ -339,7 +261,6 @@ class AgentAssemblyConvertTest {
     private ResolvedAgentAssemblyDTO sampleDto() {
         return new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "提示词", null, "openai:gpt-4",
-                10, null, "https://api.example.com/v1", List.of(), null, null,
-                List.of());
+                10, null, "https://api.example.com/v1", List.of(), null);
     }
 }

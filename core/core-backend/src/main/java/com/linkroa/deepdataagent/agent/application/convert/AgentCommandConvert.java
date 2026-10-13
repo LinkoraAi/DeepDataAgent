@@ -18,7 +18,7 @@ import java.util.Map;
 
 /**
  * Agent 配置请求转换器（Request → Command，创建与发布复用同一请求体「配置即版本」）。
- * <p>模型引用、工具 / MCP / 技能配方与元数据在协议层以结构化形态提交，此处统一序列化为
+ * <p>模型引用、工具 / 技能配方与元数据在协议层以结构化形态提交，此处统一序列化为
  * JSON 字符串随命令下发，落 {@code agent_version.*_json} 各列。</p>
  */
 @Mapper
@@ -30,13 +30,13 @@ public interface AgentCommandConvert {
 
     default CreateAgentCommand toCreateCommand(AgentConfigRequest request) {
         rejectAgentsMd(request.agentsMd());
+        rejectMcpServers(request.mcpServers());
         return new CreateAgentCommand(
                 request.name(),
                 request.description(),
                 request.system(),
                 toJsonValue(request.model(), "模型引用"),
                 toJsonArray(request.tools()),
-                toJsonArray(request.mcpServers()),
                 toJsonArray(request.skills()),
                 toJsonValue(request.multiagent(), "multiagent"),
                 toJsonValue(request.metadata(), "元数据")
@@ -45,6 +45,7 @@ public interface AgentCommandConvert {
 
     default PublishAgentVersionCommand toPublishCommand(String agentId, AgentConfigRequest request) {
         rejectAgentsMd(request.agentsMd());
+        rejectMcpServers(request.mcpServers());
         return new PublishAgentVersionCommand(
                 agentId,
                 StringUtils.trimToNull(request.name()),
@@ -52,7 +53,6 @@ public interface AgentCommandConvert {
                 request.system(),
                 toJsonValue(request.model(), "模型引用"),
                 toJsonArray(request.tools()),
-                toJsonArray(request.mcpServers()),
                 toJsonArray(request.skills()),
                 toJsonValue(request.multiagent(), "multiagent"),
                 toJsonValue(request.metadata(), "元数据")
@@ -88,6 +88,30 @@ public interface AgentCommandConvert {
         if (agentsMd != null) {
             throw new IllegalArgumentException("agents_md 字段已废止，指令统一由 system 承载");
         }
+    }
+
+    /**
+     * MCP 服务器声明字段已废止：请求携带**非空** {@code mcp_servers} 一律 400 invalid_request_error；
+     * {@code null} / 空数组 / 空对象 / 空白串视为未提交放行。该字段仅用于拒绝判定，不进入命令与版本快照。
+     */
+    private static void rejectMcpServers(Object mcpServers) {
+        if (mcpServers == null) {
+            return;
+        }
+        if (mcpServers instanceof String text) {
+            String trimmed = text.trim();
+            if (trimmed.isEmpty() || "null".equals(trimmed) || "[]".equals(trimmed) || "{}".equals(trimmed)) {
+                return;
+            }
+            throw new IllegalArgumentException("mcp_servers 字段已废止，请求不可携带非空声明");
+        }
+        if (mcpServers instanceof java.util.Collection<?> collection && collection.isEmpty()) {
+            return;
+        }
+        if (mcpServers instanceof Map<?, ?> map && map.isEmpty()) {
+            return;
+        }
+        throw new IllegalArgumentException("mcp_servers 字段已废止，请求不可携带非空声明");
     }
 
     /** 元数据过滤串校验：必须是 JSON 对象文本（{@code @>} 包含语义）；空白归一为不过滤。 */

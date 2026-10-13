@@ -1,7 +1,5 @@
 package com.linkroa.deepdataagent.runtime.infrastructure.client;
 
-import com.linkroa.deepdataagent.runtime.domain.model.McpToolRuntimeName;
-
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -50,24 +48,7 @@ public final class HarnessToolNames {
     /** 联网搜索工具实名：框架无条件注册（需 TAVILY_API_KEY），平台默认 deny。 */
     public static final String WEB_SEARCH = "web_search";
 
-    /** MCP 桥接工具实名前缀（平台运行时实名约定，由装配末端改名施加，与契约 {@code custom} 工具禁用前缀同源）。 */
-    public static final String MCP_TOOL_PREFIX = McpToolRuntimeName.PREFIX;
-
     private HarnessToolNames() {
-    }
-
-    /**
-     * MCP 工具运行时实名：{@code mcp__{server_name}__{tool_name}}。
-     * <p>约定唯一事实源在领域层 {@link McpToolRuntimeName}（执行链事件投影与权限规则落表共用同一依据），
-     * 本方法为基础设施侧的同义入口。公开契约 {@code mcp_toolset.configs[].name} 给的是
-     * <b>服务端原始工具名</b>，按原始名生成权限规则将永不命中——MUST 先经本方法翻译。</p>
-     *
-     * @param mcpServerName  服务器名（{@code mcp_servers[].name}，非空）
-     * @param serverToolName 服务端暴露的原始工具名（非空）
-     * @return 运行时实名
-     */
-    public static String toMcpRuntimeName(String mcpServerName, String serverToolName) {
-        return McpToolRuntimeName.of(mcpServerName, serverToolName);
     }
 
     /**

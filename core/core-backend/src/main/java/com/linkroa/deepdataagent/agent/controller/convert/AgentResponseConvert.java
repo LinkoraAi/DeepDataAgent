@@ -14,7 +14,7 @@ import java.util.Map;
 
 /**
  * Agent 定义 / 版本快照 → Agent 对象响应转换器（对外契约中两者同形，共用 {@link AgentResponse}）。
- * <p>版本快照的 JSONB 配置列（{@code model} / {@code tools} / {@code mcp_servers} / {@code skills} /
+ * <p>版本快照的 JSONB 配置列（{@code model} / {@code tools} / {@code skills} /
  * {@code metadata} / {@code multiagent}）以协议层结构化 JSON 值回显，不把落库的 {@code *Json}
  * 文本透传给调用方；领域值对象（如 {@code AgentTool}）不进协议层，故此处按通用 JSON 结构解析
  * 而非领域 VO 映射。</p>
@@ -54,7 +54,6 @@ public interface AgentResponseConvert {
                 fromModelJson(currentVersion == null ? null : currentVersion.modelJson()),
                 currentVersion == null ? null : currentVersion.systemPrompt(),
                 fromJsonArray(currentVersion == null ? null : currentVersion.toolsJson()),
-                fromJsonArray(currentVersion == null ? null : currentVersion.mcpServersJson()),
                 fromJsonArray(currentVersion == null ? null : currentVersion.skillsJson()),
                 fromJsonObject(currentVersion == null ? null : currentVersion.metadataJson()),
                 fromNullableJsonObject(currentVersion == null ? null : currentVersion.multiagent()),
@@ -85,7 +84,6 @@ public interface AgentResponseConvert {
                 fromModelJson(version.modelJson()),
                 version.systemPrompt(),
                 fromJsonArray(version.toolsJson()),
-                fromJsonArray(version.mcpServersJson()),
                 fromJsonArray(version.skillsJson()),
                 fromJsonObject(version.metadataJson()),
                 fromNullableJsonObject(version.multiagent()),

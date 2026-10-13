@@ -3,7 +3,6 @@ package com.linkroa.deepdataagent.agent.domain.model;
 import com.linkroa.deepdataagent.agent.domain.model.enums.ModelEffort;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,7 +23,7 @@ class AgentVersionTest {
         // given // when
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", "初始版本", "你是销售助手",
-                null, MODEL_SHORTHAND, null, null, null, null, null);
+                null, MODEL_SHORTHAND, null, null, null, null);
 
         // then
         assertEquals(1, version.versionNumber());
@@ -38,7 +37,7 @@ class AgentVersionTest {
         // given // when // then
         assertThrows(IllegalArgumentException.class,
                 () -> AgentVersion.create("v-1", "agent-1", 0, "v0", null,
-                        "sysPrompt", null, MODEL_SHORTHAND, null, null, null, null, null));
+                        "sysPrompt", null, MODEL_SHORTHAND, null, null, null, null));
     }
 
     @Test
@@ -47,7 +46,7 @@ class AgentVersionTest {
         // when // then
         assertThrows(IllegalArgumentException.class,
                 () -> AgentVersion.create("v-1", "agent-1", 1, "v1", null,
-                        "sysPrompt", "", null, null, null, null, null, null));
+                        "sysPrompt", "", null, null, null, null, null));
     }
 
     @Test
@@ -55,7 +54,7 @@ class AgentVersionTest {
         // given // when
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", null, null, null, MODEL_SHORTHAND,
-                null, null, null, null, null);
+                null, null, null, null);
 
         // then
         assertEquals("", version.systemPrompt());
@@ -69,7 +68,7 @@ class AgentVersionTest {
         // when
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", null, systemPrompt, null, MODEL_SHORTHAND,
-                null, null, null, null, null);
+                null, null, null, null);
 
         // then
         assertEquals(AgentVersion.MAX_SYS_PROMPT_LENGTH, version.systemPrompt().length());
@@ -83,7 +82,7 @@ class AgentVersionTest {
         // when // then
         assertThrows(IllegalArgumentException.class,
                 () -> AgentVersion.create("v-1", "agent-1", 1, "v1", null, systemPrompt, null,
-                        MODEL_SHORTHAND, null, null, null, null, null));
+                        MODEL_SHORTHAND, null, null, null, null));
     }
 
     @Test
@@ -94,7 +93,7 @@ class AgentVersionTest {
         // when
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, name, null, "sysPrompt", null, MODEL_SHORTHAND,
-                null, null, null, null, null);
+                null, null, null, null);
 
         // then
         assertEquals(AgentVersion.MAX_NAME_LENGTH, version.name().length());
@@ -108,7 +107,7 @@ class AgentVersionTest {
         // when // then
         assertThrows(IllegalArgumentException.class,
                 () -> AgentVersion.create("v-1", "agent-1", 1, name, null, "sysPrompt", null,
-                        MODEL_SHORTHAND, null, null, null, null, null));
+                        MODEL_SHORTHAND, null, null, null, null));
     }
 
     @Test
@@ -119,7 +118,7 @@ class AgentVersionTest {
         // when
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", description, "sysPrompt", null, MODEL_SHORTHAND,
-                null, null, null, null, null);
+                null, null, null, null);
 
         // then
         assertEquals(AgentVersion.MAX_DESCRIPTION_LENGTH, version.description().length());
@@ -133,7 +132,7 @@ class AgentVersionTest {
         // when // then
         assertThrows(IllegalArgumentException.class,
                 () -> AgentVersion.create("v-1", "agent-1", 1, "v1", description, "sysPrompt", null,
-                        MODEL_SHORTHAND, null, null, null, null, null));
+                        MODEL_SHORTHAND, null, null, null, null));
     }
 
     @Test
@@ -141,7 +140,7 @@ class AgentVersionTest {
         // given（custom 钉版 + catalog 动态版）
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", null, "sysPrompt", null, MODEL_SHORTHAND,
-                null, null,
+                null,
                 "[{\"type\":\"custom\",\"skill_id\":\"skill_1\",\"version\":\"1759178010641129\"},"
                         + "{\"type\":\"catalog\",\"skill_id\":\"skill_2\"}]",
                 null, null);
@@ -166,7 +165,7 @@ class AgentVersionTest {
         // given
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", null, "sysPrompt", null, MODEL_SHORTHAND,
-                null, null, null, null, null);
+                null, null, null, null);
 
         // when
         var bindings = version.parseSkills();
@@ -180,7 +179,7 @@ class AgentVersionTest {
         // given
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", null, "sysPrompt", null, MODEL_SHORTHAND,
-                null, null, null, null, null);
+                null, null, null, null);
 
         // when
         ModelRef model = version.parseModel();
@@ -195,32 +194,29 @@ class AgentVersionTest {
         // given（内部 profileId 已在发布期固化，对外模型引用缺省）
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", null, "sysPrompt", "profile-1", null,
-                null, null, null, null, null);
+                null, null, null, null);
 
         // when // then
         assertNull(version.parseModel());
     }
 
     @Test
-    void should_parseToolsAndMcpServers_when_parse_given_structuredJson() {
-        // given
+    void should_parseTools_when_parse_given_structuredJson() {
+        // given（agent_toolset 逐工具配置）
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", null, "sysPrompt", null,
                 "{\"id\":\"ultimate\",\"effort\":\"high\"}",
-                "[{\"type\":\"mcp_toolset\",\"mcp_server_name\":\"github\"}]",
-                "[{\"name\":\"github\",\"type\":\"url\",\"url\":\"https://mcp.example.com\"}]",
+                "[{\"type\":\"agent_toolset_20260401\",\"enabled_tools\":[\"Read\"]}]",
                 null, null, null);
 
         // when
         ModelRef model = version.parseModel();
-        List<AgentTool> tools = version.parseTools();
-        List<McpServer> servers = version.parseMcpServers();
+        var tools = version.parseTools();
 
         // then
         assertEquals(ModelEffort.HIGH, model.effort());
-        assertEquals(AgentTool.TYPE_MCP_TOOLSET, tools.get(0).type());
-        assertEquals("github", tools.get(0).mcpServerName());
-        assertEquals("github", servers.get(0).name());
+        assertEquals(AgentTool.TYPE_AGENT_TOOLSET, tools.get(0).type());
+        assertEquals("Read", tools.get(0).enabledTools().get(0));
     }
 
     @Test
@@ -228,7 +224,7 @@ class AgentVersionTest {
         // given
         AgentVersion version = AgentVersion.create(
                 "v-1", "agent-1", 1, "v1", null, "sysPrompt", null, MODEL_SHORTHAND,
-                null, null, null, null, "{\"team\":\"data\"}");
+                null, null, null, "{\"team\":\"data\"}");
 
         // when
         Map<String, Object> metadata = version.parseMetadata();

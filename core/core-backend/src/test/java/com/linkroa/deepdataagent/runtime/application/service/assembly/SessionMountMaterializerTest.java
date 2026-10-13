@@ -69,10 +69,9 @@ class SessionMountMaterializerTest {
 
     @Test
     void should_callPortPerFileResourceAtDerivedTarget_when_materialize_given_mixedResources() {
-        // given（file + memory_store 混合批次：仅 file 项物化，落点按挂载路径派生）
+        // given（两 file 批次：落点按挂载路径派生）
         AgentSession session = sessionWith(
                 SessionResource.file("file_1", null),
-                SessionResource.memoryStore("ms_1", null, null),
                 SessionResource.file("file_2", "mounts/dataset/a.csv"));
         stubMaterializeSuccess("file_1");
         stubMaterializeSuccess("file_2");
@@ -118,9 +117,8 @@ class SessionMountMaterializerTest {
 
     @Test
     void should_doNothing_when_materializeAll_given_noFileMounts() {
-        // given（纯 github 挂载会话：物化零触达，不创建宿主目录）
-        AgentSession session = sessionWith(
-                SessionResource.githubRepository("https://github.com/o/r", "tok", null));
+        // given（无挂载资源会话：物化零触达，不创建宿主目录）
+        AgentSession session = sessionWith();
 
         // when
         materializer.materializeAll(session);
@@ -228,13 +226,13 @@ class SessionMountMaterializerTest {
 
     @Test
     void should_beQuietNoop_when_release_given_missingCopyOrNonFileResource() {
-        // given（副本本就不存在 / 非 file 项：均静默成功，不抛不派生落点）
-        AgentSession session = sessionWith(SessionResource.file("file_1", null));
-        SessionResource memoryMount = SessionResource.memoryStore("ms_1", null, null);
+        // given（副本本就不存在：静默成功，不抛不派生落点）
+        AgentSession session = sessionWith(SessionResource.file("file_1", null),
+                SessionResource.file("file_2", null));
 
         // when & then
         materializer.release(session, session.resources().get(0));
-        materializer.release(session, memoryMount);
+        materializer.release(session, session.resources().get(1));
         verify(sessionWorkspacePort, never()).cleanup(anyString(), anyString());
     }
 

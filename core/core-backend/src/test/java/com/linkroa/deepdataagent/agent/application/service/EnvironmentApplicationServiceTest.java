@@ -42,7 +42,6 @@ import static org.mockito.Mockito.when;
 class EnvironmentApplicationServiceTest {
 
     @Mock private EnvironmentRepository environmentRepository;
-    @Mock private com.linkroa.deepdataagent.agent.domain.repository.DeploymentRepository deploymentRepository;
     @Mock private SessionReferenceApi sessionReferenceApi;
     @Mock private TransactionTemplate transactionTemplate;
 
@@ -53,7 +52,6 @@ class EnvironmentApplicationServiceTest {
         AuthContext.setUserId(1L);
         service = new EnvironmentApplicationService();
         org.springframework.test.util.ReflectionTestUtils.setField(service, "environmentRepository", environmentRepository);
-        org.springframework.test.util.ReflectionTestUtils.setField(service, "deploymentRepository", deploymentRepository);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "sessionReferenceApi", sessionReferenceApi);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "transactionTemplate", transactionTemplate);
         lenient().doAnswer(invocation -> {
@@ -151,28 +149,12 @@ class EnvironmentApplicationServiceTest {
         when(environmentRepository.findByEnvironmentIdForUpdate("env-1"))
                 .thenReturn(Optional.of(buildEnvironment("env-1", "本地环境")));
         when(sessionReferenceApi.countSessionsByEnvironmentId("env-1")).thenReturn(0L);
-        when(deploymentRepository.countActiveByEnvironmentId("env-1")).thenReturn(0L);
 
         // when
         service.delete("env-1");
 
         // then
         verify(environmentRepository).deleteByEnvironmentId("env-1");
-    }
-
-    @Test
-    void should_throwConflict_when_delete_given_referencedByDeployment() {
-        // given（审查修复 F10：会话引用为零但仍有未归档调度器引用 → 409 拒绝删除）
-        when(environmentRepository.findByEnvironmentIdForUpdate("env-1"))
-                .thenReturn(Optional.of(buildEnvironment("env-1", "本地环境")));
-        when(sessionReferenceApi.countSessionsByEnvironmentId("env-1")).thenReturn(0L);
-        when(deploymentRepository.countActiveByEnvironmentId("env-1")).thenReturn(2L);
-
-        // when // then
-        ResourceConflictException ex = assertThrows(ResourceConflictException.class,
-                () -> service.delete("env-1"));
-        assertTrue(ex.getMessage().contains("调度器"));
-        verify(environmentRepository, never()).deleteByEnvironmentId(anyString());
     }
 
     @Test
@@ -238,11 +220,10 @@ class EnvironmentApplicationServiceTest {
 
     @Test
     void should_setArchivedAt_when_archive_given_noReference() {
-        // given（无会话 / 无调度器引用：归档写入 archived_at 时间戳）
+        // given（无会话引用：归档写入 archived_at 时间戳）
         when(environmentRepository.findByEnvironmentIdForUpdate("env-1"))
                 .thenReturn(Optional.of(buildEnvironment("env-1", "本地环境")));
         when(sessionReferenceApi.countSessionsByEnvironmentId("env-1")).thenReturn(0L);
-        when(deploymentRepository.countActiveByEnvironmentId("env-1")).thenReturn(0L);
         when(environmentRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         // when

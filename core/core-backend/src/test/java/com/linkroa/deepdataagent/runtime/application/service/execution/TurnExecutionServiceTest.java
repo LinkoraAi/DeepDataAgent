@@ -9,7 +9,6 @@ import com.linkroa.deepdataagent.runtime.application.service.CoordinationLeaseSe
 import com.linkroa.deepdataagent.runtime.application.service.assembly.RuntimeAgentAssemblyService;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignalType;
-import com.linkroa.deepdataagent.runtime.domain.event.TurnFinished;
 import com.linkroa.deepdataagent.runtime.domain.factory.AgentFactoryPort;
 import com.linkroa.deepdataagent.runtime.domain.factory.BuiltAgent;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec;
@@ -38,7 +37,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
@@ -115,8 +113,6 @@ class TurnExecutionServiceTest {
     /** 广播端口 mock：验证 {@code session.status_*} / 源码事件经连接层下发。 */
     @Mock private ConnectionHandle connectionHandle;
     @Mock private SessionThreadRepository sessionThreadRepository;
-    /** 终局事件发布器 mock：收口器在终态事务内直发 TurnFinished（迭代裁决 2026-09-13 直注）。 */
-    @Mock private ApplicationEventPublisher applicationEventPublisher;
     /** turn 租约定时续约调度端口 mock：捕获续约任务与停止句柄，验证全出口停续约。 */
     @Mock private LeaseRenewalScheduler leaseRenewalScheduler;
     @Mock private LeaseRenewalHandle leaseRenewalHandle;
@@ -148,7 +144,6 @@ class TurnExecutionServiceTest {
         ReflectionTestUtils.setField(turnFinalizer, "transactionTemplate", transactionTemplate);
         ReflectionTestUtils.setField(turnFinalizer, "turnEventWriter", turnEventWriter);
         ReflectionTestUtils.setField(turnFinalizer, "coordinationLeaseService", coordinationLeaseService);
-        ReflectionTestUtils.setField(turnFinalizer, "applicationEventPublisher", applicationEventPublisher);
         service = new TurnExecutionService();
         ReflectionTestUtils.setField(service, "sessionRepository", sessionRepository);
         ReflectionTestUtils.setField(service, "chatEventRepository", chatEventRepository);
@@ -326,7 +321,7 @@ class TurnExecutionServiceTest {
         return new AgentSession(base.id(), base.sessionId(), base.userId(), base.agentId(), base.agentVersion(),
                 status, status == AgentSessionStatus.IDLE ? TurnPhase.IDLE : TurnPhase.RUNNING,
                 base.metadata(), base.title(), base.environmentId(),
-                base.vaultIds(), base.memoryStoreIds(), base.environmentVariables(), base.resources(),
+                base.environmentVariables(), base.resources(),
                 base.triggerType(), base.triggerId(), base.lastActiveAt(),
                 null, now, now, null, null);
     }
@@ -341,7 +336,7 @@ class TurnExecutionServiceTest {
                 .withMaxIters(10)
                 .withSandbox(AgentAssemblySpec.Sandbox.of("python:3.12", 8192L, 4L))
                 .withMountView(new AgentAssemblySpec.MountView(
-                        List.of(), List.of(), List.of(), java.util.Map.of(), List.of()))
+                        List.of(), java.util.Map.of(), List.of()))
                 .withToolGovernance(AgentAssemblySpec.ToolGovernance.empty())
                 .withArtifactOwnership(AgentAssemblySpec.ArtifactOwnership.empty())
                 .build();
@@ -1400,26 +1395,4 @@ class TurnExecutionServiceTest {
         verify(coordinationLeaseService).tryAcquireTurnLease(session.sessionId());
         verify(coordinationLeaseService).releaseTurnLease(session.sessionId());
     }
-
-    // ==================== 轮次终局事件发布（write-back-deployment-run-terminal-state 事件化，fix-runtime-layering 5.4） ====================
-
-    @Test
-    void should_publishTurnFinishedWithoutTriggerType_when_sendMessageAsync_given_plainSessionWithoutTrigger() {
-        // given：普通用户会话（无触发打标）正常收敛
-        AgentSession session = idleSession();
-        when(sessionRepository.findBySessionId(session.sessionId())).thenReturn(Optional.of(session));
-        wireHappyPathForExecution();
-        bindConnection(session);
-        when(agentRunExecutor.streamEvents(any(BuiltAgent.class), anyString(), anyString(), anyString()))
-                .thenReturn(Flux.just(AgentStreamSignal.of(AgentStreamSignalType.AGENT_END, null, null)));
-
-        // when
-        service.sendMessageAsync(new SendMessageCommand(session.sessionId(), "你好"));
-
-        // then：普通会话照常发布终局事件但无触发打标（回写门槛收敛到 AFTER_COMMIT 监听器）
-        verify(sessionRepository).transition(session.sessionId(), Transition.FINISH_TURN);
-        verify(applicationEventPublisher, times(1))
-                .publishEvent(new TurnFinished(session.sessionId(), null, "succeeded"));
-    }
-
 }

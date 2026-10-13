@@ -62,29 +62,6 @@ class RuntimeCommandTest {
     }
 
     @Test
-    void should_normalizeNullVaultIds_when_construct_given_nullVaultIds() {
-        // when（11 参全量构造：null 保管库列表收敛为空列表）
-        CreateSessionCommand command = new CreateSessionCommand(
-                "u-1", "agent-a", "1.0.0", null, null, null, null, null, "env-1", null, "{\"K\":\"V\"}");
-
-        // then（环境 / 保管库 / 环境变量随命令承载，环境 ID 透传）
-        assertEquals(List.of(), command.vaultIds());
-        assertEquals("env-1", command.environmentId());
-        assertEquals("{\"K\":\"V\"}", command.environmentVariables());
-    }
-
-    @Test
-    void should_defaultNewMountColumns_when_convenienceConstructors_given_legacyArity() {
-        // when（5 / 7 / 8 参便捷构造：新列走默认值兜底）
-        CreateSessionCommand legacy = new CreateSessionCommand("u-1", "agent-a", "1.0.0", "会话", "{}");
-
-        // then
-        assertNull(legacy.environmentId());
-        assertEquals(List.of(), legacy.vaultIds());
-        assertNull(legacy.environmentVariables());
-    }
-
-    @Test
     void should_allowNullVersion_when_construct_given_blankAgentVersion() {
         // when（agentVersion 可空：省略时由服务端解析激活版本物化到会话）
         CreateSessionCommand command = new CreateSessionCommand("u-1", "agent-a", null, null, null);

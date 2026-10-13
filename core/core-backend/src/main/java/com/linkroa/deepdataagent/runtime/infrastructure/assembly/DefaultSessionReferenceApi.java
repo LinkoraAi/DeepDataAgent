@@ -20,14 +20,4 @@ public class DefaultSessionReferenceApi implements SessionReferenceApi {
     public long countSessionsByEnvironmentId(String environmentId) {
         return agentSessionRepository.countByEnvironmentId(environmentId);
     }
-
-    @Override
-    public long countSessionsByMemoryStoreId(String storeId) {
-        return agentSessionRepository.countByMemoryStoreId(storeId);
-    }
-
-    @Override
-    public long countSessionsByVaultId(String vaultId) {
-        return agentSessionRepository.countByVaultId(vaultId);
-    }
 }

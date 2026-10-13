@@ -28,8 +28,7 @@ public final class SessionMountPolicy {
     }
 
     /**
-     * 追加项类型门禁：本期仅 {@code file} 类型资源可追加挂载
-     * （{@code github_repository / memory_store} 只允许创建时挂载）。
+     * 追加项类型门禁：本期仅 {@code file} 类型资源可追加挂载。
      * <p>应用层在材料化字节清单前先调用本门禁（避免为必然非法的批次做无谓的就绪查询），
      * {@link #validateAppend} 内亦复用同一实现（聚合直调路径的兜底）。</p>
      *

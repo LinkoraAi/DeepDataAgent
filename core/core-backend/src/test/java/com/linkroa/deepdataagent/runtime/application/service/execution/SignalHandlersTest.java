@@ -180,50 +180,6 @@ class SignalHandlersTest {
             assertEquals(1, sink.parsePayloadCalls);
             assertEquals(1, runState.confirmCandidates().registeredCount());
         }
-
-        @Test
-        void should_persistMcpToolUseWithServerNameAndPolicy_when_handle_given_mcpToolCallEnd() {
-            // given：MCP 工具运行时实名（mcp__{server}__{tool}）+ 该工具的 always_ask 策略
-            TurnRunState runState = new TurnRunState();
-            runState.registerMcpToolPolicies(List.of(
-                    new AgentAssemblySpec.ToolExecutionPolicy("get_weather", "always_ask", "weather")));
-            RecordingRoundSink sink = new RecordingRoundSink();
-            handler.handle(ctx(AgentStreamSignal.tool(AgentStreamSignalType.TOOL_CALL_START, "tc-1",
-                    "mcp__weather__get_weather", null, null), runState, sink, LARGE_FLUSH_INTERVAL_MS));
-            handler.handle(ctx(AgentStreamSignal.tool(AgentStreamSignalType.TOOL_CALL_DELTA, "tc-1",
-                    "mcp__weather__get_weather", "{\"city\":\"SH\"}", null),
-                    runState, sink, LARGE_FLUSH_INTERVAL_MS));
-
-            // when
-            handler.handle(ctx(AgentStreamSignal.tool(AgentStreamSignalType.TOOL_CALL_END, "tc-1",
-                    "mcp__weather__get_weather", null, null), runState, sink, LARGE_FLUSH_INTERVAL_MS));
-
-            // then：类型为 agent.mcp_tool_use，载荷含 mcp_server_name 与 evaluated_permission
-            assertEquals(1, sink.persisted.size());
-            assertEquals(ChatEventType.AGENT_MCP_TOOL_USE, sink.persisted.get(0).type());
-            String payload = sink.persisted.get(0).payloadJson();
-            assertTrue(payload.contains("\"mcp_server_name\":\"weather\""), payload);
-            assertTrue(payload.contains("\"evaluated_permission\":\"ask\""), payload);
-            assertTrue(payload.contains("\"name\":\"mcp__weather__get_weather\""), payload);
-        }
-
-        @Test
-        void should_defaultMcpPermissionToAllow_when_handle_given_mcpToolCallEndWithoutPolicy() {
-            // given：MCP 工具未配置任何权限策略（走框架默认放行路径）
-            TurnRunState runState = new TurnRunState();
-            RecordingRoundSink sink = new RecordingRoundSink();
-            handler.handle(ctx(AgentStreamSignal.tool(AgentStreamSignalType.TOOL_CALL_START, "tc-1",
-                    "mcp__public__lookup", null, null), runState, sink, LARGE_FLUSH_INTERVAL_MS));
-
-            // when
-            handler.handle(ctx(AgentStreamSignal.tool(AgentStreamSignalType.TOOL_CALL_END, "tc-1",
-                    "mcp__public__lookup", null, null), runState, sink, LARGE_FLUSH_INTERVAL_MS));
-
-            // then：仍投影为 MCP 事件（前缀判定不依赖策略存在），求值缺省 allow
-            assertEquals(ChatEventType.AGENT_MCP_TOOL_USE, sink.persisted.get(0).type());
-            assertTrue(sink.persisted.get(0).payloadJson().contains("\"evaluated_permission\":\"allow\""),
-                    sink.persisted.get(0).payloadJson());
-        }
     }
 
     @Nested
@@ -260,51 +216,6 @@ class SignalHandlersTest {
             // then
             assertEquals(1, sink.persisted.size());
             assertEquals(ChatEventType.AGENT_TOOL_RESULT, sink.persisted.get(0).type());
-        }
-
-        @Test
-        void should_maskMountedCredentialPlaintext_when_handle_given_toolResultEchoingCredential() {
-            // given（工具回显本轮挂载凭据明文：裸 JWT 形态——形态正则既非 sk- 亦无 Bearer 前缀，
-            //        只有按已知明文精确掩码能拦住，见 SecretMasker.maskExactValues）
-            String jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyLTEifQ.c2lnbmF0dXJlLWJ5dGVz";
-            TurnRunState runState = new TurnRunState();
-            runState.registerMountedVaultSecrets(List.of(new AgentAssemblySpec.VaultCredentialRef(
-                    "vault_1", "cr_1", "static_bearer", "https://mcp.example.com/mcp", jwt)));
-            RecordingRoundSink sink = new RecordingRoundSink();
-            handler.handle(ctx(AgentStreamSignal.tool(AgentStreamSignalType.TOOL_RESULT_TEXT_DELTA, "tc-1",
-                    "mcp__weather__get_weather", "head 回显 " + jwt, null),
-                    runState, sink, LARGE_FLUSH_INTERVAL_MS));
-
-            // when（尾部同样回显明文：head 与 tail 两段都须在出站前被掩码）
-            handler.handle(ctx(AgentStreamSignal.tool(AgentStreamSignalType.TOOL_RESULT_END, "tc-1",
-                    "mcp__weather__get_weather", null, "tail 回显 " + jwt),
-                    runState, sink, LARGE_FLUSH_INTERVAL_MS));
-
-            // then（落库与 SSE 广播共用同一载荷串，故此处断言即两处出口对凭证明文零命中）
-            assertEquals(1, sink.persisted.size());
-            String payload = sink.persisted.get(0).payloadJson();
-            assertFalse(payload.contains(jwt), payload);
-            assertTrue(payload.contains("****"), payload);
-        }
-
-        @Test
-        void should_persistMcpToolResultPairedWithCall_when_handle_given_mcpToolResultEnd() {
-            // given：MCP 工具结果流（与 agent.mcp_tool_use 按 tool_use_id 配对，不悬空）
-            TurnRunState runState = new TurnRunState();
-            RecordingRoundSink sink = new RecordingRoundSink();
-            handler.handle(ctx(AgentStreamSignal.tool(AgentStreamSignalType.TOOL_RESULT_TEXT_DELTA, "tc-1",
-                    "mcp__weather__get_weather", "25C", null), runState, sink, LARGE_FLUSH_INTERVAL_MS));
-
-            // when
-            handler.handle(ctx(AgentStreamSignal.tool(AgentStreamSignalType.TOOL_RESULT_END, "tc-1",
-                    "mcp__weather__get_weather", null, "OK"), runState, sink, LARGE_FLUSH_INTERVAL_MS));
-
-            // then：类型为 agent.mcp_tool_result，载荷含 mcp_server_name 与配对键 tool_use_id
-            assertEquals(1, sink.persisted.size());
-            assertEquals(ChatEventType.AGENT_MCP_TOOL_RESULT, sink.persisted.get(0).type());
-            String payload = sink.persisted.get(0).payloadJson();
-            assertTrue(payload.contains("\"mcp_server_name\":\"weather\""), payload);
-            assertTrue(payload.contains("\"tool_use_id\":\"tc-1\""), payload);
         }
     }
 

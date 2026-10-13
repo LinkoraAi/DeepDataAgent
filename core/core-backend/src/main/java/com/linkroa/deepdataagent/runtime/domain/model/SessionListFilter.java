@@ -8,7 +8,7 @@ import java.util.List;
 /**
  * Session 列表游标查询条件（公开契约 GET 列表过滤集合，不含 {@code environment_id}）。
  * <p>过滤集合严格对齐公开契约：{@code agent_id} / {@code agent_version} / {@code deployment_id} /
- * {@code memory_store_id} / {@code statuses[]}（对外四态子集）/ {@code include_archived}
+ * {@code statuses[]}（对外四态子集）/ {@code include_archived}
  * （默认 false = 排除 {@code archived_at} 非空行）/ {@code created_at[gt|gte|lt|lte]} / {@code order}。
  * 归档已从状态值域移出——归档排除只看 {@code archived_at IS NULL}，与 statuses 无耦合。</p>
  * <p>排序为 {@code created_at + id} keyset（{@code id} 为稳定次键）；{@code ascending}
@@ -20,7 +20,6 @@ import java.util.List;
  * @param agentId         Agent 过滤（可空 = 不过滤）
  * @param agentVersion    Agent 版本过滤（可空 = 不过滤）
  * @param deploymentId    调度器触发来源过滤（可空 = 不过滤；落 {@code trigger_id} 列）
- * @param memoryStoreId   记忆库过滤（可空 = 不过滤；{@code memory_store_ids} JSONB 包含查询）
  * @param statuses        对外状态集合过滤（空 = 不过滤）
  * @param metadataJson    元数据键值包含过滤 JSON 文本（可空 = 不过滤；metadata JSONB {@code @>} 包含）
  * @param includeArchived true=包含已归档会话（默认 false = 仅返回 {@code archived_at IS NULL} 行）
@@ -37,7 +36,6 @@ public record SessionListFilter(
         String agentId,
         String agentVersion,
         String deploymentId,
-        String memoryStoreId,
         List<AgentSessionStatus> statuses,
         String metadataJson,
         boolean includeArchived,

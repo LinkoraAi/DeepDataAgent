@@ -204,19 +204,6 @@ model-catalog:
       max-output-tokens: 8000
   provider-mappings: {}
 
-# 凭证库（vault BC）：凭证（VaultCredential）独立加密密钥（AES/GCM），与 datasource / model 密钥完全隔离
-# 无默认值：生产部署必须通过环境变量 APP_VAULT_ENCRYPTION_KEY 显式配置，未配置时启动即失败
-vault:
-  encryption:
-    key: ${APP_VAULT_ENCRYPTION_KEY}
-  # MCP OAuth 流转（vault BC）：回调地址由服务端配置且请求不可覆盖（生产必须按实际对外地址覆盖）；
-  # state TTL 与刷新窗口契约未规定数值，取实现默认值（300s / 60s），可经环境变量调整
-  oauth:
-    callback-url: ${APP_VAULT_OAUTH_CALLBACK_URL:http://localhost:8080/api/v1/cloud/vaults/oauth/callback}
-    state-ttl-seconds: ${APP_VAULT_OAUTH_STATE_TTL_SECONDS:300}
-    refresh-window-seconds: ${APP_VAULT_OAUTH_REFRESH_WINDOW_SECONDS:60}
-    client-name: ${APP_VAULT_OAUTH_CLIENT_NAME:DeepDataAgent}
-
 # 认证（auth BC）：JWT HS256 签名密钥与有效期；无默认值，生产必须通过 AUTH_JWT_SECRET 显式配置（未配置时启动即失败）
 auth:
   jwt:

@@ -206,9 +206,13 @@ class HarnessAgentRunExecutorTest {
         assertEquals("tc-1", first.getToolCall().getId());
         assertEquals("search", first.getToolCall().getName());
         assertEquals("x", first.getToolCall().getInput().get("q"));
+        // then：content 原始串 MUST 随重建提供（SDK 工具执行按 content 做 schema 校验，缺失即
+        // "argument content is null" 致 allow 后工具无法执行——回归护栏）
+        assertEquals("{\"q\":\"x\"}", first.getToolCall().getContent());
         ConfirmResult second = (ConfirmResult) results.get(1);
         assertEquals("tc-2", second.getToolCall().getId());
         assertEquals("select 1", second.getToolCall().getInput().get("sql"));
+        assertEquals("{\"sql\":\"select 1\"}", second.getToolCall().getContent());
         // then：续流事件透传为 HUMAN_CONFIRM_RESULT
         assertNotNull(resumed);
         assertEquals(1, resumed.size());

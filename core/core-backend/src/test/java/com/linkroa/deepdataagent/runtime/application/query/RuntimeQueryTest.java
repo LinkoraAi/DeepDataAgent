@@ -17,7 +17,7 @@ class RuntimeQueryTest {
     @Test
     void should_buildQuery_when_construct_given_validInputs() {
         // when
-        ListSessionsQuery query = new ListSessionsQuery("u-1", "agent-a", null, null, null,
+        ListSessionsQuery query = new ListSessionsQuery("u-1", "agent-a", null, null,
                 List.of(AgentSessionStatus.IDLE), false, null, null, null, null, false,
                 new CursorPageParams(20, null, null));
 
@@ -31,7 +31,7 @@ class RuntimeQueryTest {
     @Test
     void should_buildQueryWithDefaults_when_construct_given_noFilters() {
         // when
-        ListSessionsQuery query = new ListSessionsQuery("u-1", null, null, null, null, null, false,
+        ListSessionsQuery query = new ListSessionsQuery("u-1", null, null, null, null, false,
                 null, null, null, null, false, new CursorPageParams(20, null, null));
 
         // then（statuses null 收敛为空列表）
@@ -43,7 +43,7 @@ class RuntimeQueryTest {
     void should_throw_when_construct_given_blankUserId() {
         // when & then
         assertThrows(IllegalArgumentException.class, () -> new ListSessionsQuery(" ", null, null, null,
-                null, null, false, null, null, null, null, false, new CursorPageParams(20, null, null)));
+                null, false, null, null, null, null, false, new CursorPageParams(20, null, null)));
     }
 
     @Test
@@ -133,7 +133,7 @@ class RuntimeQueryTest {
     @Test
     void should_buildQuery_when_construct_given_boundarySize() {
         // when（limit 上边界 100）
-        ListSessionsQuery query = new ListSessionsQuery("u-1", null, null, null, null, null, false,
+        ListSessionsQuery query = new ListSessionsQuery("u-1", null, null, null, null, false,
                 null, null, null, null, false, new CursorPageParams(100, null, null));
 
         // then

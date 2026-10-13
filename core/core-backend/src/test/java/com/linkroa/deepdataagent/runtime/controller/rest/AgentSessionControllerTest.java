@@ -92,7 +92,7 @@ class AgentSessionControllerTest {
 
         // when（agent_id + statuses[] 过滤；其余维度缺省）
         ApiResponse<CursorPage<SessionResponse>> response = controller.listSessions(
-                "agent-a", null, null, null, List.of("IDLE"), null,
+                "agent-a", null, null, List.of("IDLE"), null,
                 null, null, null, null, null, null, null, null, null);
 
         // then
@@ -109,12 +109,12 @@ class AgentSessionControllerTest {
 
     @Test
     void should_delegateFiltersAndCursor_when_listSessions_given_queryParams() {
-        // given（agent_version / deployment_id / memory_store_id / include_archived / 时间边界 / order 全维度透传）
+        // given（agent_version / deployment_id / include_archived / 时间边界 / order 全维度透传）
         when(queryService.listSessions(any(ListSessionsQuery.class)))
                 .thenReturn(CursorPage.of(List.of(), false, AgentSession::sessionId));
 
         // when
-        controller.listSessions("agent-a", "3", "dep_1", "ms_1", List.of("running"), true,
+        controller.listSessions("agent-a", "3", "dep_1", List.of("running"), true,
                 "2026-09-01T00:00:00Z", "2026-09-02T00:00:00Z", "2026-09-03T00:00:00Z", "2026-09-04T00:00:00Z",
                 "asc", "50", null, "sess_a", null);
 
@@ -124,7 +124,6 @@ class AgentSessionControllerTest {
         assertEquals("agent-a", query.agentId());
         assertEquals("3", query.agentVersion());
         assertEquals("dep_1", query.deploymentId());
-        assertEquals("ms_1", query.memoryStoreId());
         assertEquals(List.of(AgentSessionStatus.RUNNING), query.statuses());
         assertTrue(query.includeArchived());
         assertTrue(query.ascending());
@@ -145,7 +144,7 @@ class AgentSessionControllerTest {
 
         // when
         ApiResponse<CursorPage<SessionResponse>> response = controller.listSessions(
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null);
 
         // then（空页：first/last 为 null；limit 缺省 20）
         assertTrue(response.success());
@@ -384,7 +383,7 @@ class AgentSessionControllerTest {
                 "1".equals(command.userId()) && "agent-a".equals(command.agentId())
                         && "env_1".equals(command.environmentId())
                         && "{}".equals(command.metadata())
-                        && command.resources().isEmpty() && command.vaultIds().isEmpty())))
+                        && command.resources().isEmpty())))
                 .thenReturn(session);
         CreateSessionRequest request = new CreateSessionRequest("agent-a", "env_1", "会话",
                 null, null, null, null, null, null, null, null);
@@ -435,7 +434,7 @@ class AgentSessionControllerTest {
     void should_rejectBadRequest_when_createSession_given_legacyEnvironmentField() {
         // given（已废止 environment 遗留字段非空提交：400 且不触达会话服务）
         CreateSessionRequest request = new CreateSessionRequest("agent-a", "env_1", "会话",
-                null, null, null, null, Map.of("type", "cloud"), null, null, null);
+                null, null, null, Map.of("type", "cloud"), null, null, null, null);
 
         // when & then
         assertThrows(IllegalArgumentException.class, () -> controller.createSession(request));
@@ -460,10 +459,10 @@ class AgentSessionControllerTest {
 
     private AgentSession sessionWithId(Long id, String sessionId) {
         OffsetDateTime now = OffsetDateTime.parse("2026-08-22T10:00:00+08:00");
-        // 双字段状态机 22 参 restore：idle / idle，无挂载字段（sandboxId / workspaceId 组件已删除）
+        // 双字段状态机 restore：idle / idle，无挂载字段
         return AgentSession.restore(id, sessionId, "1", "agent-a", "1.0.0",
                 AgentSessionStatus.IDLE, TurnPhase.IDLE, "{}", null, null,
-                List.of(), List.of(), "{}", List.of(), null, null,
+                "{}", List.of(), null, null,
                 now, null, now, now, null, null);
     }
 

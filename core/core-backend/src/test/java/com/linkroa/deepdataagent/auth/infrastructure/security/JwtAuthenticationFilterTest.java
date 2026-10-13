@@ -16,29 +16,12 @@ import static org.mockito.Mockito.mock;
 /**
  * {@link JwtAuthenticationFilter} 放行名单单测。
  *
- * <p>覆盖：MCP OAuth 回调端点（浏览器跳转终点、不携带 Bearer 头）免认证放行并进入后续链路，
- * 以及受保护端点缺少 Bearer 头一律 401 且不进入后续链路——防止放行名单被改宽后无人察觉。</p>
+ * <p>覆盖：受保护端点缺少 Bearer 头一律 401 且不进入后续链路——防止放行名单被改宽后无人察觉。</p>
  */
 class JwtAuthenticationFilterTest {
 
     private final JwtAuthenticationFilter filter =
             new JwtAuthenticationFilter(mock(JwtTokenProvider.class), mock(RevokedTokenStore.class));
-
-    @Test
-    void should_passThrough_when_doFilterInternal_given_oauthCallbackPathWithoutBearerHeader() throws Exception {
-        // given（授权服务器跳转回回调端点：请求无 Authorization 头）
-        MockHttpServletRequest request = new MockHttpServletRequest("GET",
-                "/api/v" + ApiVersionConstants.CURRENT_API_VERSION + "/cloud/vaults/oauth/callback");
-        MockHttpServletResponse response = new MockHttpServletResponse();
-        AtomicBoolean chained = new AtomicBoolean(false);
-
-        // when
-        filter.doFilter(request, response, (req, res) -> chained.set(true));
-
-        // then（放行：授权约束由一次性 state 承担，控制器侧再校验）
-        assertTrue(chained.get());
-        assertEquals(200, response.getStatus());
-    }
 
     @Test
     void should_rejectWith401_when_doFilterInternal_given_protectedPathWithoutBearerHeader() throws Exception {

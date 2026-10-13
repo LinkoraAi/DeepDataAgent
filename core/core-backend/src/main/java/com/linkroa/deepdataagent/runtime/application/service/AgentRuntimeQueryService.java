@@ -80,7 +80,7 @@ public class AgentRuntimeQueryService {
      * （不存在 / 非本人 → 404，与详情同语义）；limit+1 探针判 has_more，
      * before 方向升序读取后由应用层翻转回请求方向。</p>
      * <p>过滤集合严格对齐公开契约 GET 列表：{@code agent_id / agent_version / deployment_id /
-     * memory_store_id / statuses[] / include_archived / created_at[gt|gte|lt|lte] / order}；
+     * statuses[] / include_archived / created_at[gt|gte|lt|lte] / order}；
      * {@code environment_id} 与 {@code metadata} 不是受支持的过滤参数（前者为自造字段、
      * 后者属 beta 搜索能力）。{@code next_page} 为不透明游标（当页末条会话 ID），
      * 客户端回传 {@code page} 即等价向后翻页。</p>
@@ -104,7 +104,7 @@ public class AgentRuntimeQueryService {
             reverse = true;
         }
         SessionListFilter filter = new SessionListFilter(
-                query.agentId(), query.agentVersion(), query.deploymentId(), query.memoryStoreId(),
+                query.agentId(), query.agentVersion(), query.deploymentId(),
                 query.statuses(), null, query.includeArchived(),
                 query.createdAtGt(), query.createdAtGte(), query.createdAtLt(), query.createdAtLte(),
                 query.ascending(), cursorCreatedAt, cursorRowId, reverse);

@@ -119,8 +119,7 @@ class DefaultAgentSnapshotApiTest {
         assertFalse(agent.containsKey("archived_at"));
         assertFalse(agent.containsKey("agents_md"));
         assertEquals(List.of(Map.of("name", "read_file")), agent.get("tools"));
-        // 按提交形态回显：台账未写 mcp_servers / skills 列（空文本）即省略键
-        assertFalse(agent.containsKey("mcp_servers"));
+        // 按提交形态回显：台账未写 skills 列（空文本）即省略键；mcp_servers 字段已废止不再装配
         assertFalse(agent.containsKey("skills"));
     }
 
@@ -130,7 +129,7 @@ class DefaultAgentSnapshotApiTest {
         when(definitionRepository.findByAgentId("agent-1"))
                 .thenReturn(Optional.of(definition("agent-1", 1, 1L)));
         AgentVersion version = AgentVersion.create("ver-agent-1-1", "agent-1", 1, "助手",
-                "描述", "你是数据分析专家", null, "\"openai:gpt-4\"", null, null, null, null, null);
+                "描述", "你是数据分析专家", null, "\"openai:gpt-4\"", null, null, null, null);
         when(versionRepository.findByAgentIdAndVersionNumber("agent-1", 1)).thenReturn(Optional.of(version));
 
         // when
@@ -250,7 +249,7 @@ class DefaultAgentSnapshotApiTest {
     private static AgentVersion version(String agentId, int number, String name,
                                         String modelJson, String toolsJson, String multiagent) {
         return AgentVersion.create("ver-" + agentId + "-" + number, agentId, number, name,
-                "描述", "", null, modelJson, toolsJson, null, null, multiagent, "{\"k\":\"v\"}");
+                "描述", "", null, modelJson, toolsJson, null, multiagent, "{\"k\":\"v\"}");
     }
 
     /** 目录模型条目（默认上下文窗口 128000）。 */

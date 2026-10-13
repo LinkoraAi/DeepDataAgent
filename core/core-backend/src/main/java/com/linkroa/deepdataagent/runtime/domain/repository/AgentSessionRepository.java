@@ -121,22 +121,6 @@ public interface AgentSessionRepository {
     long countByEnvironmentId(String environmentId);
 
     /**
-     * 统计仍挂载指定记忆库的未删除会话数（记忆库删除引用校验，JSONB 包含查询）。
-     *
-     * @param storeId 记忆库业务 ID（ms_ 前缀）
-     * @return 引用数（0 表示无会话挂载，可安全删除）
-     */
-    long countByMemoryStoreId(String storeId);
-
-    /**
-     * 统计仍挂载指定保管库的未删除会话数（保管库删除引用校验，vault_ids JSONB 包含查询）。
-     *
-     * @param vaultId 保管库业务 ID（vault_ 前缀）
-     * @return 引用数（0 表示无会话挂载，可安全删除）
-     */
-    long countByVaultId(String vaultId);
-
-    /**
      * 刷新 last_active_at。
      */
     void touchLastActive(String sessionId);

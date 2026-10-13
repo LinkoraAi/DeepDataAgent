@@ -28,16 +28,13 @@ import java.util.Set;
  * 连接 / 命令异常由 Redisson 抛出运行时异常向上传播（调用方据此区分瞬断容忍），
  * 本实现 MUST NOT 吞异常返回 {@code false}。</p>
  *
- * <p>通用四方法仅承载 turn 租约（fire lease 无续约、无 owner 二级索引、TTL 为语义常量），
+ * <p>通用四方法仅承载 turn 租约（无其他租约类型），
  * 非 {@link CoordLeaseType#TURN} 入参快速失败。租约键（{@code turn:session:<sessionId>}）的派生与
  * 反解属领域规则（{@link CoordLeaseType#keyOf} / {@link CoordLeaseType#bizIdFromKey}），
  * 本类据领域键再映射为 Redis 物理键布局（{@link CoordLeaseKeys}）。</p>
  */
 @Component
 public class RedisCoordLeaseStore implements CoordinationLeaseStore {
-
-    /** fire lease 防重窗口（fire lease 语义常量，与 {@code CoordinationLeaseService.FIRE_LEASE_TTL} 同值）。 */
-    private static final Duration FIRE_LEASE_TTL = Duration.ofSeconds(30);
 
     /** Lua 脚本返回值：1=生效，0=未生效（确证失权 / 并发拒绝 / 已易主）。 */
     private static final long SCRIPT_APPLIED = 1L;
@@ -100,21 +97,9 @@ public class RedisCoordLeaseStore implements CoordinationLeaseStore {
         return ownedKeys;
     }
 
-    @Override
-    public boolean fireTryAcquire(String deploymentId, String owner) {
-        return isApplied(eval(scripts.fireAcquire(),
-                List.of(CoordLeaseKeys.fire(deploymentId)), owner, FIRE_LEASE_TTL.toMillis()));
-    }
-
-    @Override
-    public boolean fireReleaseOwned(String deploymentId, String owner) {
-        return isApplied(eval(scripts.fireReleaseOwned(),
-                List.of(CoordLeaseKeys.fire(deploymentId)), owner));
-    }
-
     /**
-     * 执行 Lua（Redisson 内部 EVALSHA 优先、NOSCRIPT 回源 EVAL）。READ_WRITE 模式：五段脚本均含写命令。
-     * <p>返回类型 {@code LONG}：五段脚本一律 return 1 / 0。</p>
+     * 执行 Lua（Redisson 内部 EVALSHA 优先、NOSCRIPT 回源 EVAL）。READ_WRITE 模式：三段脚本均含写命令。
+     * <p>返回类型 {@code LONG}：三段脚本一律 return 1 / 0。</p>
      */
     private Long eval(String script, List<Object> keys, Object... values) {
         return redissonClient.getScript(StringCodec.INSTANCE)
@@ -125,11 +110,11 @@ public class RedisCoordLeaseStore implements CoordinationLeaseStore {
         return result != null && result == SCRIPT_APPLIED;
     }
 
-    /** fire 租约不经通用通道（防止绕过 fire 语义常量与无索引约定）。 */
+    /** 通用通道仅承载 turn 租约（防止绕过 TURN 语义约定）。 */
     private static void requireTurnLease(CoordLeaseType leaseType, String method) {
         if (leaseType != CoordLeaseType.TURN) {
             throw new IllegalArgumentException("CoordinationLeaseStore." + method
-                    + " 仅承载 TURN 租约，fire lease 请经 fireTryAcquire / fireReleaseOwned，实际类型: " + leaseType);
+                    + " 仅承载 TURN 租约，实际类型: " + leaseType);
         }
     }
 }

@@ -7,9 +7,7 @@ package com.linkroa.deepdataagent.runtime.infrastructure.config;
  * <ul>
  *   <li>turn 租约：{@code runtime:turn:<sessionId>} —— string，值 = 持有者实例标识，TTL 10min；</li>
  *   <li>turn owner 二级索引：{@code runtime:turn-owners:<instanceId>} —— set，成员 = sessionId
- *       （无 TTL，启动恢复惰性对账清理残留成员）；</li>
- *   <li>fire lease：{@code runtime:fire:<deploymentId>} —— string，值 = 持有者实例标识，TTL 30s，
- *       无 owner 二级索引（调度触发为一次性防重，不参与崩溃恢复扫描）。</li>
+ *       （无 TTL，启动恢复惰性对账清理残留成员）。</li>
  * </ul>
  *
  * <p><b>cluster 预留（当前不实现，仅以命名体现规划）</b>：acquire / release-owned 的 Lua 需在同槽内
@@ -26,9 +24,6 @@ public final class CoordLeaseKeys {
 
     /** turn owner 二级索引 set key 前缀。 */
     private static final String TURN_OWNERS_PREFIX = "runtime:turn-owners:";
-
-    /** fire lease key 前缀。 */
-    private static final String FIRE_PREFIX = "runtime:fire:";
 
     private CoordLeaseKeys() {
     }
@@ -49,14 +44,5 @@ public final class CoordLeaseKeys {
      */
     public static String turnOwners(String instanceId) {
         return TURN_OWNERS_PREFIX + instanceId;
-    }
-
-    /**
-     * fire lease key（{@code runtime:fire:<deploymentId>}）。
-     *
-     * @param deploymentId 调度器业务 ID
-     */
-    public static String fire(String deploymentId) {
-        return FIRE_PREFIX + deploymentId;
     }
 }

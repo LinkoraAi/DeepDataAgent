@@ -33,10 +33,10 @@ class AgentRuntimeCommandConvertTest {
 
     @Test
     void should_buildCreateCommand_when_toCreateCommand_given_validRequest() {
-        // given（无挂载资源、无保管库的裸创建）
+        // given（无挂载资源、无环境变量的裸创建）
         // when
         CreateSessionCommand command = assembler.toCreateCommand("u-1", "agent-a", "1", "会话标题",
-                "{\"biz\":\"1\"}", null, null, "env-1", null);
+                "{\"biz\":\"1\"}", null, null, null);
 
         // then
         assertEquals("u-1", command.userId());
@@ -46,8 +46,6 @@ class AgentRuntimeCommandConvertTest {
         assertEquals("{\"biz\":\"1\"}", command.metadata());
         // 未携带挂载资源时收敛为空列表
         assertEquals(List.of(), command.resources());
-        // 未携带保管库时收敛为空列表；环境变量缺省为 null（由领域模型空白归一为 "{}"）
-        assertEquals(List.of(), command.vaultIds());
         assertEquals(null, command.environmentVariables());
     }
 
@@ -60,7 +58,7 @@ class AgentRuntimeCommandConvertTest {
 
         // when
         CreateSessionCommand command = assembler.toCreateCommand("u-1", "agent-a", "1", null,
-                "{}", resources, null, "env-1", null);
+                "{}", resources, null, null);
 
         // then（file_id / mount_path 映射为领域值对象，type 固定 file；省略 mount_path 缺省自动补全）
         assertEquals(2, command.resources().size());
@@ -72,44 +70,13 @@ class AgentRuntimeCommandConvertTest {
     }
 
     @Test
-    void should_mapGithubAndMemoryStore_when_toCreateCommand_given_mixedResourceTypes() {
-        // given（file + github_repository + memory_store 三类混合挂载）
-        List<SessionResourceItem> resources = List.of(
-                newFileResource("file_1", null),
-                new SessionResourceItem("github_repository", null, null,
-                        "https://github.com/acme/repo.git", "ghp_token", null, "main", null, null, null),
-                new SessionResourceItem("memory_store", null, null,
-                        null, null, null, null, "ms_store1", "read_only", "只读引用"));
-
-        // when
+    void should_serializeEnvVars_when_toCreateCommand_given_envVars() {
+        // when（运行环境 ID 原样下发 + 环境变量序列化为 JSON 文本）
         CreateSessionCommand command = assembler.toCreateCommand("u-1", "agent-a", "1", null,
-                "{}", resources, null, "env-1", null);
+                "{}", null, "env_1", Map.of("LOG_LEVEL", "debug"));
 
-        // then（按类型分派三工厂，字段各归其位）
-        assertEquals(3, command.resources().size());
-        assertEquals(SessionResource.FILE_TYPE, command.resources().get(0).type());
-        SessionResource github = command.resources().get(1);
-        assertEquals(SessionResource.GITHUB_REPO_TYPE, github.type());
-        assertEquals("https://github.com/acme/repo.git", github.url());
-        assertEquals("ghp_token", github.authorizationToken());
-        assertEquals("main", github.checkout());
-        SessionResource store = command.resources().get(2);
-        assertEquals(SessionResource.MEMORY_STORE_TYPE, store.type());
-        assertEquals("ms_store1", store.memoryStoreId());
-        assertEquals("read_only", store.access());
-        assertEquals("只读引用", store.instructions());
-    }
-
-    @Test
-    void should_passEnvironmentAndVaultsAndSerializeEnvVars_when_toCreateCommand_given_fullMountRequest() {
-        // given（携带环境 / 保管库 / 环境变量全量挂载入参）
-        // when
-        CreateSessionCommand command = assembler.toCreateCommand("u-1", "agent-a", "1", null,
-                "{}", null, List.of("vault_1", "vault_2"), "env-9", Map.of("LOG_LEVEL", "debug"));
-
-        // then（environmentId / vaultIds 透传；环境变量序列化为 JSON 文本）
-        assertEquals("env-9", command.environmentId());
-        assertEquals(List.of("vault_1", "vault_2"), command.vaultIds());
+        // then
+        assertEquals("env_1", command.environmentId());
         assertEquals("{\"LOG_LEVEL\":\"debug\"}", command.environmentVariables());
     }
 
@@ -118,7 +85,7 @@ class AgentRuntimeCommandConvertTest {
         // given（环境变量为空 Map：收敛为 null，由领域模型空白归一为 "{}"）
         // when
         CreateSessionCommand command = assembler.toCreateCommand("u-1", "agent-a", "1", null,
-                "{}", null, null, "env-1", Map.of());
+                "{}", null, null, Map.of());
 
         // then
         assertEquals(null, command.environmentVariables());
@@ -131,7 +98,7 @@ class AgentRuntimeCommandConvertTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class, () -> assembler.toCreateCommand("u-1", "agent-a", "1", null,
-                "{}", resources, null, "env-1", null));
+                "{}", resources, null, null));
     }
 
     @Test
@@ -141,18 +108,17 @@ class AgentRuntimeCommandConvertTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class, () -> assembler.toCreateCommand("u-1", "agent-a", "1", null,
-                "{}", resources, null, "env-1", null));
+                "{}", resources, null, null));
     }
 
     @Test
     void should_throw_when_toCreateCommand_given_unsupportedResourceType() {
-        // given（挂载资源类型非 file / github_repository / memory_store：显式 400 拒绝，不得静默按 file 处理）
-        List<SessionResourceItem> resources = List.of(new SessionResourceItem("dataset", "file_1", null,
-                null, null, null, null, null, null, null));
+        // given（挂载资源类型非 file：显式 400 拒绝，不得静默按 file 处理）
+        List<SessionResourceItem> resources = List.of(new SessionResourceItem("dataset", "file_1", null));
 
         // when & then（领域构造器类型不变量不得被架空）
         assertThrows(IllegalArgumentException.class, () -> assembler.toCreateCommand("u-1", "agent-a", "1", null,
-                "{}", resources, null, "env-1", null));
+                "{}", resources, null, null));
     }
 
     @Test
@@ -207,20 +173,22 @@ class AgentRuntimeCommandConvertTest {
     @Test
     void should_passSilently_when_rejectLegacyCreateFields_given_allAbsent() {
         // given & when & then（全缺省即无遗留字段提交：不得抛错）
-        assembler.rejectLegacyCreateFields(null, null, null, null);
+        assembler.rejectLegacyCreateFields(null, null, null, null, null);
     }
 
     @Test
     void should_throwBadRequest_when_rejectLegacyCreateFields_given_anyLegacyFieldSubmitted() {
         // given & when & then（遗留字段任一非空提交即 400，不得静默忽略）
         assertThrows(IllegalArgumentException.class,
-                () -> assembler.rejectLegacyCreateFields(Map.of("type", "cloud"), null, null, null));
+                () -> assembler.rejectLegacyCreateFields(Map.of("type", "cloud"), null, null, null, null));
         assertThrows(IllegalArgumentException.class,
-                () -> assembler.rejectLegacyCreateFields(null, List.of("vault_1"), null, null));
+                () -> assembler.rejectLegacyCreateFields(null, List.of("vault_1"), null, null, null));
         assertThrows(IllegalArgumentException.class,
-                () -> assembler.rejectLegacyCreateFields(null, null, List.of("ms_1"), null));
+                () -> assembler.rejectLegacyCreateFields(null, null, List.of("vault_1"), null, null));
         assertThrows(IllegalArgumentException.class,
-                () -> assembler.rejectLegacyCreateFields(null, null, null, 200));
+                () -> assembler.rejectLegacyCreateFields(null, null, null, List.of("ms_1"), null));
+        assertThrows(IllegalArgumentException.class,
+                () -> assembler.rejectLegacyCreateFields(null, null, null, null, 200));
     }
 
     @Test
@@ -311,7 +279,7 @@ class AgentRuntimeCommandConvertTest {
     @Test
     void should_buildListQuery_when_toListQuery_given_defaultPagination() {
         // when（全缺省：limit 缺省 20、归档缺省排除、降序、无游标）
-        ListSessionsQuery query = assembler.toListQuery("u-1", null, null, null, null, null, null,
+        ListSessionsQuery query = assembler.toListQuery("u-1", null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null);
 
         // then
@@ -319,7 +287,6 @@ class AgentRuntimeCommandConvertTest {
         assertEquals(null, query.agentId());
         assertEquals(null, query.agentVersion());
         assertEquals(null, query.deploymentId());
-        assertEquals(null, query.memoryStoreId());
         assertEquals(List.of(), query.statuses());
         assertEquals(false, query.includeArchived());
         assertEquals(false, query.ascending());
@@ -329,8 +296,8 @@ class AgentRuntimeCommandConvertTest {
 
     @Test
     void should_buildListQuery_when_toListQuery_given_filtersAndCursor() {
-        // when（状态大小写不敏感；deployment / memory_store / 时间边界纳入；order=asc；after_id 游标）
-        ListSessionsQuery query = assembler.toListQuery("u-1", "agent-a", "2", "dep_1", "ms_1",
+        // when（状态大小写不敏感；deployment / 时间边界纳入；order=asc；after_id 游标）
+        ListSessionsQuery query = assembler.toListQuery("u-1", "agent-a", "2", "dep_1",
                 List.of("RUNNING", "idle"), true,
                 "2026-09-01T00:00:00Z", null, null, "2026-09-30T00:00:00Z",
                 "ASC", "50", null, "sess_abc", null);
@@ -339,7 +306,6 @@ class AgentRuntimeCommandConvertTest {
         assertEquals("agent-a", query.agentId());
         assertEquals("2", query.agentVersion());
         assertEquals("dep_1", query.deploymentId());
-        assertEquals("ms_1", query.memoryStoreId());
         assertEquals(List.of(AgentSessionStatus.RUNNING, AgentSessionStatus.IDLE), query.statuses());
         assertTrue(query.includeArchived());
         assertTrue(query.ascending());
@@ -353,14 +319,14 @@ class AgentRuntimeCommandConvertTest {
     void should_throw_when_toListQuery_given_blankUserId() {
         // when & then
         assertThrows(IllegalArgumentException.class, () -> assembler.toListQuery(" ", null, null, null,
-                null, null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null));
     }
 
     @Test
     void should_throw_when_toListQuery_given_invalidStatus() {
         // when & then
         assertThrows(IllegalArgumentException.class,
-                () -> assembler.toListQuery("u-1", null, null, null, null, List.of("BOGUS"), null,
+                () -> assembler.toListQuery("u-1", null, null, null, List.of("BOGUS"), null,
                         null, null, null, null, null, null, null, null, null));
     }
 
@@ -368,10 +334,10 @@ class AgentRuntimeCommandConvertTest {
     void should_throw_when_toListQuery_given_invalidTimestampOrOrder() {
         // given & when & then（非法 RFC 3339 时间与非 asc/desc 的 order 均 400）
         assertThrows(IllegalArgumentException.class,
-                () -> assembler.toListQuery("u-1", null, null, null, null, null, null,
+                () -> assembler.toListQuery("u-1", null, null, null, null, null,
                         "2026-09-01", null, null, null, null, null, null, null, null));
         assertThrows(IllegalArgumentException.class,
-                () -> assembler.toListQuery("u-1", null, null, null, null, null, null,
+                () -> assembler.toListQuery("u-1", null, null, null, null, null,
                         null, null, null, null, "upward", null, null, null, null));
     }
 
@@ -379,21 +345,21 @@ class AgentRuntimeCommandConvertTest {
     void should_throw_when_toListQuery_given_limitOutOfRangeOrCursorConflict() {
         // given & when & then（limit 越界、after_id/before_id 同时提交、page 与游标互斥均 400）
         assertThrows(IllegalArgumentException.class,
-                () -> assembler.toListQuery("u-1", null, null, null, null, null, null,
+                () -> assembler.toListQuery("u-1", null, null, null, null, null,
                         null, null, null, null, null, "101", null, null, null));
         assertThrows(IllegalArgumentException.class,
-                () -> assembler.toListQuery("u-1", null, null, null, null, null, null,
+                () -> assembler.toListQuery("u-1", null, null, null, null, null,
                         null, null, null, null, null, "20", null, "sess_a", "sess_b"));
         assertThrows(IllegalArgumentException.class,
-                () -> assembler.toListQuery("u-1", null, null, null, null, null, null,
+                () -> assembler.toListQuery("u-1", null, null, null, null, null,
                         null, null, null, null, null, "20", "sess_a", "sess_b", null));
     }
 
     @Test
     void should_resolvePageToAfterId_when_toListQuery_given_opaqueNextPage() {
         // when（不透明 page 游标归一为 after_id：客户端回传 next_page 即可续页）
-        ListSessionsQuery query = assembler.toListQuery("u-1", null, null, null, null, null, null,
-                null, null, null, null, null, null, "sess_tail", null, null);
+        ListSessionsQuery query = assembler.toListQuery("u-1", null, null, null, null, null,
+                null, null, null, null, null, null, null, "sess_tail", null);
 
         // then
         assertEquals("sess_tail", query.cursor().afterId());
@@ -452,9 +418,8 @@ class AgentRuntimeCommandConvertTest {
         assertEquals(List.of(), assembler.toSessionResources(List.of()));
     }
 
-    /** 构造文件挂载资源项（仅 file 相关字段，其余类型字段置空）。 */
+    /** 构造文件挂载资源项（仅 file 相关字段）。 */
     private static SessionResourceItem newFileResource(String fileId, String mountPath) {
-        return new SessionResourceItem(SessionResource.FILE_TYPE, fileId, mountPath,
-                null, null, null, null, null, null, null);
+        return new SessionResourceItem(SessionResource.FILE_TYPE, fileId, mountPath);
     }
 }

@@ -19,7 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * Agent 配置请求转换器测试（模型引用 / 工具 / MCP / 技能 / 元数据结构化形态 → JSON 字符串）
+ * Agent 配置请求转换器测试（模型引用 / 工具 / 技能 / 元数据结构化形态 → JSON 字符串）。
+ * <p>MCP 服务器声明能力已废止（请求体不再含 {@code mcp_servers} 字段）。</p>
  */
 class AgentCommandConvertTest {
 
@@ -28,13 +29,12 @@ class AgentCommandConvertTest {
 
     @Test
     void should_mapAllFields_when_toCreateCommand_given_fullConfigRequest() {
-        // given（字符串简写模型引用 + 结构化工具 / MCP / 技能 + 键值元数据）
+        // given（字符串简写模型引用 + 结构化工具 / 技能 + 键值元数据）
         AgentConfigRequest request = new AgentConfigRequest(
                 "客户台账", "台账 Agent", "你是台账助手", "ultimate",
-                List.of(mcpToolset("github")),
-                List.of(mcpServer("github")),
+                List.of(agentToolset()),
                 List.of(skillBinding("skill_1")),
-                null, metadata(), null);
+                null, metadata(), null, null);
 
         // when
         CreateAgentCommand command = AgentCommandConvert.INSTANCE.toCreateCommand(request);
@@ -44,9 +44,7 @@ class AgentCommandConvertTest {
         assertEquals("台账 Agent", command.description());
         assertEquals("你是台账助手", command.systemPrompt());
         assertEquals("\"ultimate\"", command.modelJson());
-        assertEquals("[{\"type\":\"mcp_toolset\",\"mcp_server_name\":\"github\"}]", command.toolsJson());
-        assertEquals("[{\"name\":\"github\",\"type\":\"url\",\"url\":\"https://mcp.example.com\"}]",
-                command.mcpServersJson());
+        assertEquals("[{\"type\":\"agent_toolset_20260401\"}]", command.toolsJson());
         assertEquals("[{\"type\":\"custom\",\"skill_id\":\"skill_1\",\"version\":\"" + EPOCH + "\"}]",
                 command.skillsJson());
         assertNull(command.multiagent());
@@ -73,7 +71,6 @@ class AgentCommandConvertTest {
         assertNull(command.description());
         assertNull(command.systemPrompt());
         assertNull(command.toolsJson());
-        assertNull(command.mcpServersJson());
         assertNull(command.skillsJson());
         assertNull(command.metadataJson());
     }
@@ -93,12 +90,49 @@ class AgentCommandConvertTest {
     void should_rejectNonEmptyAgentsMd_when_toCreateCommand_given_legacyField() {
         // given（agents_md 已废止：任何非空提交一律 400）
         AgentConfigRequest request = new AgentConfigRequest(
-                "客户台账", null, null, "ultimate", null, null, null, null, null,
-                "# 项目约定\n\n统一使用中文回复。");
+                "客户台账", null, null, "ultimate", null, null, null, null,
+                "# 项目约定\n\n统一使用中文回复。", null);
 
         // when / then
         assertThrows(IllegalArgumentException.class,
                 () -> AgentCommandConvert.INSTANCE.toCreateCommand(request));
+    }
+
+    @Test
+    void should_rejectNonEmptyMcpServers_when_toCreateCommand_given_legacyField() {
+        // given（mcp_servers 已废止：非空提交一律 400）
+        AgentConfigRequest request = new AgentConfigRequest(
+                "客户台账", null, null, "ultimate", null, null, null, null, null,
+                List.of(Map.of("name", "s", "type", "url", "url", "https://mcp.example.com/sse")));
+
+        // when / then
+        assertThrows(IllegalArgumentException.class,
+                () -> AgentCommandConvert.INSTANCE.toCreateCommand(request));
+    }
+
+    @Test
+    void should_acceptEmptyMcpServers_when_toCreateCommand_given_nullOrEmpty() {
+        // given（null / 空数组视为未提交，正常受理）
+        AgentConfigRequest nullField = new AgentConfigRequest(
+                "客户台账", null, null, "ultimate", null, null, null, null, null, null);
+        AgentConfigRequest emptyList = new AgentConfigRequest(
+                "客户台账", null, null, "ultimate", null, null, null, null, null, List.of());
+
+        // when / then
+        assertEquals("客户台账", AgentCommandConvert.INSTANCE.toCreateCommand(nullField).name());
+        assertEquals("客户台账", AgentCommandConvert.INSTANCE.toCreateCommand(emptyList).name());
+    }
+
+    @Test
+    void should_rejectNonEmptyMcpServers_when_toPublishCommand_given_legacyField() {
+        // given（发版入口同样拒绝非空 mcp_servers）
+        AgentConfigRequest request = new AgentConfigRequest(
+                "客户台账", null, null, "ultimate", null, null, null, null, null,
+                Map.of("s", Map.of("type", "url")));
+
+        // when / then
+        assertThrows(IllegalArgumentException.class,
+                () -> AgentCommandConvert.INSTANCE.toPublishCommand("agent-a", request));
     }
 
     @Test
@@ -170,21 +204,11 @@ class AgentCommandConvertTest {
         assertEquals(3, command.version());
     }
 
-    /** 工具配方条目（LinkedHashMap 保证键序稳定，便于 JSON 断言）。 */
-    private static Map<String, Object> mcpToolset(String serverName) {
+    /** 工具配方条目（agent_toolset，LinkedHashMap 保证键序稳定，便于 JSON 断言）。 */
+    private static Map<String, Object> agentToolset() {
         Map<String, Object> tool = new LinkedHashMap<>();
-        tool.put("type", "mcp_toolset");
-        tool.put("mcp_server_name", serverName);
+        tool.put("type", "agent_toolset_20260401");
         return tool;
-    }
-
-    /** MCP 服务器声明条目。 */
-    private static Map<String, Object> mcpServer(String name) {
-        Map<String, Object> server = new LinkedHashMap<>();
-        server.put("name", name);
-        server.put("type", "url");
-        server.put("url", "https://mcp.example.com");
-        return server;
     }
 
     /** 技能绑定条目（custom 钉版）。 */

@@ -16,8 +16,8 @@ public interface AgentRuntimeConvert {
     AgentRuntimeConvert INSTANCE = Mappers.getMapper(AgentRuntimeConvert.class);
 
     /**
-     * 命令 → 新会话领域模型（透传触发标记与全量挂载字段：环境 / 保管库 / 环境变量 / 挂载资源；
-     * 触发标记为 null = 普通用户创建；关联记忆库由领域工厂从挂载资源派生）。
+     * 命令 → 新会话领域模型（透传触发标记与挂载字段：环境 / 环境变量 / 挂载资源；
+     * 触发标记为 null = 普通用户创建）。
      */
     default AgentSession toSession(CreateSessionCommand command) {
         return AgentSession.createWithMounts(
@@ -30,7 +30,6 @@ public interface AgentRuntimeConvert {
                 command.triggerId(),
                 command.resources(),
                 command.environmentId(),
-                command.vaultIds(),
                 command.environmentVariables()
         );
     }

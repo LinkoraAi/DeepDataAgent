@@ -50,8 +50,7 @@ public interface AgentSessionMapper extends BaseMapper<AgentSessionEntity> {
     /**
      * 游标分页查询会话（公开契约 GET 列表过滤集合，创建时间 keyset 行值比较）。
      * <p>过滤：agent_id / agent_version / deployment_id（落 {@code trigger_id} 列）/
-     * memory_store_id（{@code memory_store_ids} JSONB {@code @>} 包含）/ statuses /
-     * created_at 四边界；归档排除改由 {@code archived_at IS NULL} 单列承载
+     * statuses / created_at 四边界；归档排除改由 {@code archived_at IS NULL} 单列承载
      * （{@code includeArchived=false} 时附加，与 statuses 无耦合）。</p>
      * <p>方向：{@code reverse=false} 时按 {@code ascending} 排序；{@code reverse=true}
      * （before_id 方向）取更新侧故排序方向取反，应用层读后翻转回请求方向。</p>
@@ -66,8 +65,6 @@ public interface AgentSessionMapper extends BaseMapper<AgentSessionEntity> {
                 .eq(StringUtils.isNotBlank(filter.deploymentId()),
                         AgentSessionEntity::getTriggerId, filter.deploymentId())
                 .in(!statuses.isEmpty(), AgentSessionEntity::getStatus, statuses)
-                .apply(StringUtils.isNotBlank(filter.memoryStoreId()),
-                        "memory_store_ids @> cast({0} as jsonb)", "[\"" + filter.memoryStoreId() + "\"]")
                 .apply(StringUtils.isNotBlank(filter.metadataJson()),
                         "metadata @> cast({0} as jsonb)", filter.metadataJson());
         // 归档排除：archived_at 为null 即未归档（归档已从状态值域移出，不再按 status 判定）
@@ -253,27 +250,5 @@ public interface AgentSessionMapper extends BaseMapper<AgentSessionEntity> {
     default Long countByEnvironmentId(String environmentId) {
         return selectCount(Wrappers.<AgentSessionEntity>lambdaQuery()
                 .eq(AgentSessionEntity::getEnvironmentId, environmentId));
-    }
-
-    /**
-     * 统计仍挂载指定记忆库的未删除会话数（memory_store_ids JSONB 包含查询）。
-     *
-     * @param storeId 记忆库业务 ID（ms_ 前缀）
-     * @return 引用数（0 表示无会话挂载，可安全删除）
-     */
-    default Long countByMemoryStoreId(String storeId) {
-        return selectCount(Wrappers.<AgentSessionEntity>lambdaQuery()
-                .apply("memory_store_ids @> cast({0} as jsonb)", "[\"" + storeId + "\"]"));
-    }
-
-    /**
-     * 统计仍挂载指定保管库的未删除会话数（vault_ids JSONB 包含查询，保管库删除引用校验）。
-     *
-     * @param vaultId 保管库业务 ID（vault_ 前缀）
-     * @return 引用数（0 表示无会话挂载，可安全删除）
-     */
-    default Long countByVaultId(String vaultId) {
-        return selectCount(Wrappers.<AgentSessionEntity>lambdaQuery()
-                .apply("vault_ids @> cast({0} as jsonb)", "[\"" + vaultId + "\"]"));
     }
 }

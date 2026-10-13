@@ -20,7 +20,7 @@ import java.util.Map;
  * Agent 嵌入快照服务契约进程内实现（裁剪规则的权威落点，6.3 / 3.9）。
  * <p>按 Session 嵌入 Agent 快照裁剪规则装配：{@code created_at / updated_at / archived /
  * archived_at / metadata} 不输出、系统提示词以 {@code system} 键输出、按提交形态回显
- * {@code model / tools / mcp_servers / skills}（台账缺列即省略键）；{@code multiagent} 恒输出
+ * {@code model / tools / skills}（台账缺列即省略键）；{@code multiagent} 恒输出
  * {@code null}（写入侧非空 multiagent 一律 400，快照 MUST NOT 展开 coordinator {@code agents[]}
  * 阵列——旧展开语义已废止）。</p>
  * <p>线程快照（Session Thread）复用本快照后由消费方移除 {@code multiagent} 键
@@ -77,7 +77,6 @@ public class DefaultAgentSnapshotApi implements AgentSnapshotApi {
         agent.put("system", version.systemPrompt() == null ? "" : version.systemPrompt());
         putModel(agent, version.modelJson());
         putParsedJson(agent, "tools", version.toolsJson());
-        putParsedJson(agent, "mcp_servers", version.mcpServersJson());
         putParsedJson(agent, "skills", version.skillsJson());
         // metadata / created_at / updated_at / archived_at / agents_md 一律裁剪；
         // multiagent 恒 null（写入侧已拒绝非空提交，快照不展开 coordinator 阵列）

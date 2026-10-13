@@ -83,7 +83,7 @@ class AgentPersistenceConvertTest {
         AgentVersion version = AgentVersion.restore(
                 7L, "ver-1", "agent-a", 3, "v3.0", "版本描述", "你是助手", "profile-1",
                 "{\"id\":\"ultimate\",\"effort\":\"high\"}",
-                "[{\"name\":\"search\"}]", "[{\"type\":\"http\"}]",
+                "[{\"name\":\"search\"}]",
                 "[{\"type\":\"custom\",\"skill_id\":\"skill-a\",\"version\":\"1759178010641129\"}]",
                 "{\"enabled\":true}", "{\"team\":\"data\"}",
                 now, now, "u-1", "u-1");
@@ -103,7 +103,6 @@ class AgentPersistenceConvertTest {
         assertEquals("{\"id\":\"ultimate\",\"effort\":\"high\"}", entity.getModelJson());
         assertEquals("{\"team\":\"data\"}", entity.getMetadataJson());
         assertEquals("[{\"name\":\"search\"}]", entity.getToolsJson());
-        assertEquals("[{\"type\":\"http\"}]", entity.getMcpServersJson());
         assertEquals("[{\"type\":\"custom\",\"skill_id\":\"skill-a\",\"version\":\"1759178010641129\"}]",
                 entity.getSkillsJson());
         assertEquals(now, entity.getCreatedAt());

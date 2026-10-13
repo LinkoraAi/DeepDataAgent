@@ -94,8 +94,6 @@ class JdbcAgentSessionRepositoryTest {
         // then（往返后挂载字段不丢失）
         assertEquals("env_1", saved.environmentId());
         assertEquals(TurnPhase.RUNNING, saved.turnPhase());
-        assertEquals(List.of("vault_1"), saved.vaultIds());
-        assertEquals(List.of("ms_1"), saved.memoryStoreIds());
         assertEquals(1, saved.resources().size());
         assertEquals("file_1", saved.resources().get(0).fileId());
     }
@@ -152,7 +150,7 @@ class JdbcAgentSessionRepositoryTest {
         // given（游标行位点与过滤条件由应用层装配，仓储原样下传 mapper）
         OffsetDateTime cursor = OffsetDateTime.parse("2026-08-22T10:00:00+08:00");
         SessionListFilter filter = new SessionListFilter(
-                "agent-a", "1.0.0", null, null,
+                "agent-a", "1.0.0", null,
                 List.of(AgentSessionStatus.RUNNING, AgentSessionStatus.IDLE),
                 "{\"k\":\"v\"}", false,
                 null, null, null, null, true, cursor, 7L, true);
@@ -325,24 +323,6 @@ class JdbcAgentSessionRepositoryTest {
     }
 
     @Test
-    void should_returnCount_when_countByMemoryStoreId_given_mapperReturnsCount() {
-        // given（记忆库被会话引用的计数，供删除前 409 引用守卫使用）
-        when(mapper.countByMemoryStoreId("ms_1")).thenReturn(2L);
-
-        // when / then
-        assertEquals(2L, repository.countByMemoryStoreId("ms_1"));
-    }
-
-    @Test
-    void should_returnZero_when_countByMemoryStoreId_given_mapperReturnsNull() {
-        // given（selectCount 兜底收敛为 0 避免 NPE）
-        when(mapper.countByMemoryStoreId("ms_1")).thenReturn(null);
-
-        // when / then
-        assertEquals(0L, repository.countByMemoryStoreId("ms_1"));
-    }
-
-    @Test
     void should_delegate_when_touchLastActive_given_sessionId() {
         // when
         repository.touchLastActive("s-1");
@@ -365,9 +345,9 @@ class JdbcAgentSessionRepositoryTest {
         verify(mapper, never()).updateById(any(AgentSessionEntity.class));
     }
 
-    /** 无过滤、无游标的首页查询条件（15 参数全量装配）。 */
+    /** 无过滤、无游标的首页查询条件（14 参数全量装配）。 */
     private static SessionListFilter emptyFilter() {
-        return new SessionListFilter(null, null, null, null, List.of(), null, false,
+        return new SessionListFilter(null, null, null, List.of(), null, false,
                 null, null, null, null, false, null, null, false);
     }
 
@@ -379,7 +359,7 @@ class JdbcAgentSessionRepositoryTest {
         return AgentSession.restore(
                 id, "s-" + id, "u-1", "agent-a", "1.0.0",
                 status, turnPhase, "{}", "标题",
-                "env_1", List.of("vault_1"), List.of("ms_1"), "{\"K\":\"V\"}",
+                "env_1", "{\"K\":\"V\"}",
                 List.of(SessionResource.file("file_1", null)),
                 null, null, now, null, now, now, null, null);
     }

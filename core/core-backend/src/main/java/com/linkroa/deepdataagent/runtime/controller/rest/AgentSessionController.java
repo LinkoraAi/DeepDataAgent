@@ -7,7 +7,6 @@ import com.linkroa.deepdataagent.runtime.application.service.AgentRuntimeQuerySe
 import com.linkroa.deepdataagent.runtime.application.service.session.SessionLifecycleService;
 import com.linkroa.deepdataagent.runtime.controller.request.CreateSessionRequest;
 import com.linkroa.deepdataagent.runtime.controller.request.UpdateSessionRequest;
-import com.linkroa.deepdataagent.runtime.controller.request.UpdateSessionResourceRequest;
 import com.linkroa.deepdataagent.runtime.controller.convert.AgentRuntimeResponseConvert;
 import com.linkroa.deepdataagent.runtime.controller.response.SessionCancelResponse;
 import com.linkroa.deepdataagent.runtime.controller.response.SessionDeletedResponse;
@@ -26,7 +25,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -45,10 +43,10 @@ import java.util.Map;
  * Agent 会话管理 REST 控制器（前缀 {@code /api/v1/cloud/sessions}，Managed Agents Session 契约接口）。
  * <p>会话身份 userId 由 JWT {@code sub} 注入（{@link AuthContext}，会话经 Agent 间接关联工作区、
  * 无独立 workspace_id 归属）。列表按创建时间降序游标分页（shared/api-conventions Cursor 约定，
- * 支持 {@code agent_id / agent_version / deployment_id / memory_store_id / statuses[] /
+ * 支持 {@code agent_id / agent_version / deployment_id / statuses[] /
  * include_archived / created_at[gt|gte|lt|lte] / order} 过滤）；
  * 生命周期端点覆盖 update（可变属性）/ archive / cancel / delete（物理删除链）；
- * 资源管理端点覆盖 list / get / update（GitHub 令牌轮换）/ delete（仅 file 可移除）。</p>
+ * 资源管理端点覆盖 list / get / delete（本期挂载仅 file）。</p>
  */
 @RestController
 @RequestMapping(path = "/cloud/sessions", version = ApiVersionConstants.CURRENT_API_VERSION)
@@ -65,23 +63,23 @@ public class AgentSessionController {
     /**
      * 创建会话（对齐 {@code POST /sessions}）：绑定 agent 指定版本（省略 / {@code 0} = 激活版本）与运行环境。
      * <p>控制器只做字段映射（挂载资源项以 {@link SessionResourceItem} 原样承载后交装配器按类型分派），
-     * 环境 / 保管库 / 挂载的存在性与归属校验在应用服务。
+     * 环境 / 挂载的存在性与归属校验在应用服务。
      * {@code agent} 接受字符串 ID 或 {@code {id, type:"agent", version?}} 对象两种形态；
-     * 已废止遗留字段（{@code environment} / {@code vaults} / {@code memory_store_ids} /
+     * 已废止遗留字段（{@code environment} / {@code vaults} / {@code vault_ids} / {@code memory_store_ids} /
      * {@code delta_flush_interval_ms}）任一非空提交即 400，先于其余装配执行。</p>
      */
     @PostMapping
     public ApiResponse<SessionResponse> createSession(@Valid @RequestBody CreateSessionRequest request) {
         // 遗留字段守卫先行：非空提交即 400（不得静默忽略，否则「创建成功但挂载丢失」）
         AgentRuntimeCommandConvert.INSTANCE.rejectLegacyCreateFields(request.environment(), request.vaults(),
-                request.memory_store_ids(), request.delta_flush_interval_ms());
+                request.vault_ids(), request.memory_store_ids(), request.delta_flush_interval_ms());
         // 对齐 Managed Agents：agent 支持字符串 ID 或 {id, type:"agent", version?} 对象，
         // 省略版本号由服务端解析激活版本（active_version）物化；
         // userId 由 JWT sub 注入（无状态认证过滤器已保障受保护接口必带有效凭证）
         AgentReference reference = AgentRuntimeCommandConvert.INSTANCE.toAgentReference(request.agent());
         AgentSession session = sessionLifecycleService.createSession(AgentRuntimeCommandConvert.INSTANCE.toCreateCommand(
                 currentUserId(), reference.agentId(), reference.agentVersion(), request.title(),
-                toJson(request.metadata()), request.resources(), request.vault_ids(), request.environment_id(),
+                toJson(request.metadata()), request.resources(), request.environment_id(),
                 request.environment_variables()));
         return ApiResponse.success(toSessionResponse(session));
     }
@@ -102,7 +100,7 @@ public class AgentSessionController {
     /**
      * 游标分页列出会话（对齐 {@code GET /sessions}，创建时间降序缺省）。
      * <p>过滤集合严格对齐公开契约：{@code agent_id / agent_version / deployment_id /
-     * memory_store_id / statuses[] / include_archived / created_at[gt|gte|lt|lte] / order}
+     * statuses[] / include_archived / created_at[gt|gte|lt|lte] / order}
      * （{@code environment_id} 与 {@code metadata} 非受支持参数）；
      * {@code limit / page / after_id / before_id} 为统一 Cursor 约定
      * （{@code page} 为响应 {@code next_page} 回传的不透明游标，与 after_id / before_id 互斥
@@ -113,7 +111,6 @@ public class AgentSessionController {
             @RequestParam(name = "agent_id", required = false) String agentId,
             @RequestParam(name = "agent_version", required = false) String agentVersion,
             @RequestParam(name = "deployment_id", required = false) String deploymentId,
-            @RequestParam(name = "memory_store_id", required = false) String memoryStoreId,
             @RequestParam(name = "statuses[]", required = false) List<String> statuses,
             @RequestParam(name = "include_archived", required = false) Boolean includeArchived,
             @RequestParam(name = "created_at[gt]", required = false) String createdAtGt,
@@ -128,7 +125,7 @@ public class AgentSessionController {
     ) {
         CursorPage<AgentSession> result = queryService.listSessions(
                 AgentRuntimeCommandConvert.INSTANCE.toListQuery(currentUserId(), agentId, agentVersion,
-                        deploymentId, memoryStoreId, statuses, includeArchived,
+                        deploymentId, statuses, includeArchived,
                         createdAtGt, createdAtGte, createdAtLt, createdAtLte,
                         order, limit, page, afterId, beforeId));
         return ApiResponse.success(result.map(this::toSessionResponse));
@@ -242,7 +239,7 @@ public class AgentSessionController {
 
     /**
      * 游标分页列出挂载资源（对齐资源管理 {@code GET /sessions/{session_id}/resources}）。
-     * <p>资源按挂载顺序内存切片；GitHub 令牌只写不读，回显不含 authorization_token。</p>
+     * <p>资源按挂载顺序内存切片；本期挂载仅 file 类型。</p>
      */
     @GetMapping("/{sessionId}/resources")
     public ApiResponse<CursorPage<Map<String, Object>>> listResources(
@@ -260,7 +257,7 @@ public class AgentSessionController {
 
     /**
      * 查询单条挂载资源（对齐资源管理 {@code GET /sessions/{session_id}/resources/{resource_id}}，
-     * 含 GitHub 仓库资源的只读元数据；未命中 → 404）。
+     * 本期挂载仅 file；未命中 → 404）。
      */
     @GetMapping("/{sessionId}/resources/{resourceId}")
     public ApiResponse<Map<String, Object>> getResource(@PathVariable String sessionId,
@@ -272,24 +269,8 @@ public class AgentSessionController {
     }
 
     /**
-     * 轮换 GitHub 仓库挂载令牌（对齐资源管理 {@code PATCH /sessions/{session_id}/resources/{resource_id}}）：
-     * 仅 {@code github_repository} 资源支持、新令牌必须非空；响应与日志不泄露新旧令牌。
-     */
-    @PatchMapping("/{sessionId}/resources/{resourceId}")
-    public ApiResponse<Map<String, Object>> updateResource(@PathVariable String sessionId,
-                                                           @PathVariable String resourceId,
-                                                           @RequestBody UpdateSessionResourceRequest request) {
-        sessionLifecycleService.rotateResourceToken(sessionId, resourceId, request.authorization_token());
-        AgentSession session = queryService.getSession(sessionId);
-        SessionResource rotated = queryService.getResource(sessionId, resourceId);
-        return ApiResponse.success(AgentRuntimeResponseConvert.INSTANCE
-                .toResourceDetail(rotated, session.updatedAt()));
-    }
-
-    /**
      * 移除挂载资源（对齐资源管理 {@code DELETE /sessions/{session_id}/resources/{resource_id}}）：
-     * 仅 {@code file} 资源可移除（文件脱离挂载）；{@code github_repository / memory_store}
-     * 创建后不可摘除 → 409；未命中 → 404。
+     * 本期挂载仅 {@code file} 资源，故一律可移除（文件脱离挂载）；未命中 → 404。
      */
     @DeleteMapping("/{sessionId}/resources/{resourceId}")
     public ApiResponse<Void> removeResource(@PathVariable String sessionId,

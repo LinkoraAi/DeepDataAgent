@@ -1,8 +1,6 @@
 package com.linkroa.deepdataagent.agent.application.dto;
 
 import com.linkroa.deepdataagent.agent.api.dto.EnvironmentReferenceDTO;
-import com.linkroa.deepdataagent.memory.api.dto.MemoryStoreReferenceDTO;
-import com.linkroa.deepdataagent.vault.application.dto.ResolvedVaultCredentialDTO;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.List;
@@ -15,8 +13,7 @@ import java.util.List;
  * sysPrompt ← {@code agent_version.sys_prompt}、modelIndicator ← api_format + model_name 拼接结果、
  * maxIters ← {@code model_profile.tool_call_rounds}；凭证已在基础设施层解密
  * （不进 {@code AgentAssemblySpec}，直接注入运行时工厂装配配置）。
- * 环境引用经 {@link EnvironmentReferenceDTO}、记忆库引用经 {@code MemoryStoreReferenceDTO}
- * 对外输出已格式化值，不泄露 agent BC 领域枚举 / 值对象。</p>
+ * 环境引用经 {@link EnvironmentReferenceDTO} 对外输出已格式化值，不泄露 agent BC 领域枚举 / 值对象。</p>
  *
  * @param agentId        Agent 业务 ID
  * @param versionNumber  发布号（十进制）
@@ -29,17 +26,12 @@ import java.util.List;
  * @param apiEndpointUrl 模型 API 端点
  * @param skills         挂载技能装配契约（技能包原始字节，可空/空）
  * @param environment    运行环境引用（可空，未引用回退默认规格）
- * @param memoryStores   记忆库引用（可空/空，未引用不装配记忆工具）
- * @param vaultCredentials 挂载保管库解密后的凭证（可空/空，明文仅内存持有，不经响应/日志泄露）
  * @param modelEffort    生效的模型 effort 档位（目录引用解析结果，可空 = 无调优语义）
  * @param modelContextWindow 生效的模型上下文窗口档位（可空 = 提供方默认）
  * @param toolPolicies   逐工具权限策略（tools_json configs 中 permission_policy 非空项，可空/空 = 无策略配置）
  * @param toolVisibility 内置工具可见性约束（agent_toolset 的 enabled_tools / disallowed_tools /
  *                       configs[].enabled 聚合结果，null 归一为无约束空契约；供 runtime 侧翻译为
  *                       Harness 工具过滤指令，契约名名单不含运行时实名）
- * @param mcpServers     版本声明的 MCP 服务器清单（{@code agent_version.mcp_servers_json} 的结构化发布，
- *                       仅 name/type/url，<b>不含任何凭据材料</b>；可空/空 = 版本未声明 MCP。
- *                       供 runtime 侧映射为 MCP 连接清单并装配 JVM 侧 MCP 客户端）
  */
 public record ResolvedAgentAssemblyDTO(
         String agentId,
@@ -53,13 +45,10 @@ public record ResolvedAgentAssemblyDTO(
         String apiEndpointUrl,
         List<ResolvedSkillDTO> skills,
         EnvironmentReferenceDTO environment,
-        List<MemoryStoreReferenceDTO> memoryStores,
-        List<ResolvedVaultCredentialDTO> vaultCredentials,
         String modelEffort,
         Integer modelContextWindow,
         List<AgentToolPolicyDTO> toolPolicies,
-        AgentToolVisibilityDTO toolVisibility,
-        List<AgentMcpServerDTO> mcpServers
+        AgentToolVisibilityDTO toolVisibility
 ) {
 
     /**
@@ -68,12 +57,11 @@ public record ResolvedAgentAssemblyDTO(
     public ResolvedAgentAssemblyDTO(
             String agentId, int versionNumber, String versionName, String sysPrompt, String agentsMd,
             String modelIndicator, int maxIters, String credential, String apiEndpointUrl,
-            List<ResolvedSkillDTO> skills, EnvironmentReferenceDTO environment,
-            List<MemoryStoreReferenceDTO> memoryStores, List<ResolvedVaultCredentialDTO> vaultCredentials
+            List<ResolvedSkillDTO> skills, EnvironmentReferenceDTO environment
     ) {
         this(agentId, versionNumber, versionName, sysPrompt, agentsMd, modelIndicator, maxIters,
-                credential, apiEndpointUrl, skills, environment, memoryStores, vaultCredentials,
-                null, null, List.of(), null, List.of());
+                credential, apiEndpointUrl, skills, environment,
+                null, null, List.of(), null);
     }
 
     /**
@@ -83,43 +71,11 @@ public record ResolvedAgentAssemblyDTO(
             String agentId, int versionNumber, String versionName, String sysPrompt, String agentsMd,
             String modelIndicator, int maxIters, String credential, String apiEndpointUrl,
             List<ResolvedSkillDTO> skills, EnvironmentReferenceDTO environment,
-            List<MemoryStoreReferenceDTO> memoryStores, List<ResolvedVaultCredentialDTO> vaultCredentials,
             String modelEffort, Integer modelContextWindow
     ) {
         this(agentId, versionNumber, versionName, sysPrompt, agentsMd, modelIndicator, maxIters,
-                credential, apiEndpointUrl, skills, environment, memoryStores, vaultCredentials,
-                modelEffort, modelContextWindow, List.of(), null, List.of());
-    }
-
-    /**
-     * 兼容构造器：无可见性约束（工具权限策略显式给出）。
-     */
-    public ResolvedAgentAssemblyDTO(
-            String agentId, int versionNumber, String versionName, String sysPrompt, String agentsMd,
-            String modelIndicator, int maxIters, String credential, String apiEndpointUrl,
-            List<ResolvedSkillDTO> skills, EnvironmentReferenceDTO environment,
-            List<MemoryStoreReferenceDTO> memoryStores, List<ResolvedVaultCredentialDTO> vaultCredentials,
-            String modelEffort, Integer modelContextWindow, List<AgentToolPolicyDTO> toolPolicies
-    ) {
-        this(agentId, versionNumber, versionName, sysPrompt, agentsMd, modelIndicator, maxIters,
-                credential, apiEndpointUrl, skills, environment, memoryStores, vaultCredentials,
-                modelEffort, modelContextWindow, toolPolicies, null, List.of());
-    }
-
-    /**
-     * 兼容构造器：无 MCP 服务器声明（版本未声明 MCP 的旧装配链）。
-     */
-    public ResolvedAgentAssemblyDTO(
-            String agentId, int versionNumber, String versionName, String sysPrompt, String agentsMd,
-            String modelIndicator, int maxIters, String credential, String apiEndpointUrl,
-            List<ResolvedSkillDTO> skills, EnvironmentReferenceDTO environment,
-            List<MemoryStoreReferenceDTO> memoryStores, List<ResolvedVaultCredentialDTO> vaultCredentials,
-            String modelEffort, Integer modelContextWindow, List<AgentToolPolicyDTO> toolPolicies,
-            AgentToolVisibilityDTO toolVisibility
-    ) {
-        this(agentId, versionNumber, versionName, sysPrompt, agentsMd, modelIndicator, maxIters,
-                credential, apiEndpointUrl, skills, environment, memoryStores, vaultCredentials,
-                modelEffort, modelContextWindow, toolPolicies, toolVisibility, List.of());
+                credential, apiEndpointUrl, skills, environment,
+                modelEffort, modelContextWindow, List.of(), null);
     }
 
     /** 系统提示词长度上限（对齐版本快照 {@code system} 上限，AgentScope 装配契约）。 */
@@ -157,12 +113,9 @@ public record ResolvedAgentAssemblyDTO(
             throw new IllegalArgumentException("模型上下文窗口必须大于0");
         }
         skills = skills == null ? List.of() : List.copyOf(skills);
-        memoryStores = memoryStores == null ? List.of() : List.copyOf(memoryStores);
-        vaultCredentials = vaultCredentials == null ? List.of() : List.copyOf(vaultCredentials);
         toolPolicies = toolPolicies == null ? List.of() : List.copyOf(toolPolicies);
         toolVisibility = toolVisibility == null
                 ? new AgentToolVisibilityDTO(null, null) : toolVisibility;
-        mcpServers = mcpServers == null ? List.of() : List.copyOf(mcpServers);
     }
 
     /**
@@ -183,12 +136,9 @@ public record ResolvedAgentAssemblyDTO(
                         .map(ResolvedSkillDTO::name)
                         .toList()
                 + ", environment=" + environment
-                + ", memoryStores=" + memoryStores
-                + ", vaultCredentials=" + vaultCredentials
                 + ", modelEffort=" + modelEffort
                 + ", modelContextWindow=" + modelContextWindow
                 + ", toolPolicies=" + toolPolicies
-                + ", mcpServers=" + mcpServers
                 + "]";
     }
 

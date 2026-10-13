@@ -4,12 +4,14 @@
 -- 说明：本脚本为全库一次性初始化基线（历史 V1~V19 演进 + 后续 environment 契约
 --       config 结构、资源 ID 前缀、session_thread、技能类型词汇等增量的最终态合并），
 --       一经应用即不可修改（checksum 校验），后续任何改动请新增 V{n+1}__{desc}.sql。
---       基线例外（move-coordination-leases-to-redis PR-C4）：已删除 coordination BC 的
---       协调租约表建表段（协调租约全量迁至 Redis，PG 侧表零代码读写），故本脚本 checksum
---       变化——存量开发/集成库须 `flyway repair` 对齐校验和（或直接重建空库）后再迁移；
---       V2 与协调租约无关，保持原样不动。
--- 分组：按限界上下文（BC）划分 —— auth / file / datasource / agent / skill /
---       memory / vault / runtime。
+--       基线例外（两次，均因项目未上线、存量库可重建或以 `flyway repair` 对齐 checksum）：
+--         ① move-coordination-leases-to-redis PR-C4：删除 coordination BC 协调租约表建表段
+--            （协调租约全量迁至 Redis，PG 侧表零代码读写）；
+--         ② slim-scope-fix-integration-tests：退役 Deployment / Vault / Memory / MCP 服务器声明 /
+--            请求幂等（Idempotency-Key），删除对应建表段，以及 agent_version.mcp_servers_json、
+--            agent_session.vault_ids、agent_session.memory_store_ids 列。
+--       存量开发 / 集成库须 `flyway repair` 对齐校验和（或直接重建空库）后再迁移。
+-- 分组：按限界上下文（BC）划分 —— auth / file / datasource / agent / skill / runtime。
 -- 约定：全库基础字段统一 created_at / updated_at / created_by / updated_by / is_deleted，
 --       时间类型统一 TIMESTAMPTZ（默认 now()），时区统一 Asia/Shanghai；
 --       基础字段由 MyBatis-Plus 自动填充；数据源元数据与业务表列注释由领域实体维护，
@@ -201,7 +203,6 @@ CREATE TABLE agent_version (
     model_json          JSONB,
     skills_json         JSONB,
     tools_json          JSONB,
-    mcp_servers_json    JSONB,
     multiagent          JSONB,
     metadata_json       JSONB,
     created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
@@ -220,7 +221,6 @@ COMMENT ON COLUMN agent_version.model_json          IS '模型引用(JSONB：目
 COMMENT ON COLUMN agent_version.skills_json         IS '技能绑定数组(JSONB:[{"type":"catalog|custom","skill_id":"skill_...","version":"epoch微秒"}]，省略/latest 为动态版)';
 COMMENT ON COLUMN agent_version.metadata_json       IS '业务自定义元数据(JSONB 键值对象，可空)';
 COMMENT ON COLUMN agent_version.tools_json          IS '内联工具配方(JSONB:[{"name":...}])';
-COMMENT ON COLUMN agent_version.mcp_servers_json    IS '内联外部MCP工具源配方(JSONB)';
 COMMENT ON COLUMN agent_version.multiagent          IS '多智能体编排配置(JSONB；本期仅持久化)';
 
 -- 模型配置：凭证经 APP_MODEL_ENCRYPTION_KEY 独立密钥 AES/GCM 加密，仅内嵌加密单一模式。
@@ -276,95 +276,6 @@ CREATE INDEX idx_environment_owner_id ON environment (owner_id);
 COMMENT ON COLUMN environment.description IS '环境描述(≤2048，可空)';
 COMMENT ON COLUMN environment.archived_at IS '归档时间（NULL=未归档；归档后不可被新 Session 引用）';
 COMMENT ON COLUMN environment.config      IS '环境配置(JSONB：{"type":"cloud|self_hosted","packages":{"apt":[],"pip":[],"npm":[]},"setup_script":...})';
-
--- 调度器（Deployment 即调度器资源：schedule(cron+timezone) 或手动/webhook 触发，触发即新建 Session 跑 turn 并产生 Run 记录）。
--- 版本激活/回滚职责归属 agent_definition.active_version，本表不承担。
-CREATE TABLE deployment (
-    id                    BIGSERIAL     PRIMARY KEY,
-    deployment_id         VARCHAR(64)   NOT NULL,
-    agent_id              VARCHAR(64)   NOT NULL,
-    owner_id              BIGINT        NOT NULL DEFAULT 0,
-    name                  VARCHAR(64)   NOT NULL DEFAULT 'scheduler',
-    description           VARCHAR(500),
-    agent_version         INTEGER       NOT NULL,
-    environment_id        VARCHAR(64),
-    environment_variables JSONB         NOT NULL DEFAULT '{}',
-    resources             JSONB         NOT NULL DEFAULT '[]',
-    vault_ids             JSONB         NOT NULL DEFAULT '[]',
-    initial_events        JSONB         NOT NULL DEFAULT '[]',
-    metadata              JSONB         NOT NULL DEFAULT '{}',
-    schedule              JSONB,
-    next_run_at           TIMESTAMPTZ,
-    webhook_token         VARCHAR(128),
-    status                VARCHAR(16)   NOT NULL DEFAULT 'active',
-    paused_reason         VARCHAR(512),
-    last_run_at           TIMESTAMPTZ,
-    last_session_id       VARCHAR(64),
-    last_status           VARCHAR(32),
-    archived_at           TIMESTAMPTZ,
-    created_at            TIMESTAMPTZ   NOT NULL DEFAULT now(),
-    updated_at            TIMESTAMPTZ   NOT NULL DEFAULT now(),
-    created_by            VARCHAR(100),
-    updated_by            VARCHAR(100),
-    is_deleted            SMALLINT      NOT NULL DEFAULT 0
-);
-
-CREATE UNIQUE INDEX uk_deployment_deployment_id ON deployment (deployment_id) WHERE is_deleted = 0;
-CREATE INDEX idx_deployment_agent_id ON deployment (agent_id);
-CREATE INDEX idx_deployment_owner_active ON deployment (owner_id) WHERE is_deleted = 0 AND archived_at IS NULL;
--- 调度轮询领取索引：仅覆盖「有 schedule、active、未归档」的到期候选行
-CREATE INDEX idx_deployment_due ON deployment (next_run_at)
-    WHERE is_deleted = 0 AND archived_at IS NULL AND status = 'active' AND schedule IS NOT NULL;
--- GIN 索引支持 metadata JSONB containment 过滤
-CREATE INDEX idx_deployment_metadata ON deployment USING GIN (metadata);
-
-COMMENT ON TABLE  deployment                      IS '调度器表（Deployment 即调度器资源，不承担版本激活/回滚职责）';
-COMMENT ON COLUMN deployment.agent_version        IS '创建时解析并固定的Agent版本号（省略版本时服务端取active_version固化，触发不随后续发布漂移）';
-COMMENT ON COLUMN deployment.description          IS '调度器描述';
-COMMENT ON COLUMN deployment.environment_id       IS '指向的Environment业务ID（null=回退默认环境）';
-COMMENT ON COLUMN deployment.environment_variables IS '触发会话注入的环境变量（JSONB 对象，触发时透传 runtime 装配）';
-COMMENT ON COLUMN deployment.resources            IS '触发会话挂载资源（jsonb 数组，格式对齐 session resources，触发时透传 runtime）';
-COMMENT ON COLUMN deployment.vault_ids            IS '触发会话挂载保管库业务ID列表（JSONB 数组）';
-COMMENT ON COLUMN deployment.initial_events       IS '首批注入的用户消息事件（JSONB 数组 [{type:user_message,text}]，触发时合成首个 turn 消息）';
-COMMENT ON COLUMN deployment.metadata             IS '扩展元数据（JSONB 对象，触发会话透传）';
-COMMENT ON COLUMN deployment.schedule             IS '调度配置（JSONB {cron,timezone}；null=仅手动/webhook触发）';
-COMMENT ON COLUMN deployment.next_run_at          IS '下次到期触发时间（schedule 非空时物化，调度轮询领取依据）';
-COMMENT ON COLUMN deployment.webhook_token        IS 'webhook触发密钥（null=未开放webhook；路径token免JWT回调）';
-COMMENT ON COLUMN deployment.status               IS '状态（active/paused，替代旧 enabled 布尔）';
-COMMENT ON COLUMN deployment.paused_reason        IS '暂停原因（status=paused 时有值）';
-COMMENT ON COLUMN deployment.last_run_at          IS '最近一次触发时间';
-COMMENT ON COLUMN deployment.last_session_id      IS '最近一次触发新建的会话ID';
-COMMENT ON COLUMN deployment.last_status          IS '最近一次触发执行结果状态';
-COMMENT ON COLUMN deployment.archived_at          IS '归档时间（归档=archived_at + status=paused 双写）';
-
--- 调度器运行记录（每次触发产生一行；结果状态本期为初始 running，终态回写随运行查询面/事件计量接入）。
-CREATE TABLE deployment_run (
-    id            BIGSERIAL   PRIMARY KEY,
-    run_id        VARCHAR(64) NOT NULL,
-    deployment_id VARCHAR(64) NOT NULL,
-    session_id    VARCHAR(64),
-    trigger_kind  VARCHAR(16) NOT NULL,
-    status        VARCHAR(32) NOT NULL DEFAULT 'running',
-    started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    finished_at   TIMESTAMPTZ,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_by    VARCHAR(100),
-    updated_by    VARCHAR(100),
-    is_deleted    SMALLINT    NOT NULL DEFAULT 0
-);
-
-CREATE UNIQUE INDEX uk_deployment_run_run_id ON deployment_run (run_id) WHERE is_deleted = 0;
-CREATE INDEX idx_deployment_run_deployment ON deployment_run (deployment_id, started_at DESC);
-CREATE INDEX idx_deployment_run_session_id ON deployment_run (session_id);
-
-COMMENT ON TABLE  deployment_run            IS '调度器运行记录表（触发时间/结果状态/关联会话）';
-COMMENT ON COLUMN deployment_run.run_id     IS '运行记录业务ID（drun_ 前缀）';
-COMMENT ON COLUMN deployment_run.session_id IS '本次触发新建的会话ID（启动失败时为 null）';
-COMMENT ON COLUMN deployment_run.trigger_kind IS '触发方式（cron/manual/webhook，源码小写）';
-COMMENT ON COLUMN deployment_run.status     IS '运行状态（running/succeeded/failed/terminated；本期触发落 running）';
-COMMENT ON COLUMN deployment_run.started_at IS '触发时间';
-COMMENT ON COLUMN deployment_run.finished_at IS '结束时间（终态回写随后续任务接通）';
 
 -- =====================================================================
 -- BC: skill（技能资产原语：Skill 聚合 + 不可变内容版本）
@@ -434,201 +345,11 @@ COMMENT ON COLUMN skill_content_version.content_sha256 IS '包内容 SHA-256 校
 COMMENT ON COLUMN skill_content_version.content_size   IS '包内容字节长度(解压后总量，上限 50MB)';
 COMMENT ON COLUMN skill_content_version.resources      IS '资源文件相对路径→内容摘要清单(JSONB，可空)';
 
--- 幂等记录：POST /agents 携带 Idempotency-Key 时按用户隔离保存首次创建结果。
-CREATE TABLE idempotency_record (
-    id              BIGSERIAL    PRIMARY KEY,
-    idempotency_key VARCHAR(255) NOT NULL,
-    owner_id        BIGINT       NOT NULL,
-    scope           VARCHAR(64)  NOT NULL,
-    request_hash    VARCHAR(64)  NOT NULL,
-    response_status INTEGER      NOT NULL,
-    response_body   TEXT         NOT NULL,
-    created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    created_by      VARCHAR(100),
-    updated_by      VARCHAR(100),
-    is_deleted      SMALLINT     NOT NULL DEFAULT 0
-);
-
-CREATE UNIQUE INDEX uk_idempotency_record_key ON idempotency_record (owner_id, scope, idempotency_key) WHERE is_deleted = 0;
-
-COMMENT ON TABLE  idempotency_record                 IS '幂等记录表(短窗内相同键返回首次结果；按 owner 隔离)';
-COMMENT ON COLUMN idempotency_record.idempotency_key IS '请求 Idempotency-Key 头原值';
-COMMENT ON COLUMN idempotency_record.owner_id        IS '归属用户ID(幂等键按用户隔离)';
-COMMENT ON COLUMN idempotency_record.scope           IS '作用域(如 post_agents)';
-COMMENT ON COLUMN idempotency_record.request_hash    IS '首次请求体 SHA-256(hex，用于同键异体冲突判定)';
-COMMENT ON COLUMN idempotency_record.response_status IS '首次响应 HTTP 状态码';
-COMMENT ON COLUMN idempotency_record.response_body   IS '首次响应体(JSON 字符串)';
-
--- =====================================================================
--- BC: memory（记忆库 Store → Memory(entry) → MemoryVersion）
--- =====================================================================
--- 对齐 Memory Store 原语：Store 带 status 与统计列；Memory 以 mem_ 前缀业务ID、
--- version 做 OCC 乐观并发（content ≤ 100KB）；版本历史 memver_ 前缀不可变快照 + 版本级 redact。
-CREATE TABLE memory_stores (
-    id            BIGSERIAL     PRIMARY KEY,
-    store_id      VARCHAR(64)   NOT NULL,
-    name          VARCHAR(64)   NOT NULL,
-    description   VARCHAR(500)  NOT NULL DEFAULT '',
-    status        VARCHAR(20)   NOT NULL DEFAULT 'active',
-    entry_count   INTEGER       NOT NULL DEFAULT 0,
-    total_size    BIGINT        NOT NULL DEFAULT 0,
-    owner_id      BIGINT        NOT NULL,
-    archived_at   TIMESTAMPTZ,
-    created_at    TIMESTAMPTZ   NOT NULL DEFAULT now(),
-    updated_at    TIMESTAMPTZ   NOT NULL DEFAULT now(),
-    created_by    VARCHAR(100),
-    updated_by    VARCHAR(100),
-    is_deleted    SMALLINT      NOT NULL DEFAULT 0
-);
-
-CREATE UNIQUE INDEX uk_memory_stores_store_id ON memory_stores (store_id) WHERE is_deleted = 0;
-CREATE INDEX idx_memory_stores_owner_id ON memory_stores (owner_id);
-
-COMMENT ON TABLE  memory_stores                     IS '记忆库表(Store 聚合根)';
-COMMENT ON COLUMN memory_stores.store_id            IS '记忆库业务ID(前缀 ms_)';
-COMMENT ON COLUMN memory_stores.name                IS '记忆库名称';
-COMMENT ON COLUMN memory_stores.description         IS '记忆库描述(缺省空串)';
-COMMENT ON COLUMN memory_stores.status              IS '状态(active/archived，归档后只读、写操作拒绝 409)';
-COMMENT ON COLUMN memory_stores.entry_count         IS '活跃记忆条目数(随内容变更维护)';
-COMMENT ON COLUMN memory_stores.total_size          IS '活跃记忆内容总字节数(随内容变更维护)';
-COMMENT ON COLUMN memory_stores.owner_id            IS '归属用户ID';
-COMMENT ON COLUMN memory_stores.archived_at         IS '归档时间(NULL=未归档)';
-
-CREATE TABLE memories (
-    id              BIGSERIAL     PRIMARY KEY,
-    memory_id       VARCHAR(64)   NOT NULL,
-    store_id        VARCHAR(64)   NOT NULL,
-    path            VARCHAR(512)  NOT NULL,
-    version         INTEGER       NOT NULL DEFAULT 1,
-    size            BIGINT        NOT NULL,
-    content_sha256  VARCHAR(64)   NOT NULL,
-    metadata        JSONB         NOT NULL DEFAULT '{}'::jsonb,
-    deleted_at      TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ   NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ   NOT NULL DEFAULT now()
-);
-
-CREATE UNIQUE INDEX uk_memories_memory_id ON memories (memory_id);
-CREATE UNIQUE INDEX uk_memories_store_path ON memories (store_id, path) WHERE deleted_at IS NULL;
-CREATE INDEX idx_memories_store_id ON memories (store_id);
-
-COMMENT ON TABLE  memories                  IS '记忆条目表(Memory，store+path 活跃唯一，tombstone 软删)';
-COMMENT ON COLUMN memories.memory_id        IS '记忆业务ID(前缀 mem_)';
-COMMENT ON COLUMN memories.store_id         IS '所属记忆库业务ID';
-COMMENT ON COLUMN memories.path             IS '记忆路径(相对路径，不以 / 开头，更新时不可变)';
-COMMENT ON COLUMN memories.version          IS '当前版本号(OCC 乐观并发，写时 +1)';
-COMMENT ON COLUMN memories.size             IS '当前内容字节长度(UTF-8，上限 100KB)';
-COMMENT ON COLUMN memories.content_sha256   IS '当前内容 SHA-256 校验值(hex，64 字符)';
-COMMENT ON COLUMN memories.metadata         IS '自定义元数据(JSONB 对象，≤16 对；key 1-64 字符、value ≤512 字符)';
-COMMENT ON COLUMN memories.deleted_at       IS '删除时间(tombstone 软删，NULL=活跃)';
-
-CREATE TABLE memory_versions (
-    id              BIGSERIAL     PRIMARY KEY,
-    version_id      VARCHAR(64)   NOT NULL,
-    store_id        VARCHAR(64)   NOT NULL,
-    entry_id        VARCHAR(64)   NOT NULL,
-    entry_path      VARCHAR(512)  NOT NULL,
-    version         INTEGER       NOT NULL,
-    action          VARCHAR(20)   NOT NULL,
-    content         TEXT,
-    size            BIGINT,
-    content_sha256  VARCHAR(64),
-    redacted        BOOLEAN       NOT NULL DEFAULT FALSE,
-    redacted_at     TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ   NOT NULL DEFAULT now()
-);
-
-CREATE UNIQUE INDEX uk_memory_versions_version_id ON memory_versions (version_id);
-CREATE UNIQUE INDEX uk_memory_versions_entry_version ON memory_versions (entry_id, version);
-CREATE INDEX idx_memory_versions_store_id ON memory_versions (store_id);
-
-COMMENT ON TABLE  memory_versions                IS '记忆版本表(不可变快照，含删除 tombstone 版本)';
-COMMENT ON COLUMN memory_versions.version_id     IS '版本业务ID(前缀 memver_)';
-COMMENT ON COLUMN memory_versions.store_id       IS '所属记忆库业务ID';
-COMMENT ON COLUMN memory_versions.entry_id       IS '所属记忆业务ID(mem_ 前缀)';
-COMMENT ON COLUMN memory_versions.entry_path     IS '记忆路径快照';
-COMMENT ON COLUMN memory_versions.version        IS '版本号(entry 内从 1 递增)';
-COMMENT ON COLUMN memory_versions.action         IS '动作类型(created/updated/deleted)';
-COMMENT ON COLUMN memory_versions.content        IS '文本内容(tombstone 版本为 NULL；redact 后置 NULL)';
-COMMENT ON COLUMN memory_versions.size           IS '内容字节长度(UTF-8，tombstone 为 NULL)';
-COMMENT ON COLUMN memory_versions.content_sha256 IS '内容 SHA-256 校验值(redact 后置 NULL)';
-COMMENT ON COLUMN memory_versions.redacted       IS '是否已脱敏(脱敏后 content 不再返回)';
-COMMENT ON COLUMN memory_versions.redacted_at    IS '脱敏时间';
-
--- =====================================================================
--- BC: vault（保管库 + 凭证两层模型，对齐 Managed Agents Vault 公开契约）
--- =====================================================================
--- Vault 聚合根仅以 owner_id 隔离；Credential 以「加密信封」单列承载全部密文成分
--- （token / access_token / refresh_token / client_secret 均在加密后的 JSON 信封内），
--- 明文永不落库；未加密列仅保留调度与匹配所需的非密成分（mcp_server_url / expires_at）。
--- 产品边界：Vault 为 MCP 服务器密钥托管，凭据一律以 mcp_server_url 匹配 MCP 连接，
--- 故 Target 列恒为 URL（无第二种 Target 形态）；删除无引用约束（archive 软删 / delete 级联硬删）。
-CREATE TABLE vaults (
-    id            BIGSERIAL     PRIMARY KEY,
-    vault_id      VARCHAR(64)   NOT NULL,
-    display_name  VARCHAR(255)  NOT NULL,
-    metadata_json JSONB,
-    owner_id      BIGINT        NOT NULL,
-    archived_at   TIMESTAMPTZ,
-    created_at    TIMESTAMPTZ   NOT NULL DEFAULT now(),
-    updated_at    TIMESTAMPTZ   NOT NULL DEFAULT now(),
-    created_by    VARCHAR(100),
-    updated_by    VARCHAR(100),
-    is_deleted    SMALLINT      NOT NULL DEFAULT 0
-);
-
-CREATE UNIQUE INDEX uk_vaults_vault_id ON vaults (vault_id) WHERE is_deleted = 0;
-CREATE INDEX idx_vaults_owner_id ON vaults (owner_id);
-
-COMMENT ON COLUMN vaults.vault_id      IS '保管库业务ID(前缀 vault_)';
-COMMENT ON COLUMN vaults.display_name  IS '显示名称(≤255，对齐公开契约)';
-COMMENT ON COLUMN vaults.metadata_json IS '元数据(JSONB，可选)';
-COMMENT ON COLUMN vaults.owner_id      IS '归属用户ID';
-COMMENT ON COLUMN vaults.archived_at   IS '归档时间(软删，NULL=未归档)';
-
-CREATE TABLE vault_credentials (
-    id             BIGSERIAL     PRIMARY KEY,
-    credential_id  VARCHAR(64)   NOT NULL,
-    vault_id       VARCHAR(64)   NOT NULL,
-    auth_type      VARCHAR(32)   NOT NULL,
-    mcp_server_url VARCHAR(2048) NOT NULL,
-    ciphertext     BYTEA         NOT NULL,
-    key_version    INTEGER       NOT NULL DEFAULT 1,
-    expires_at     TIMESTAMPTZ,
-    metadata_json  JSONB,
-    archived_at    TIMESTAMPTZ,
-    created_at     TIMESTAMPTZ   NOT NULL DEFAULT now(),
-    updated_at     TIMESTAMPTZ   NOT NULL DEFAULT now(),
-    created_by     VARCHAR(100),
-    updated_by     VARCHAR(100),
-    is_deleted     SMALLINT      NOT NULL DEFAULT 0
-);
-
-CREATE UNIQUE INDEX uk_vault_credentials_credential_id ON vault_credentials (credential_id) WHERE is_deleted = 0;
-CREATE INDEX idx_vault_credentials_vault_id ON vault_credentials (vault_id);
--- 同一 MCP server 只允许一条活跃凭据：机械落实「一个连接只选一种认证方式，避免多个凭据竞争同一目标」
--- （对齐公开契约「该 MCP server 已存在 active 凭证」的 409 语义）
-CREATE UNIQUE INDEX uk_vault_credentials_url_target
-    ON vault_credentials (vault_id, mcp_server_url)
-    WHERE is_deleted = 0 AND archived_at IS NULL;
-
-COMMENT ON TABLE  vault_credentials                    IS '凭证表(VaultCredential，加密信封落库、只写不读)';
-COMMENT ON COLUMN vault_credentials.credential_id      IS '凭证业务唯一ID(前缀 vcred_)';
-COMMENT ON COLUMN vault_credentials.vault_id           IS '所属保管库业务ID';
-COMMENT ON COLUMN vault_credentials.auth_type          IS '凭证鉴权类型(static_bearer | mcp_oauth，值域由领域枚举校验)';
-COMMENT ON COLUMN vault_credentials.mcp_server_url     IS '绑定的 MCP 服务器 URL(≤2048，运行时按此精确匹配 MCP 连接后注入鉴权头)';
-COMMENT ON COLUMN vault_credentials.ciphertext         IS 'AES/GCM 加密后的凭据信封(BYTEA：{token|access_token|refresh|client_secret} JSON 整体加密，明文永不落库)';
-COMMENT ON COLUMN vault_credentials.key_version        IS '加密密钥版本(支持 master key 读旧写新无损轮换)';
-COMMENT ON COLUMN vault_credentials.expires_at         IS 'mcp_oauth access_token 过期时间(非密成分，明文列供临期刷新调度读取；其余类型为 NULL)';
-COMMENT ON COLUMN vault_credentials.metadata_json      IS '凭证元数据(JSONB，与凭证一起存储，可选)';
-COMMENT ON COLUMN vault_credentials.archived_at        IS '凭证归档时间(软删，NULL=未归档；归档不再用于新 Session 挂载)';
-
 -- =====================================================================
 -- BC: runtime（Agent 会话 + 事件流）
 -- 轨迹/计量全部由 append-only 事件流承载。
 -- =====================================================================
--- status 对外四态词汇（初始态 idle）+ turn_phase 内部执行相位双列；环境/保管库/记忆库/环境变量挂载；触发打标。
+-- status 对外四态词汇（初始态 idle）+ turn_phase 内部执行相位双列；环境/环境变量挂载；触发打标。
 -- 归档不是状态取值：archived_at 为独立正交维度，可与任意 status 组合。
 CREATE TABLE agent_session (
     id BIGSERIAL PRIMARY KEY,
@@ -641,8 +362,6 @@ CREATE TABLE agent_session (
     metadata JSONB NOT NULL DEFAULT '{}',
     title VARCHAR(255),
     environment_id VARCHAR(64),
-    vault_ids JSONB NOT NULL DEFAULT '[]',
-    memory_store_ids JSONB NOT NULL DEFAULT '[]',
     environment_variables JSONB NOT NULL DEFAULT '{}',
     resources jsonb NOT NULL DEFAULT '[]',
     last_active_at TIMESTAMPTZ,
@@ -666,13 +385,11 @@ COMMENT ON COLUMN agent_session.turn_phase        IS '内部执行相位(永不�
 COMMENT ON COLUMN agent_session.metadata          IS '扩展元数据(JSONB)，支持 containment 查询（如 external_user_id 隔离）';
 COMMENT ON COLUMN agent_session.title             IS '会话标题';
 COMMENT ON COLUMN agent_session.environment_id    IS '会话挂载执行环境业务ID(env_ 前缀；self_hosted 环境装配时 400)';
-COMMENT ON COLUMN agent_session.vault_ids         IS '会话挂载保管库业务ID列表(JSONB 数组，运行时由控制平面按 Target 匹配后注入 MCP 连接鉴权头，凭据不进沙箱数据面)';
-COMMENT ON COLUMN agent_session.memory_store_ids  IS '会话挂载记忆库业务ID列表(JSONB 数组)';
 COMMENT ON COLUMN agent_session.environment_variables IS '会话级环境变量(JSONB 对象，装配时注入 Harness)';
 COMMENT ON COLUMN agent_session.last_active_at    IS '最后活跃时间';
-COMMENT ON COLUMN agent_session.resources         IS '会话挂载资源引用（jsonb 数组，三类: file/github_repository/memory_store）';
+COMMENT ON COLUMN agent_session.resources         IS '会话挂载资源引用（jsonb 数组，仅 file 类型：{id,type,file_id,mount_path}）';
 COMMENT ON COLUMN agent_session.trigger_type      IS '触发来源类型（manual/webhook/cron，源码小写；null=普通用户会话）';
-COMMENT ON COLUMN agent_session.trigger_id        IS '触发来源调度器业务ID（deployment_id；trigger_type 存在时必填）';
+COMMENT ON COLUMN agent_session.trigger_id        IS '触发来源业务ID（trigger_type 存在时必填；调度器/部署能力已退役，保留词汇位）';
 COMMENT ON COLUMN agent_session.archived_at       IS '归档时间（独立正交维度，不与 status 双写；是归档 + status 保持原值）';
 
 CREATE INDEX idx_agent_session_user_id ON agent_session(user_id);
@@ -839,7 +556,7 @@ COMMENT ON TABLE document IS '文档聚合根表';
 COMMENT ON COLUMN document.id IS '文档ID';
 COMMENT ON COLUMN document.kb_id IS '所属知识库ID，弱引用 knowledge_base.id';
 COMMENT ON COLUMN document.file_name IS '文件名';
-COMMENT ON COLUMN document.file_type IS '文件格式: PDF/DOC/DOCX/XLS/XLSX/PPT/PPTX/TXT/MD/CSV/HTML/PNG/JPG/JPEG';
+COMMENT ON COLUMN document.file_type IS '文件格式: PDF/DOC/DOCX/XLS/XLSX/PPT/PPTX/TXT/MD/CSV/PNG/JPG/JPEG';
 COMMENT ON COLUMN document.status IS '文档处理状态: PENDING/PROCESSING/PROCESSED/FAILED/DELETING/DELETE_FAILED（DELETED常量已移除；收口即物理DELETE行消失、行缺失即已删除）';
 COMMENT ON COLUMN document.error_message IS '处理/清退失败原因(状态为FAILED或DELETE_FAILED时记录错误信息，其余为NULL)';
 COMMENT ON COLUMN document.file_size IS '文件大小(字节)';

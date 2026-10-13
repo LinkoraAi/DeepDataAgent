@@ -14,9 +14,10 @@ import java.util.Map;
  * <p>模型引用遵循模型目录契约：{@code model} 支持字符串简写（目录模型 id）与对象形态
  * {@code {id, effort?, context_window?}} 两种等价提交形态，响应按提交形态回显；
  * 内部供应商映射（model_profile）不在对外契约出现。</p>
- * <p>{@code tools} / {@code mcp_servers} / {@code skills} 以<b>结构化 JSON 值</b>提交
- * （{@code list} / 对象），由应用层转换器序列化为落库配方；{@code agents_md} 已废止，
- * 提交即 400（指令统一由 {@code system} 承载）。</p>
+ * <p>{@code tools} / {@code skills} 以<b>结构化 JSON 值</b>提交
+ * （{@code list}），由应用层转换器序列化为落库配方；{@code agents_md} 已废止，
+ * 提交即 400（指令统一由 {@code system} 承载）。MCP 服务器声明能力已废止
+ * （请求体不再接受 {@code mcp_servers} 字段）。</p>
  */
 public record AgentConfigRequest(
 
@@ -38,11 +39,8 @@ public record AgentConfigRequest(
         @NotNull(message = "模型引用不能为空")
         Object model,
 
-        /** 工具配方（公开四类 type；browser_toolset 本期 400） */
+        /** 工具配方（公开两类 type；browser_toolset / mcp_toolset 本期 400） */
         List<Object> tools,
-
-        /** 外部 MCP 工具源配方（{name, type:"url", url}） */
-        @JsonProperty("mcp_servers") List<Object> mcpServers,
 
         /** 技能绑定配方（{type:"catalog"|"custom", skill_id, version?}） */
         List<Object> skills,
@@ -56,6 +54,12 @@ public record AgentConfigRequest(
         /** 已废止字段：AGENTS.md 指令文件（提交即 400，指令统一由 system 承载） */
         @JsonProperty("agents_md")
         @JsonAlias("agentsMd")
-        String agentsMd
+        String agentsMd,
+
+        /** 已废止字段：MCP 服务器声明（仅用于请求边界显式拒绝判定，不进入领域/命令/版本快照）。
+         *  非空（非 `null` / 非空数组 / 非空对象）提交一律 400 invalid_request_error。 */
+        @JsonProperty("mcp_servers")
+        @JsonAlias("mcpServers")
+        Object mcpServers
 ) {
 }

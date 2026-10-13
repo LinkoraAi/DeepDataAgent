@@ -81,29 +81,6 @@ class RedisLeaseGrayRoundTest extends RedisFullContextTestSupport {
         leaseService.releaseTurnLease(sessionId);
     }
 
-    @Test
-    void should_deduplicateSchedulerFires_when_fireLease_given_windowNotElapsed() {
-        // given
-        String deploymentId = "it-dep-gray";
-
-        // when：同窗口两次触发
-        boolean first = leaseService.tryAcquireFireLease(deploymentId);
-        boolean second = leaseService.tryAcquireFireLease(deploymentId);
-
-        // then：窗口内单赢家（fire lease 无 owner 索引，只落 Redis），值为首次触发的持有者实例
-        assertTrue(first);
-        assertFalse(second);
-        assertEquals(leaseService.instanceId(), fireLeaseValue(deploymentId),
-                "fire lease 值应为首个触发的实例标识");
-
-        // when：触发流程结束显式释放
-        leaseService.releaseFireLease(deploymentId);
-
-        // then：窗口提前结束，后续触发可再抢占
-        assertTrue(leaseService.tryAcquireFireLease(deploymentId));
-        leaseService.releaseFireLease(deploymentId);
-    }
-
     /** 新建 idle 会话（全量上下文不随用例回滚，登记后物理清理）。 */
     private String newSession() {
         AgentSession session = sessionRepository.save(
@@ -117,10 +94,5 @@ class RedisLeaseGrayRoundTest extends RedisFullContextTestSupport {
                 "SELECT count(*) FROM agent_session WHERE session_id = ? AND status = ? AND is_deleted = 0",
                 Integer.class, sessionId, status);
         return count == null ? 0 : count;
-    }
-
-    /** fire key 当前值（持有者实例标识；fire lease 无 owner 二级索引）。 */
-    private String fireLeaseValue(String deploymentId) {
-        return redissonClient.<String>getBucket(CoordLeaseKeys.fire(deploymentId), StringCodec.INSTANCE).get();
     }
 }

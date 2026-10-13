@@ -8,7 +8,6 @@ import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec.PromptCo
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec.ToolExecutionPolicy;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec.ToolGovernance;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec.ToolVisibility;
-import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec.VaultCredentialRef;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -23,14 +22,13 @@ import static com.linkroa.deepdataagent.runtime.domain.model.AssemblySpecFixture
 import static com.linkroa.deepdataagent.runtime.domain.model.AssemblySpecFixtures.identity;
 import static com.linkroa.deepdataagent.runtime.domain.model.AssemblySpecFixtures.model;
 import static com.linkroa.deepdataagent.runtime.domain.model.AssemblySpecFixtures.mounts;
-import static com.linkroa.deepdataagent.runtime.domain.model.AssemblySpecFixtures.noGovernance;
 import static com.linkroa.deepdataagent.runtime.domain.model.AssemblySpecFixtures.ownership;
 import static com.linkroa.deepdataagent.runtime.domain.model.AssemblySpecFixtures.prompt;
 
 /**
  * {@link AgentAssemblySpec}（分组 record + Builder）与其分组子 record 的不变量单测（R13 / D1）。
  * <p>覆盖：顶层扁平访问器委托分组、分组紧凑构造器不变量、空分组拒绝、toString 脱敏面
- * （凭证 / 保管库 / AGENTS.md / 环境变量值均不泄露）。</p>
+ * （凭证 / AGENTS.md / 环境变量值均不泄露）。</p>
  */
 class AgentAssemblySpecTest {
 
@@ -186,28 +184,12 @@ class AgentAssemblySpecTest {
     }
 
     @Test
-    void should_holdMemoryStoreRefs_when_builder_given_memoryStoreRefs() {
-        // given
-        MemoryStoreRef ref = new MemoryStoreRef("ms-1", "会话记忆");
-
-        // when
-        AgentAssemblySpec spec = baseBuilder()
-                .withMountView(mounts(List.of(), List.of(ref), List.of(), Map.of(), List.of()))
-                .build();
-
-        // then
-        assertEquals(List.of(ref), spec.memoryStoreRefs());
-    }
-
-    @Test
     void should_normalizeNullComponents_when_constructMountView_given_nulls() {
         // given / when（挂载视图紧凑构造器把 null 归一为空集合，消费方无需判空）
-        MountView view = new MountView(null, null, null, null, null);
+        MountView view = new MountView(null, null, null);
 
         // then
         assertTrue(view.skills().isEmpty());
-        assertTrue(view.memoryStoreRefs().isEmpty());
-        assertTrue(view.vaultCredentials().isEmpty());
         assertTrue(view.envVars().isEmpty());
         assertTrue(view.fileMounts().isEmpty());
     }
@@ -232,24 +214,10 @@ class AgentAssemblySpecTest {
     }
 
     @Test
-    void should_maskVaultToken_when_toString_given_plainVaultToken() {
-        // given（保管库解密明文不得随 toString 泄露，VaultCredentialRef 独立脱敏）
-        VaultCredentialRef ref = new VaultCredentialRef(
-                "vault-1", "cr-1", "static_bearer", "https://db.example.com", "vault-plain-secret");
-
-        // when
-        String text = ref.toString();
-
-        // then
-        assertFalse(text.contains("vault-plain-secret"));
-        assertTrue(text.contains("token=****"));
-    }
-
-    @Test
     void should_holdEnvironmentVariables_when_builder_given_envVars() {
         // given（会话级环境变量随挂载分组承载，供工厂注入沙箱数据面）
         AgentAssemblySpec spec = baseBuilder()
-                .withMountView(mounts(List.of(), List.of(), List.of(), Map.of("LOG_LEVEL", "debug"), List.of()))
+                .withMountView(mounts(List.of(), Map.of("LOG_LEVEL", "debug"), List.of()))
                 .build();
 
         // when / then
@@ -260,7 +228,7 @@ class AgentAssemblySpecTest {
     void should_exposeEnvVarKeysOnly_when_toString_given_environmentVariables() {
         // given（环境变量值可能含敏感材料，toString 仅输出键名）
         AgentAssemblySpec spec = baseBuilder()
-                .withMountView(mounts(List.of(), List.of(), List.of(), Map.of("DB_PASSWORD", "super-secret-value"), List.of()))
+                .withMountView(mounts(List.of(), Map.of("DB_PASSWORD", "super-secret-value"), List.of()))
                 .build();
 
         // when
@@ -269,84 +237,6 @@ class AgentAssemblySpecTest {
         // then（键可见、值不可见）
         assertTrue(text.contains("DB_PASSWORD"));
         assertFalse(text.contains("super-secret-value"));
-    }
-
-    @Test
-    void should_throw_when_constructVaultCredentialRef_given_blankVaultId() {
-        // given / when & then（保管库ID必填）
-        assertThrows(IllegalArgumentException.class,
-                () -> new VaultCredentialRef(" ", "cr-1", "static_bearer", "https://db.example.com", "token"));
-    }
-
-    @Test
-    void should_throw_when_constructVaultCredentialRef_given_blankCredentialId() {
-        // given / when & then（凭证ID必填）
-        assertThrows(IllegalArgumentException.class,
-                () -> new VaultCredentialRef("vault-1", " ", "static_bearer", "https://db.example.com", "token"));
-    }
-
-    @Test
-    void should_throw_when_constructVaultCredentialRef_given_blankAuthType() {
-        // given / when & then（鉴权类型必填）
-        assertThrows(IllegalArgumentException.class,
-                () -> new VaultCredentialRef("vault-1", "cr-1", " ", "https://db.example.com", "token"));
-    }
-
-    @Test
-    void should_throw_when_constructVaultCredentialRef_given_blankTarget() {
-        // given / when & then（凭证 Target 必填：URL Target 型为服务器 URL、变量名 Target 型为变量名）
-        assertThrows(IllegalArgumentException.class,
-                () -> new VaultCredentialRef("vault-1", "cr-1", "static_bearer", " ", "token"));
-    }
-
-    @Test
-    void should_holdEnvironmentVariableTarget_when_constructVaultCredentialRef_given_secretNameTarget() {
-        // given（environment_variable 型：target 承载变量名而非 URL，同样满足非空不变量）
-        VaultCredentialRef ref = new VaultCredentialRef(
-                "vault-1", "cr-1", "environment_variable", "MY_API_KEY", "env-secret");
-
-        // when / then
-        assertEquals("MY_API_KEY", ref.target());
-        assertFalse(ref.toString().contains("env-secret"));
-    }
-
-    // ==================== MCP 连接声明值对象 ====================
-
-    @Test
-    void should_holdMcpConnections_when_builder_given_mcpConnections() {
-        // given（版本声明的两路 MCP 连接：名称 + streamable-http 端点）
-        AgentAssemblySpec.McpConnection first =
-                new AgentAssemblySpec.McpConnection("github", "https://api.githubcopilot.com/mcp");
-        AgentAssemblySpec.McpConnection second =
-                new AgentAssemblySpec.McpConnection("db", "https://mcp.example.com/v1/mcp");
-
-        // when
-        AgentAssemblySpec spec = baseBuilder()
-                .withMcpConnections(List.of(first, second))
-                .build();
-
-        // then（保持声明顺序）
-        assertEquals(List.of(first, second), spec.mcpConnections());
-    }
-
-    @Test
-    void should_defaultEmptyMcpConnections_when_builder_given_noMcpConnections() {
-        // given / when（基线 Builder 未显式设置连接清单）
-        AgentAssemblySpec spec = baseBuilder().build();
-
-        // then（归一为空清单，等价「版本未声明 MCP」）
-        assertTrue(spec.mcpConnections().isEmpty());
-    }
-
-    @Test
-    void should_throw_when_constructMcpConnection_given_blankNameOrUrl() {
-        // given / when & then（名称与 URL 均必填）
-        assertThrows(IllegalArgumentException.class,
-                () -> new AgentAssemblySpec.McpConnection(" ", "https://mcp.example.com/mcp"));
-        assertThrows(IllegalArgumentException.class,
-                () -> new AgentAssemblySpec.McpConnection("github", " "));
-        assertThrows(IllegalArgumentException.class,
-                () -> new AgentAssemblySpec.McpConnection(null, null));
     }
 
     @Test
@@ -488,7 +378,7 @@ class AgentAssemblySpecTest {
 
         // when
         AgentAssemblySpec spec = baseBuilder()
-                .withMountView(mounts(List.of(), List.of(), List.of(), Map.of(), List.of(mount)))
+                .withMountView(mounts(List.of(), Map.of(), List.of(mount)))
                 .build();
 
         // then
@@ -497,10 +387,7 @@ class AgentAssemblySpecTest {
 
     @Test
     void should_delegateEachAccessor_when_builder_given_allGroupsPopulated() {
-        // given（逐分组装配后，扁平访问器应各自读到对应分组字段，覆盖全部 20 个旧字段位）
-        MemoryStoreRef store = new MemoryStoreRef("ms-1", "会话记忆");
-        VaultCredentialRef vault = new VaultCredentialRef(
-                "vault-1", "cr-1", "static_bearer", "https://db.example.com", "sk-plain");
+        // given（逐分组装配后，扁平访问器应各自读到对应分组字段）
         FileMountRef mount = new FileMountRef("file_1", "sales.csv", 2048L, "mounts/file_1");
         ToolExecutionPolicy policy = new ToolExecutionPolicy("Bash", ToolExecutionPolicy.POLICY_ALWAYS_ASK);
         ToolVisibility visibility = new ToolVisibility(List.of("Bash"), List.of());
@@ -513,7 +400,7 @@ class AgentAssemblySpecTest {
                 .withMaxIters(10)
                 .withSandbox(AssemblySpecFixtures.sandbox("python:3.12", 8192L, 4L))
                 .withMountView(mounts(List.of(new Skill("s1", "技能", "正文", Map.of())),
-                        List.of(store), List.of(vault), Map.of("K", "V"), List.of(mount)))
+                        Map.of("K", "V"), List.of(mount)))
                 .withToolGovernance(AssemblySpecFixtures.governance(List.of(policy), visibility))
                 .withArtifactOwnership(ownership("sess_1", 7L))
                 .build();
@@ -531,8 +418,6 @@ class AgentAssemblySpecTest {
         assertEquals(10, spec.maxIters());
         assertEquals("python:3.12", spec.sandbox().image());
         assertEquals(1, spec.skills().size());
-        assertEquals(List.of(store), spec.memoryStoreRefs());
-        assertEquals(List.of(vault), spec.vaultCredentials());
         assertEquals(Map.of("K", "V"), spec.environmentVariables());
         assertEquals(List.of(mount), spec.fileMounts());
         assertEquals(List.of(policy), spec.toolPolicies());

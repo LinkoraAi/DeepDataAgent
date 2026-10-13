@@ -184,41 +184,6 @@ class RedisCoordLeaseLuaTest extends RedisRepositoryTestSupport {
     }
 
     @Test
-    void should_rejectSecondAcquire_when_fireTryAcquire_given_withinThirtySecondWindow() {
-        // given
-        String deploymentId = "it-dep-fire";
-
-        // when
-        boolean first = leaseStore.fireTryAcquire(deploymentId, OWNER_A);
-        boolean second = leaseStore.fireTryAcquire(deploymentId, OWNER_B);
-
-        // then：窗口内单赢家，TTL 为 fire 语义常量 30s
-        assertTrue(first);
-        assertFalse(second);
-        long remainMillis = redissonClient.getBucket(CoordLeaseKeys.fire(deploymentId),
-                StringCodec.INSTANCE).remainTimeToLive();
-        assertTrue(remainMillis > 25_000 && remainMillis <= 30_000,
-                "fire lease TTL 应为 30s 量级，实际剩余: " + remainMillis);
-    }
-
-    @Test
-    void should_keepFireLease_when_fireReleaseOwned_given_ownerMismatch() {
-        // given
-        String deploymentId = "it-dep-fire-owner";
-        assertTrue(leaseStore.fireTryAcquire(deploymentId, OWNER_A));
-
-        // when：非持有者释放（fire 释放 MUST owner-scoped）
-        boolean releasedByOther = leaseStore.fireReleaseOwned(deploymentId, OWNER_B);
-
-        // then
-        assertFalse(releasedByOther);
-        assertEquals(OWNER_A, redissonClient.<String>getBucket(CoordLeaseKeys.fire(deploymentId),
-                StringCodec.INSTANCE).get());
-        assertTrue(leaseStore.fireReleaseOwned(deploymentId, OWNER_A), "持有者释放应生效");
-        assertTrue(leaseStore.fireTryAcquire(deploymentId, OWNER_B), "释放后窗口内应可再次抢占");
-    }
-
-    @Test
     void should_returnFalse_when_renew_given_leaseNeverAcquired() {
         // given：从未获取过租约的会话
         String sessionId = "it-sess-never-acquired";

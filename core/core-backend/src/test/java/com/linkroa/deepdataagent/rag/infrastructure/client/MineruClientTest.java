@@ -318,6 +318,28 @@ class MineruClientTest {
     }
 
     /**
+     * 场景：轮询到任务状态为 failed 且任务详情携带 error（解析失败根因）。
+     * 预期：抛出的 {@link IllegalStateException} 消息并入该 error 文本（便于根因定位）。
+     */
+    @Test
+    void should_throwExceptionWithTaskError_when_parse_given_failedStatusWithError() {
+        // given（MinerU 任务详情带 error，模拟 hybrid-engine 需本地 VLM 算力的失败根因）
+        when(restTemplate.exchange(eq(TASKS_URL), eq(HttpMethod.POST), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.status(202).body("{\"task_id\":\"t1\"}"));
+        when(restTemplate.exchange(eq(TASK_URL), eq(HttpMethod.GET), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.status(200)
+                        .body("{\"status\":\"failed\",\"error\":\"No model server available\"}"));
+
+        // when / then
+        IllegalStateException exception = assertThrows(IllegalStateException.class,
+                () -> client.parse(new byte[]{1}, "report.pdf"));
+        assertTrue(exception.getMessage().contains("MinerU 任务解析失败"),
+                "失败消息 MUST 保留通用语义前缀");
+        assertTrue(exception.getMessage().contains("No model server available"),
+                "失败消息 MUST 透传 MinerU 任务的真实 error");
+    }
+
+    /**
      * 场景：轮询 completed 后拉取结果返回 409（冲突，附 error 字段）。
      * 预期：抛出 {@link IllegalStateException}，消息携带响应 error。
      */
@@ -338,7 +360,7 @@ class MineruClientTest {
     }
 
     /**
-     * 场景：轮询到结果但 content_list 缺失或为空（契约破坏）。
+     * 场景：轮询到结果但 content_list 字段缺失（契约破坏）。
      * 预期：抛出 {@link IllegalStateException} 提示缺少 content_list。
      */
     @Test
@@ -350,12 +372,35 @@ class MineruClientTest {
                 .thenReturn(ResponseEntity.status(200).body("{\"status\":\"completed\"}"));
         when(restTemplate.exchange(eq(RESULT_URL), eq(HttpMethod.GET), any(), eq(String.class)))
                 .thenReturn(ResponseEntity.status(200).body(
-                        "{\"results\":{\"report\":{\"content_list\":[]}}}"));
+                        "{\"results\":{\"report\":{\"images\":{}}}}"));
 
         // when / then
         IllegalStateException exception = assertThrows(IllegalStateException.class,
                 () -> client.parse(new byte[]{1}, "report.pdf"));
         assertEquals("MinerU 结果缺少 content_list", exception.getMessage());
+    }
+
+    /**
+     * 场景：任务 completed 且 content_list 为空数组（解析成功但无有效内容，如空白图片）。
+     * 预期：不抛异常，对应 stem 返回空块列表（占位块由解析器层产出，客户端不做失败判定）。
+     */
+    @Test
+    void should_returnEmptyBlocks_when_parse_given_contentListEmptyArray() {
+        // given
+        when(restTemplate.exchange(eq(TASKS_URL), eq(HttpMethod.POST), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.status(202).body("{\"task_id\":\"t1\"}"));
+        when(restTemplate.exchange(eq(TASK_URL), eq(HttpMethod.GET), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.status(200).body("{\"status\":\"completed\"}"));
+        when(restTemplate.exchange(eq(RESULT_URL), eq(HttpMethod.GET), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.status(200).body(
+                        "{\"results\":{\"report\":{\"content_list\":[]}}}"));
+
+        // when
+        MineruClient.ParsedResult parsed = client.parse(new byte[]{1}, "report.pdf");
+
+        // then
+        assertTrue(parsed.results().containsKey("report"), "stem 键应存在（区别于协议破坏）");
+        assertTrue(parsed.results().get("report").isEmpty(), "空数组应映射为空块列表");
     }
 
     /**
@@ -542,7 +587,7 @@ class MineruClientTest {
 
     /**
      * 场景：字符串化 {@code content_list} 内容为非法 JSON（契约破坏）。
-     * 预期：归一失败软处理 → 空集合 → 按「结果缺少 content_list」抛出 {@link IllegalStateException}。
+     * 预期：归一失败软处理 → 仍为文本节点（非数组）→ 按「结果缺少 content_list」抛出 {@link IllegalStateException}。
      */
     @Test
     void should_throwException_when_parse_given_illegalContentListString() {
@@ -559,21 +604,23 @@ class MineruClientTest {
     }
 
     /**
-     * 场景：字符串化 {@code content_list} 反序列化为空数组。
-     * 预期：仍按「结果缺少 content_list」失败（空集不构成解析成功）。
+     * 场景：字符串化 {@code content_list} 反序列化为空数组（解析成功但无有效内容）。
+     * 预期：不抛异常，对应 stem 映射为空块列表（占位口径由解析器层处置）。
      */
     @Test
-    void should_throwException_when_parse_given_emptyStringifiedContentList() {
+    void should_returnEmptyBlocks_when_parse_given_emptyStringifiedContentList() {
         // given
         stubCreateAndCompleted();
         when(restTemplate.exchange(eq(RESULT_URL), eq(HttpMethod.GET), any(), eq(String.class)))
                 .thenReturn(ResponseEntity.status(200).body(
                         "{\"results\":{\"report\":{\"content_list\":\"[]\"}}}"));
 
-        // when / then
-        IllegalStateException exception = assertThrows(IllegalStateException.class,
-                () -> client.parse(new byte[]{1}, "report.pdf"));
-        assertEquals("MinerU 结果缺少 content_list", exception.getMessage());
+        // when
+        MineruClient.ParsedResult parsed = client.parse(new byte[]{1}, "report.pdf");
+
+        // then
+        assertTrue(parsed.results().containsKey("report"), "归一后的空数组仍应登记 stem 键");
+        assertTrue(parsed.results().get("report").isEmpty(), "空数组应映射为空块列表");
     }
 
     /**

@@ -10,7 +10,7 @@ import java.util.List;
 /**
  * 会话列表游标查询（shared/api-conventions Cursor 约定 + 公开契约 GET 列表过滤集合）。
  * <p>过滤维度严格对齐公开契约：{@code agent_id / agent_version / deployment_id /
- * memory_store_id / statuses[]（对外四态子集）/ include_archived / created_at[gt|gte|lt|lte] /
+ * statuses[]（对外四态子集）/ include_archived / created_at[gt|gte|lt|lte] /
  * order}；{@code environment_id}（自造字段）与 {@code metadata}（beta 搜索能力）均
  * <b>不是</b>受支持的过滤参数。归档为 {@code archived_at} 正交维度：缺省排除，
  * {@code includeArchived=true} 时纳入。</p>
@@ -19,7 +19,6 @@ import java.util.List;
  * @param agentId         Agent ID 过滤（可空 = 不过滤）
  * @param agentVersion    Agent 版本过滤（可空 = 不过滤）
  * @param deploymentId    调度来源过滤（可空 = 不过滤；对外别名 deployment_id）
- * @param memoryStoreId   记忆库过滤（可空 = 不过滤）
  * @param statuses        会话状态集合过滤（空 = 不过滤）
  * @param includeArchived true=纳入已归档会话（缺省排除）
  * @param createdAtGt     创建时间严格下界（可空 = 不过滤）
@@ -34,7 +33,6 @@ public record ListSessionsQuery(
         String agentId,
         String agentVersion,
         String deploymentId,
-        String memoryStoreId,
         List<AgentSessionStatus> statuses,
         boolean includeArchived,
         OffsetDateTime createdAtGt,
@@ -56,6 +54,5 @@ public record ListSessionsQuery(
         agentId = StringUtils.trimToNull(agentId);
         agentVersion = StringUtils.trimToNull(agentVersion);
         deploymentId = StringUtils.trimToNull(deploymentId);
-        memoryStoreId = StringUtils.trimToNull(memoryStoreId);
     }
 }

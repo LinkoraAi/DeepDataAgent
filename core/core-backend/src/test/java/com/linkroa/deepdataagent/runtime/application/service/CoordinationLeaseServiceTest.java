@@ -139,33 +139,6 @@ class CoordinationLeaseServiceTest {
         verify(leaseStore).listOwnedTurnKeys(service.instanceId());
     }
 
-    @Test
-    void should_acquireFireLease_when_tryAcquireFireLease_given_freeWindow() {
-        // given
-        when(leaseStore.fireTryAcquire("dep-1", service.instanceId())).thenReturn(true);
-
-        // when // then（fire 走专用通道，30s 窗口为端口实现语义常量）
-        assertTrue(service.tryAcquireFireLease("dep-1"));
-    }
-
-    @Test
-    void should_rejectDuplicateFire_when_tryAcquireFireLease_given_windowOccupied() {
-        // given（窗口内已有触发进行中）
-        when(leaseStore.fireTryAcquire("dep-1", service.instanceId())).thenReturn(false);
-
-        // when // then
-        assertFalse(service.tryAcquireFireLease("dep-1"));
-    }
-
-    @Test
-    void should_releaseFireLeaseByOwner_when_releaseFireLease_given_schedulerId() {
-        // given // when
-        service.releaseFireLease("dep-1");
-
-        // then（F11：owner 条件释放，超 TTL 被接管后不误摘接管者租约造成双触发窗口）
-        verify(leaseStore).fireReleaseOwned("dep-1", service.instanceId());
-    }
-
     // ==================== 实例标识解析与优雅停机（move-coordination-leases-to-redis D5⑤ / D6） ====================
 
     /** 以固定实例标识装配服务（不读环境变量），复用同一 mock 存储。 */

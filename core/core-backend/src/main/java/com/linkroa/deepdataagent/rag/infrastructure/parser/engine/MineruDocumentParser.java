@@ -3,6 +3,7 @@ package com.linkroa.deepdataagent.rag.infrastructure.parser.engine;
 import com.linkroa.deepdataagent.knowledgebase.application.port.KbAssetStoragePort;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.MultiModelConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.S3File;
+import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType;
 import com.linkroa.deepdataagent.rag.domain.model.ContentBlockVO;
 import com.linkroa.deepdataagent.rag.domain.model.ParsedDocument;
 import com.linkroa.deepdataagent.rag.domain.port.DocumentParser;
@@ -20,11 +21,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * 远程 MinerU 文档解析实现（provider=MINERU 时使用）。
@@ -35,6 +39,8 @@ import java.util.Map;
  * 恒发 return_images=true 时响应同 stem 下的 images 载荷（图片名 → base64）解码为字节随解析产物一并返回，
  * 由摄入 Worker 落对象存储（图片字节不进块 meta，故不会随 original_item 落库）。
  * <b>无自动回退</b>：解析失败抛异常交由调用方置 FAILED，不切换本地引擎。</p>
+ * <p><b>空内容处置</b>：解析成功但未提取到有效内容（content_list 为空数组，如空白图片）时
+ * 产出含文件名的占位 TEXT 块（与本地 Tika / 直读口径一致），保证文档终态可 PROCESSED 且切片数 ≥ 1。</p>
  */
 public class MineruDocumentParser implements DocumentParser {
 
@@ -67,6 +73,12 @@ public class MineruDocumentParser implements DocumentParser {
     /** 空串（image/table 无 caption 时的兜底文本）。 */
     private static final String STRING_EMPTY = "";
 
+    /**
+     * data URL 前缀（MinerU 3.4.2 images 载荷形态 {@code data:{mime};base64,{base64}}，
+     * 严格 Base64 解码前必须剥离）。
+     */
+    private static final Pattern DATA_URL_PREFIX = Pattern.compile("^data:[^;]*;base64,");
+
     /** 块哈希拼接分隔符。 */
     private static final String BLOCK_HASH_SEPARATOR = "\t";
 
@@ -78,6 +90,11 @@ public class MineruDocumentParser implements DocumentParser {
 
     /** 读取对象失败提示前缀。 */
     private static final String ERROR_READ_OBJECT_FAILED = "读取源文件对象失败: ";
+
+    /** 本引擎支持解析的文档类型集合（MINERU：办公文档 + 图片）。 */
+    private static final Set<FileType> SUPPORTED_TYPES = EnumSet.of(
+            FileType.PDF, FileType.DOC, FileType.DOCX, FileType.PPT, FileType.PPTX,
+            FileType.PNG, FileType.JPG, FileType.JPEG);
 
     /** MinerU HTTP 客户端。 */
     private final MineruClient mineruClient;
@@ -96,6 +113,11 @@ public class MineruDocumentParser implements DocumentParser {
         this.kbAssetStoragePort = kbAssetStoragePort;
     }
 
+    @Override
+    public Set<FileType> supportedTypes() {
+        return SUPPORTED_TYPES;
+    }
+
     /**
      * 解析 S3 源文件：读取字节 → 提交 MinerU 异步解析 → 按 stem 定位 content_list → 映射为统一内容块，
      * 并将响应携带的媒体图片 base64 载荷解码为字节附入解析产物（图片名 → 字节，解码失败单图跳过）。
@@ -104,8 +126,8 @@ public class MineruDocumentParser implements DocumentParser {
      * @param s3File        源文件对象引用
      * @param chunkStrategy 分块策略标识（本实现不消费）
      * @param multiModel    多模态模型配置（本实现不消费）
-     * @return 解析结果（内容哈希 + 内容块列表 + 媒体图片字节载荷）
-     * @throws IllegalArgumentException 缺少对应文件内容 / 空文档（解析失败，交由调用方置 FAILED）
+     * @return 解析结果（内容哈希 + 内容块列表 + 媒体图片字节载荷；解析成功但无有效内容时为占位 TEXT 块）
+     * @throws IllegalArgumentException 结果缺少对应文件内容（stem 不在 results 中，协议破坏，交由调用方置 FAILED）
      */
     @Override
     public ParsedDocument parse(S3File s3File, String chunkStrategy, MultiModelConfig multiModel) {
@@ -113,9 +135,15 @@ public class MineruDocumentParser implements DocumentParser {
         String fileName = extractFileName(s3File.objectKey());
         String stem = extractStem(fileName);
         MineruClient.ParsedResult parsedResult = mineruClient.parse(content, fileName);
+        if (!parsedResult.results().containsKey(stem)) {
+            throw new IllegalArgumentException(ERROR_MISSING_FILE_CONTENT);
+        }
         List<MineruClient.Block> sourceBlocks = parsedResult.results().get(stem);
         if (CollectionUtils.isEmpty(sourceBlocks)) {
-            throw new IllegalArgumentException(ERROR_MISSING_FILE_CONTENT);
+            // 解析成功但无有效内容（如空白图片 content_list 为空数组）：产占位 TEXT 块，
+            // 保证文档终态可 PROCESSED 且切片数 ≥ 1（与本地 Tika / 直读的空文本口径一致）
+            log.info("MinerU 解析成功但无有效内容，产出占位块, objectKey={}, stem={}", s3File.objectKey(), stem);
+            return LocalReadParseSupport.placeholderDocument(fileName);
         }
         List<ContentBlockVO> blocks = sourceBlocks.stream().map(this::toContentBlock).toList();
         Map<String, byte[]> images = decodeImages(parsedResult.images().get(stem));
@@ -124,9 +152,12 @@ public class MineruDocumentParser implements DocumentParser {
 
     /**
      * base64 图片载荷解码为字节映射（保持 MinerU 返回顺序）。
+     * <p>载荷值兼容两形态：纯 base64 串与 <b>data URL</b>（MinerU 3.4.2 返回
+     * {@code data:{mime};base64,{base64}}，解码前 MUST 剥离前缀——严格 Base64 解码器
+     * 遇 {@code ':'} 即抛，前缀不剥离会导致全部图片解码失败、切片媒体引用整体缺失）。</p>
      * <p>容错口径：单图解码失败 / 载荷空白仅告警跳过，不阻断解析——该图后续不会形成对象存储引用。</p>
      *
-     * @param payload 图片名 → base64 原文，可为 null（响应未携带图片）
+     * @param payload 图片名 → base64 原文（可含 data URL 前缀），可为 null（响应未携带图片）
      * @return 图片名 → 图片字节（不可变，无可用图片时为空映射）
      */
     private Map<String, byte[]> decodeImages(Map<String, String> payload) {
@@ -141,7 +172,8 @@ public class MineruDocumentParser implements DocumentParser {
                 continue;
             }
             try {
-                images.put(imgName, Base64.getDecoder().decode(entry.getValue()));
+                String base64 = DATA_URL_PREFIX.matcher(entry.getValue().trim()).replaceFirst(StringUtils.EMPTY);
+                images.put(imgName, Base64.getDecoder().decode(base64));
             } catch (IllegalArgumentException e) {
                 log.warn("MinerU 图片 base64 解码失败，跳过该图, imgName={}", imgName, e);
             }

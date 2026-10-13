@@ -413,6 +413,60 @@ class DocumentApplicationServiceTest {
     }
 
     @Test
+    void should_throwBadRequestWithoutStoring_when_upload_given_htmlFileType() {
+        // given：HTML 已移出白名单（枚举名 / .html 扩展名两种写法都拒绝）
+        stubUploadPremises(buildKb(LifecycleStatus.ACTIVE));
+
+        // when // then
+        assertThrows(DeepDataAgentException.class, () -> service.upload(uploadCommand("HTML")));
+        assertThrows(DeepDataAgentException.class, () -> service.upload(uploadCommand(".html")));
+        verify(documentRepository, never()).save(any());
+        verify(kbAssetStoragePort, never()).putSource(anyString(), any(byte[].class), any());
+    }
+
+    @Test
+    void should_throwBadRequestWithoutStoring_when_upload_given_strategyTypeMismatch() {
+        // given：文档级 TABLE 策略不支持 PDF（矩阵不匹配）
+        stubUploadPremises(buildKb(LifecycleStatus.ACTIVE));
+
+        // when
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> service.upload(uploadCommandWithStrategy("{\"chunkMode\":\"TABLE\"}")));
+
+        // then：400 指明该策略不支持该类型；校验先于落对象存储与登记事务——零写入、零残留
+        assertTrue(exception.getMessage().contains("TABLE"));
+        assertTrue(exception.getMessage().contains("PDF"));
+        verify(kbAssetStoragePort, never()).putSource(anyString(), any(byte[].class), any());
+        verify(documentRepository, never()).save(any());
+    }
+
+    @Test
+    void should_preferDocumentStrategy_when_upload_given_overrideAllowedButLibraryForbidsType() {
+        // given：库级 TABLE（不支持 PDF），文档级 GENERAL（支持 PDF）——文档级优先
+        stubUploadPremises(buildKb(LifecycleStatus.ACTIVE, "{\"chunkStrategy\":{\"chunkMode\":\"TABLE\"}}"));
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // when
+        UploadDocumentResult result = service.upload(uploadCommandWithStrategy("{\"chunkMode\":\"GENERAL\"}"));
+
+        // then：文档级策略生效，放行并登记
+        assertEquals(DocumentStatus.PENDING, result.document().status());
+        verify(documentRepository).save(any());
+    }
+
+    @Test
+    void should_rejectByDocumentStrategy_when_upload_given_overrideForbidsTypeEvenIfLibraryAllows() {
+        // given：库级 GENERAL（支持 PDF），文档级 TABLE（不支持 PDF）——文档级优先即拒绝
+        stubUploadPremises(buildKb(LifecycleStatus.ACTIVE, "{\"chunkStrategy\":{\"chunkMode\":\"GENERAL\"}}"));
+
+        // when // then
+        assertThrows(DeepDataAgentException.class,
+                () -> service.upload(uploadCommandWithStrategy("{\"chunkMode\":\"TABLE\"}")));
+        verify(kbAssetStoragePort, never()).putSource(anyString(), any(byte[].class), any());
+        verify(documentRepository, never()).save(any());
+    }
+
+    @Test
     void should_throwBadRequestWithoutResidualObject_when_upload_given_oversizeFile() {
         // given：上限收缩到 4 字节，提交 5 字节文件
         stubUploadPremises(buildKb(LifecycleStatus.ACTIVE));

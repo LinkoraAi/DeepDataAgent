@@ -6,7 +6,7 @@ import com.linkroa.deepdataagent.runtime.domain.model.enums.MountViolationType;
  * 会话挂载规则冲突（领域拒绝载体）。
  * <p>继承 {@link IllegalArgumentException}：未被应用层接住的冲突天然落 400
  * {@code invalid_request_error}（与领域不变量校验同口径），应用层只对需要升级状态码的
- * 冲突（追加 / 移除面的 409、寻址未命中的 404）按 {@link #violation()} 做映射。</p>
+ * 冲突（追加面的 409、寻址未命中的 404）按 {@link #violation()} 做映射。</p>
  * <p>消息文本在此单点定义（规则口径唯一事实源），仅 {@link MountViolationType#FILE_NOT_MOUNTABLE}
  * 例外——创建面向客户端披露「不存在或无权访问」（404），追加面收敛为冲突语义
  * （「不存在、无权访问或尚未就绪」409），两者措辞由各自入口给出，领域持有追加面措辞。</p>
@@ -53,24 +53,6 @@ public class MountViolationException extends IllegalArgumentException {
     public static MountViolationException appendTypeUnsupported(String type) {
         return new MountViolationException(MountViolationType.APPEND_TYPE_UNSUPPORTED, type,
                 "追加挂载仅支持 file 类型资源: " + type);
-    }
-
-    /** 资源类型不可移除（github / 记忆库挂载后不可摘除）。 */
-    public static MountViolationException removeTypeUnsupported(String type) {
-        return new MountViolationException(MountViolationType.REMOVE_TYPE_UNSUPPORTED, type,
-                "仅 file 类型资源支持移除，github_repository / memory_store 挂载不可摘除: " + type);
-    }
-
-    /** 资源类型不支持令牌轮换。 */
-    public static MountViolationException rotateTypeUnsupported(String type) {
-        return new MountViolationException(MountViolationType.ROTATE_TYPE_UNSUPPORTED, type,
-                "仅 github_repository 资源支持令牌轮换: " + type);
-    }
-
-    /** 轮换令牌为空。 */
-    public static MountViolationException blankToken() {
-        return new MountViolationException(MountViolationType.TOKEN_BLANK, null,
-                "authorization_token 不能为空");
     }
 
     /** 挂载资源未命中。 */

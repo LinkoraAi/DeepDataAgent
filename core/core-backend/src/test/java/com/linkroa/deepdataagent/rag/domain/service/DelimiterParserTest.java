@@ -358,6 +358,31 @@ class DelimiterParserTest {
     }
 
     /**
+     * 场景（多模态护栏）：IMAGE 透传块 caption 为空（MinerU 常态 {@code image_caption=[]}），
+     * 单元正文空白。
+     * 预期：多模态透传单元 MUST NOT 被空白过滤丢弃（Stage2 模板化描述与 s3_file 媒体引用
+     * 均挂在该块上，丢弃即整条多模态能力缺失）；空白正文的文本透传单元维持过滤。
+     */
+    @Test
+    void should_keepBlankContentMultimodalPassthrough_when_toChunkVOs_given_emptyCaptionImage() {
+        // given：空白正文的 IMAGE 透传单元（空 caption 图片）+ 空白正文的普通透传单元
+        ContentBlockVO imageBlock = new ContentBlockVO(ContentBlockVO.TYPE_IMAGE, "",
+                java.util.Map.of("img_path", "images/a.jpg"));
+        Unit blankImageUnit = DelimiterParser.passthroughUnit(imageBlock, tokenCounter);
+        Unit blankTextUnit = new Unit("", 0, true,
+                new ContentBlockVO(ContentBlockVO.TYPE_TEXT, "", java.util.Map.of()));
+
+        // when
+        List<com.linkroa.deepdataagent.rag.domain.model.ChunkVO> chunks =
+                DelimiterParser.toChunkVOs(List.of(blankImageUnit, blankTextUnit), tokenCounter);
+
+        // then：仅空图块存活，空白文本透传仍被过滤
+        assertEquals(1, chunks.size(), "空 caption 的 IMAGE 透传块必须保留，空白文本块仍过滤");
+        assertEquals(ContentBlockVO.TYPE_IMAGE, chunks.get(0).block().type(),
+                "存活块应仍为 IMAGE 类型（落库 chunk_content_type=IMAGE 的来源）");
+    }
+
+    /**
      * 构造普通文本单元（passthrough=false，token 按 {@code text.length()} 口径）。
      *
      * @param text 单元文本

@@ -19,6 +19,7 @@ import com.linkroa.deepdataagent.knowledgebase.domain.model.RagEngineConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.S3File;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.DocumentChunkMode;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.DocumentStatus;
+import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.RagEngineType;
 import com.linkroa.deepdataagent.rag.application.service.ChunkPersistenceService;
 import com.linkroa.deepdataagent.rag.application.service.MediaImagePersistenceService;
@@ -409,7 +410,7 @@ class IngestionWorkerTest {
         ContentBlockVO imageBlock = new ContentBlockVO(ContentBlockVO.TYPE_IMAGE, "raw caption", Map.of());
         stubContext(documentContext(ragEngineConfig(RagEngineType.DOCUMENT_ENGINE), embeddingConfig(),
                 multiModelConfig()));
-        when(parserRegistry.resolve(any())).thenReturn(documentParser);
+        when(parserRegistry.resolve(any(), any())).thenReturn(documentParser);
         when(documentParser.parse(any(), any(), any())).thenReturn(parsedDocument(imageBlock));
         when(chunkingService.chunkWithDispatch(any(), any(), any()))
                 .thenReturn(new ChunkingOutcome(List.of(new ChunkVO(1, "original image text", 3, imageBlock)),
@@ -506,7 +507,7 @@ class IngestionWorkerTest {
         ContentBlockVO second = new ContentBlockVO(ContentBlockVO.TYPE_TABLE, "表1", Map.of());
         stubContext(documentContext(ragEngineConfig(RagEngineType.DOCUMENT_ENGINE), embeddingConfig(),
                 multiModelConfig()));
-        when(parserRegistry.resolve(any())).thenReturn(documentParser);
+        when(parserRegistry.resolve(any(), any())).thenReturn(documentParser);
         when(documentParser.parse(any(), any(), any()))
                 .thenReturn(new ParsedDocument("hash-1", List.of(first, second)));
         when(chunkingService.chunkWithDispatch(any(), any(), any()))
@@ -623,7 +624,7 @@ class IngestionWorkerTest {
     private void stubSingleMediaChunkPipeline(ContentBlockVO imageBlock, String cacheKey) {
         stubContext(documentContext(ragEngineConfig(RagEngineType.DOCUMENT_ENGINE), embeddingConfig(),
                 multiModelConfig()));
-        when(parserRegistry.resolve(any())).thenReturn(documentParser);
+        when(parserRegistry.resolve(any(), any())).thenReturn(documentParser);
         when(documentParser.parse(any(), any(), any())).thenReturn(parsedDocument(imageBlock));
         when(chunkingService.chunkWithDispatch(any(), any(), any())).thenReturn(new ChunkingOutcome(
                 new java.util.ArrayList<>(List.of(new ChunkVO(1, "original image text", 3, imageBlock))),
@@ -724,7 +725,7 @@ class IngestionWorkerTest {
         ChunkVO secondChunk = new ChunkVO(2, "raw two", 3, second);
         stubContext(documentContext(ragEngineConfig(RagEngineType.DOCUMENT_ENGINE), embeddingConfig(),
                 multiModelConfig()));
-        when(parserRegistry.resolve(any())).thenReturn(documentParser);
+        when(parserRegistry.resolve(any(), any())).thenReturn(documentParser);
         when(documentParser.parse(any(), any(), any()))
                 .thenReturn(new ParsedDocument("hash-1", List.of(first, second)));
         when(chunkingService.chunkWithDispatch(any(), any(), any()))
@@ -773,7 +774,7 @@ class IngestionWorkerTest {
             stubIdentityMapAnswer();
             stubContext(documentContext(ragEngineConfig(RagEngineType.DOCUMENT_ENGINE), embeddingConfig(),
                     multiModelConfig()));
-            when(parserRegistry.resolve(any())).thenReturn(documentParser);
+            when(parserRegistry.resolve(any(), any())).thenReturn(documentParser);
             when(documentParser.parse(any(), any(), any()))
                     .thenReturn(new ParsedDocument("hash-1", List.of(firstBlock, secondBlock)));
             when(chunkingService.chunkWithDispatch(any(), any(), any()))
@@ -825,7 +826,7 @@ class IngestionWorkerTest {
         }
         stubContext(documentContext(ragEngineConfig(RagEngineType.DOCUMENT_ENGINE), embeddingConfig(),
                 multiModelConfig()));
-        when(parserRegistry.resolve(any())).thenReturn(documentParser);
+        when(parserRegistry.resolve(any(), any())).thenReturn(documentParser);
         when(documentParser.parse(any(), any(), any())).thenReturn(new ParsedDocument("hash-1", blocks));
         when(chunkingService.chunkWithDispatch(any(), any(), any()))
                 .thenReturn(new ChunkingOutcome(chunks, DocumentChunkMode.GENERAL));
@@ -878,7 +879,7 @@ class IngestionWorkerTest {
         ContentBlockVO second = new ContentBlockVO(ContentBlockVO.TYPE_TABLE, "表2", Map.of());
         stubContext(documentContext(ragEngineConfig(RagEngineType.DOCUMENT_ENGINE), embeddingConfig(),
                 multiModelConfig()));
-        when(parserRegistry.resolve(any())).thenReturn(documentParser);
+        when(parserRegistry.resolve(any(), any())).thenReturn(documentParser);
         when(documentParser.parse(any(), any(), any())).thenReturn(new ParsedDocument("hash-1", List.of(first, second)));
         when(chunkingService.chunkWithDispatch(any(), any(), any()))
                 .thenReturn(new ChunkingOutcome(new ArrayList<>(List.of(
@@ -941,7 +942,7 @@ class IngestionWorkerTest {
         ContentBlockVO second = new ContentBlockVO(ContentBlockVO.TYPE_TABLE, "表2", Map.of());
         stubContext(documentContext(ragEngineConfig(RagEngineType.DOCUMENT_ENGINE), embeddingConfig(),
                 multiModelConfig()));
-        when(parserRegistry.resolve(any())).thenReturn(documentParser);
+        when(parserRegistry.resolve(any(), any())).thenReturn(documentParser);
         when(documentParser.parse(any(), any(), any())).thenReturn(new ParsedDocument("hash-1", List.of(first, second)));
         when(chunkingService.chunkWithDispatch(any(), any(), any()))
                 .thenReturn(new ChunkingOutcome(new ArrayList<>(List.of(
@@ -1556,7 +1557,7 @@ class IngestionWorkerTest {
                 Map.of("img_path", "images/a.png"));
         ContentBlockVO textBlock = new ContentBlockVO(ContentBlockVO.TYPE_TEXT, "body", Map.of());
         stubContext(documentContext(null, embeddingConfig(), null));
-        when(parserRegistry.resolve(any())).thenReturn(documentParser);
+        when(parserRegistry.resolve(any(), any())).thenReturn(documentParser);
         when(documentParser.parse(any(), any(), any())).thenReturn(new ParsedDocument("hash-1",
                 List.of(imageBlock, textBlock), null, Map.of("a.png", new byte[]{1, 2, 3})));
         when(mediaImagePersistenceService.persistImages(eq(KB_ID), eq(DOCUMENT_ID), any()))
@@ -1595,7 +1596,7 @@ class IngestionWorkerTest {
         ContentBlockVO thirdImage = new ContentBlockVO(ContentBlockVO.TYPE_IMAGE, "图3",
                 Map.of("img_path", "images/c.png"));
         stubContext(documentContext(null, embeddingConfig(), null));
-        when(parserRegistry.resolve(any())).thenReturn(documentParser);
+        when(parserRegistry.resolve(any(), any())).thenReturn(documentParser);
         when(documentParser.parse(any(), any(), any())).thenReturn(new ParsedDocument("hash-1",
                 List.of(firstImage, secondImage, thirdImage), null,
                 Map.of("images/001.png", new byte[]{1}, "images/frag/001.png", new byte[]{2, 2},
@@ -1828,7 +1829,7 @@ class IngestionWorkerTest {
      * @param chunks 分块产物
      */
     private void stubParseAndChunk(List<ChunkVO> chunks) {
-        when(parserRegistry.resolve(any())).thenReturn(documentParser);
+        when(parserRegistry.resolve(any(), any())).thenReturn(documentParser);
         when(documentParser.parse(any(), any(), any()))
                 .thenReturn(parsedDocument(new ContentBlockVO(ContentBlockVO.TYPE_TEXT, "body", Map.of())));
         when(chunkingService.chunkWithDispatch(any(), any(), any()))
@@ -1842,7 +1843,7 @@ class IngestionWorkerTest {
      * @param chunks 分块产物
      */
     private void stubParseAndChunk(ContentBlockVO block, List<ChunkVO> chunks) {
-        when(parserRegistry.resolve(any())).thenReturn(documentParser);
+        when(parserRegistry.resolve(any(), any())).thenReturn(documentParser);
         when(documentParser.parse(any(), any(), any())).thenReturn(parsedDocument(block));
         when(chunkingService.chunkWithDispatch(any(), any(), any()))
                 .thenReturn(new ChunkingOutcome(chunks, DocumentChunkMode.GENERAL));
@@ -1923,7 +1924,7 @@ class IngestionWorkerTest {
         RagEngineConfig effectiveEngineConfig = ObjectUtils.isEmpty(engineConfig)
                 ? ragEngineConfig(RagEngineType.DOCUMENT_ENGINE) : engineConfig;
         MultiModelConfig effectiveLlmConfig = ObjectUtils.isEmpty(llmConfig) ? multiModelConfig() : llmConfig;
-        return new IngestionDocumentContext(DOCUMENT_ID, KB_ID, FILE_NAME, DocumentStatus.PROCESSING,
+        return new IngestionDocumentContext(DOCUMENT_ID, KB_ID, FILE_NAME, FileType.PDF, DocumentStatus.PROCESSING,
                 new S3File("rag/7/source/object.pdf"), null, effectiveEngineConfig, null, embedding,
                 effectiveLlmConfig, List.of(), null, language);
     }
@@ -1935,7 +1936,7 @@ class IngestionWorkerTest {
      * @return 摄入文档上下文
      */
     private IngestionDocumentContext chunkStrategyContext(String documentChunkStrategyJson) {
-        return new IngestionDocumentContext(DOCUMENT_ID, KB_ID, FILE_NAME, DocumentStatus.PROCESSING,
+        return new IngestionDocumentContext(DOCUMENT_ID, KB_ID, FILE_NAME, FileType.PDF, DocumentStatus.PROCESSING,
                 new S3File("rag/7/source/object.pdf"), documentChunkStrategyJson,
                 ragEngineConfig(RagEngineType.DOCUMENT_ENGINE), null, embeddingConfig(), multiModelConfig(),
                 List.of(), null, null);
@@ -1948,7 +1949,7 @@ class IngestionWorkerTest {
      * @return 摄入文档上下文
      */
     private IngestionDocumentContext contextWithoutSourceFile() {
-        return new IngestionDocumentContext(DOCUMENT_ID, KB_ID, FILE_NAME, DocumentStatus.PROCESSING,
+        return new IngestionDocumentContext(DOCUMENT_ID, KB_ID, FILE_NAME, FileType.PDF, DocumentStatus.PROCESSING,
                 null, null, null, null, embeddingConfig(), null, List.of(), null, null);
     }
 
@@ -1959,7 +1960,7 @@ class IngestionWorkerTest {
      * @return 摄入文档上下文
      */
     private IngestionDocumentContext contextWithoutLlmModel() {
-        return new IngestionDocumentContext(DOCUMENT_ID, KB_ID, FILE_NAME, DocumentStatus.PROCESSING,
+        return new IngestionDocumentContext(DOCUMENT_ID, KB_ID, FILE_NAME, FileType.PDF, DocumentStatus.PROCESSING,
                 new S3File("rag/7/source/object.pdf"), null, ragEngineConfig(RagEngineType.DOCUMENT_ENGINE),
                 null, embeddingConfig(), null, List.of(), null, null);
     }

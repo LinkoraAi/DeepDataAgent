@@ -15,7 +15,6 @@ public enum FileType {
     TXT,
     MD,
     CSV,
-    HTML,
     PNG,
     JPG,
     JPEG;

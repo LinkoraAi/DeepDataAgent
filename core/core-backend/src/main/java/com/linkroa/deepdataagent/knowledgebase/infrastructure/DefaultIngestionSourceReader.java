@@ -118,6 +118,7 @@ public class DefaultIngestionSourceReader implements IngestionSourceReader {
                 document.id(),
                 document.kbId(),
                 document.fileName(),
+                document.fileType(),
                 document.status(),
                 parseS3File(document.s3File()),
                 StringUtils.trimToNull(document.chunkStrategy()),

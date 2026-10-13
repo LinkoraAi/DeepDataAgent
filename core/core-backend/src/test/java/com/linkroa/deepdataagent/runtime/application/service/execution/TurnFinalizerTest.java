@@ -4,7 +4,6 @@ import com.linkroa.deepdataagent.runtime.application.port.ChatEventPersister;
 import com.linkroa.deepdataagent.runtime.application.service.CoordinationLeaseService;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignalType;
-import com.linkroa.deepdataagent.runtime.domain.event.TurnFinished;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSessionContext;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
@@ -25,7 +24,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
@@ -83,7 +81,6 @@ class TurnFinalizerTest {
     @Mock private ChatEventRepository chatEventRepository;
     @Mock private TransactionTemplate transactionTemplate;
     @Mock private CoordinationLeaseService coordinationLeaseService;
-    @Mock private ApplicationEventPublisher applicationEventPublisher;
     @Mock private ConnectionHandle connectionHandle;
 
     /** 真实会话级聚合注册表：seq 计数器 / 进行中流快照 / 等待守卫按真实实现执行。 */
@@ -103,7 +100,6 @@ class TurnFinalizerTest {
         ReflectionTestUtils.setField(turnFinalizer, "transactionTemplate", transactionTemplate);
         ReflectionTestUtils.setField(turnFinalizer, "turnEventWriter", turnEventWriter);
         ReflectionTestUtils.setField(turnFinalizer, "coordinationLeaseService", coordinationLeaseService);
-        ReflectionTestUtils.setField(turnFinalizer, "applicationEventPublisher", applicationEventPublisher);
         wirePersister(synchronousPersister());
         // 事务模板同步执行回调：排空 / 校验落库失败标记 / 迁移 / 落库在测试线程内按真实次序跑完
         lenient().doAnswer(inv -> {
@@ -247,7 +243,6 @@ class TurnFinalizerTest {
         terminalEvents.forEach(type ->
                 inOrder.verify(chatEventRepository).save(argThat(event -> event.type() == type)));
         inOrder.verify(sessionRepository).touchLastActive(sessionId);
-        inOrder.verify(applicationEventPublisher).publishEvent(any(TurnFinished.class));
     }
 
     private AgentSession idleSession() {
@@ -277,7 +272,7 @@ class TurnFinalizerTest {
 
         // then：排空先于事务、CAS 先于事件落库、事件先于终局事件、终局事件先于广播、广播后必释放租约
         InOrder inOrder = inOrder(persister, sessionRepository, chatEventRepository,
-                applicationEventPublisher, connectionHandle, coordinationLeaseService);
+                connectionHandle, coordinationLeaseService);
         verifyTerminalCallSequence(sessionId, inOrder, persister,
                 List.of(Transition.FINISH_TURN),
                 List.of(ChatEventType.SESSION_THREAD_STATUS_IDLE, ChatEventType.SESSION_STATUS_IDLE));
@@ -304,7 +299,7 @@ class TurnFinalizerTest {
 
         // then：单次迁移 + terminated 收场二事件，idle 迁移零调用
         InOrder inOrder = inOrder(persister, sessionRepository, chatEventRepository,
-                applicationEventPublisher, connectionHandle, coordinationLeaseService);
+                connectionHandle, coordinationLeaseService);
         verifyTerminalCallSequence(sessionId, inOrder, persister,
                 List.of(Transition.TERMINATE),
                 List.of(ChatEventType.SESSION_THREAD_STATUS_TERMINATED, ChatEventType.SESSION_STATUS_TERMINATED));
@@ -332,7 +327,7 @@ class TurnFinalizerTest {
 
         // then：两次迁移按链顺序各一次，落库事件集与被采纳尝试一致（中断收场二事件），terminated 事件零落库
         InOrder inOrder = inOrder(persister, sessionRepository, chatEventRepository,
-                applicationEventPublisher, connectionHandle, coordinationLeaseService);
+                connectionHandle, coordinationLeaseService);
         verifyTerminalCallSequence(sessionId, inOrder, persister,
                 List.of(Transition.TERMINATE, Transition.FINISH_TURN),
                 List.of(ChatEventType.SESSION_THREAD_STATUS_IDLE, ChatEventType.SESSION_STATUS_IDLE));
@@ -358,7 +353,7 @@ class TurnFinalizerTest {
 
         // then：中断收场二事件（线程先、会话后）同事务；广播按同序下发
         InOrder inOrder = inOrder(persister, sessionRepository, chatEventRepository,
-                applicationEventPublisher, connectionHandle, coordinationLeaseService);
+                connectionHandle, coordinationLeaseService);
         verifyTerminalCallSequence(sessionId, inOrder, persister,
                 List.of(Transition.FINISH_TURN),
                 List.of(ChatEventType.SESSION_THREAD_STATUS_IDLE, ChatEventType.SESSION_STATUS_IDLE));
@@ -382,7 +377,7 @@ class TurnFinalizerTest {
 
         // then：错误事件先于 idle 状态事件；租约照常释放（执行权即刻让出）
         InOrder inOrder = inOrder(persister, sessionRepository, chatEventRepository,
-                applicationEventPublisher, coordinationLeaseService);
+                coordinationLeaseService);
         verifyTerminalCallSequence(sessionId, inOrder, persister,
                 List.of(Transition.FINISH_TURN),
                 List.of(ChatEventType.SESSION_ERROR, ChatEventType.SESSION_THREAD_STATUS_IDLE,
@@ -413,105 +408,9 @@ class TurnFinalizerTest {
         verify(sessionRepository, never()).transition(anyString(), eq(Transition.TERMINATE));
         verify(sessionRepository, never()).touchLastActive(anyString());
         verify(chatEventRepository, never()).save(any(ChatEvent.class));
-        verify(applicationEventPublisher, never()).publishEvent(any(TurnFinished.class));
         verify(connectionHandle, never()).push(argThat(e -> e.type() == ChatEventType.SESSION_STATUS_IDLE));
         // then（真 no-op 仍收轮：调用方尾部的完成信号由 finalizeNormal 放行）
         assertTimeoutPreemptively(Duration.ofSeconds(2), turn::awaitFinish);
-    }
-
-    // ==================== 轮次终局事件发布（终态事务内，回滚不发） ====================
-
-    @Test
-    void should_publishSucceededTurnFinished_when_finalizeNormal_given_scheduledSessionConvergedToIdle() {
-        // given（调度会话正常收敛：idle，stop=stop）
-        AgentSession session = scheduledIdleSession();
-        String sessionId = session.sessionId();
-        wireLedgerSave();
-        wireTransition(sessionId, Transition.FINISH_TURN, 1);
-        ExecutionContext context = newContext(session);
-        TurnControl turn = new TurnControl();
-
-        // when
-        turnFinalizer.finalizeNormal(context, turn);
-
-        // then：正常收敛终局按成功收口，终局事件恰好发布一次（带调度打标 triggerType）
-        verify(sessionRepository).transition(sessionId, Transition.FINISH_TURN);
-        verify(applicationEventPublisher, times(1))
-                .publishEvent(new TurnFinished(sessionId, "cron", "succeeded"));
-    }
-
-    @Test
-    void should_publishFailedTurnFinished_when_finalizeNormal_given_scheduledSessionHitMaxIters() {
-        // given（迭代上限进 terminated：TO_TERMINATED 迁移 CAS 命中）
-        AgentSession session = scheduledIdleSession();
-        String sessionId = session.sessionId();
-        wireLedgerSave();
-        wireTransition(sessionId, Transition.TERMINATE, 1);
-        ExecutionContext context = newContext(session);
-        context.runState().markExceedMaxIters();
-        TurnControl turn = new TurnControl();
-
-        // when
-        turnFinalizer.finalizeNormal(context, turn);
-
-        // then：terminated 终局（迭代上限）按失败收口
-        verify(sessionRepository).transition(sessionId, Transition.TERMINATE);
-        verify(applicationEventPublisher).publishEvent(new TurnFinished(sessionId, "cron", "failed"));
-    }
-
-    @Test
-    void should_publishTerminatedTurnFinished_when_finalizeNormal_given_scheduledSessionTerminateCasFallback() {
-        // given（terminated CAS 0 行回退收敛 idle：取消竞态兜底，实际迁入带 canceledFallback 标记）
-        AgentSession session = scheduledIdleSession();
-        String sessionId = session.sessionId();
-        wireLedgerSave();
-        wireTransition(sessionId, Transition.TERMINATE, 0);
-        wireTransition(sessionId, Transition.FINISH_TURN, 1);
-        ExecutionContext context = newContext(session);
-        context.runState().markExceedMaxIters();
-        TurnControl turn = new TurnControl();
-
-        // when
-        turnFinalizer.finalizeNormal(context, turn);
-
-        // then：取消回退出口按中断收口（而非回退前的 failed 判定）
-        verify(sessionRepository).transition(sessionId, Transition.FINISH_TURN);
-        verify(applicationEventPublisher).publishEvent(new TurnFinished(sessionId, "cron", "terminated"));
-    }
-
-    @Test
-    void should_publishFailedTurnFinished_when_finalizeFailed_given_scheduledSessionExecutionError() {
-        // given（执行错误终态：session.error + idle(error)）
-        AgentSession session = scheduledIdleSession();
-        String sessionId = session.sessionId();
-        wireLedgerSave();
-        wireTransition(sessionId, Transition.FINISH_TURN, 1);
-        ExecutionContext context = newContext(session);
-
-        // when
-        turnFinalizer.finalizeFailed(context, "model 调用失败");
-
-        // then：执行错误终局按失败收口
-        verify(sessionRepository).transition(sessionId, Transition.FINISH_TURN);
-        verify(applicationEventPublisher).publishEvent(new TurnFinished(sessionId, "cron", "failed"));
-    }
-
-    @Test
-    void should_publishTerminatedTurnFinished_when_finalizeInterrupted_given_scheduledSessionInterrupted() {
-        // given（显式中断终局：session.interrupted + idle(interrupted)）
-        AgentSession session = scheduledIdleSession();
-        String sessionId = session.sessionId();
-        wireLedgerSave();
-        wireTransition(sessionId, Transition.FINISH_TURN, 1);
-        ExecutionContext context = newContext(session);
-        context.runState().markInterrupted();
-
-        // when
-        turnFinalizer.finalizeInterrupted(context);
-
-        // then：中断终局按中断收口
-        verify(sessionRepository).transition(sessionId, Transition.FINISH_TURN);
-        verify(applicationEventPublisher).publishEvent(new TurnFinished(sessionId, "cron", "terminated"));
     }
 
     // ==================== 红线二：D19 批次 / 候选错配拒绝挂起（抛点先于排空与事务） ====================
@@ -587,7 +486,6 @@ class TurnFinalizerTest {
         assertTrue(saved.stream().noneMatch(e -> e.type() == ChatEventType.SESSION_STATUS_IDLE),
                 "事件表缺行时不得出现无终局事件的终态会话");
         verify(connectionHandle, never()).push(argThat(e -> e.type() == ChatEventType.SESSION_STATUS_IDLE));
-        verify(applicationEventPublisher, never()).publishEvent(any(TurnFinished.class));
         // then（本轮仍照常收轮：完成阻塞等待 + 释放租约）
         assertTimeoutPreemptively(Duration.ofSeconds(2), turn::awaitFinish);
         verify(coordinationLeaseService, atLeastOnce()).releaseTurnLease(sessionId);
@@ -715,7 +613,6 @@ class TurnFinalizerTest {
         assertTimeoutPreemptively(Duration.ofSeconds(2), turn::awaitFinish);
         verify(coordinationLeaseService).releaseTurnLease(sessionId);
         // then（挂起驻留不是运行终局：零终局事件）
-        verify(applicationEventPublisher, never()).publishEvent(any(TurnFinished.class));
     }
 
     @Test

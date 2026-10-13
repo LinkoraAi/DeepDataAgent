@@ -97,10 +97,8 @@ class AgentSessionTest {
         // when
         AgentSession session = validSession();
 
-        // then（create 缺省挂载：执行环境为空，保管库 / 记忆库 / 挂载资源为空列表，环境变量为空 JSON）
+        // then（create 缺省挂载：执行环境为空，挂载资源为空列表，环境变量为空 JSON）
         assertNull(session.environmentId());
-        assertEquals(List.of(), session.vaultIds());
-        assertEquals(List.of(), session.memoryStoreIds());
         assertEquals(List.of(), session.resources());
         assertEquals("{}", session.environmentVariables());
     }
@@ -122,11 +120,10 @@ class AgentSessionTest {
 
     @Test
     void should_createWithResources_when_createWithTrigger_given_resourcesAndNullTrigger() {
-        // given（三类挂载资源混挂）
+        // given（两类 file 挂载资源）
         List<SessionResource> resources = List.of(
                 SessionResource.file("file_1", "mounts/a.txt"),
-                SessionResource.githubRepository("https://github.com/acme/app.git", "ghp_token", "main"),
-                SessionResource.memoryStore("ms_1", "read_only", null));
+                SessionResource.file("file_2", null));
 
         // when
         AgentSession session = AgentSession.createWithTrigger(
@@ -134,36 +131,30 @@ class AgentSessionTest {
 
         // then
         assertEquals(resources, session.resources());
-        assertEquals(3, session.resources().size());
+        assertEquals(2, session.resources().size());
         assertEquals(AgentSessionStatus.IDLE, session.status());
         assertEquals(TurnPhase.IDLE, session.turnPhase());
         assertNull(session.triggerType());
         assertNull(session.triggerId());
     }
 
-    // ==================== createWithMounts：全量挂载与记忆库派生 ====================
+    // ==================== createWithMounts：全量挂载透传 ====================
 
     @Test
-    void should_deriveMemoryStoreIdsAndPassThroughMounts_when_createWithMounts_given_mixedResources() {
-        // given（混挂：file + memory_store（含重复 ms_1），重复项应保序去重）
+    void should_passThroughMounts_when_createWithMounts_given_fileResources() {
+        // given（两 file 挂载）
         List<SessionResource> resources = List.of(
                 SessionResource.file("file_1", "mounts/a.txt"),
-                SessionResource.memoryStore("ms_1", "read_only", null),
-                SessionResource.githubRepository("https://github.com/acme/app.git", "ghp_token", "main"),
-                SessionResource.memoryStore("ms_2", "read_write", "参考说明"),
-                SessionResource.memoryStore("ms_1", "read_write", null));
+                SessionResource.file("file_2", null));
 
         // when
         AgentSession session = AgentSession.createWithMounts(
                 USER_ID, AGENT_ID, AGENT_VERSION, null, TITLE, TRIGGER_TYPE, TRIGGER_ID,
-                resources, ENVIRONMENT_ID, List.of("vault_1"), "{\"LOG_LEVEL\":\"debug\"}");
+                resources, ENVIRONMENT_ID, "{\"LOG_LEVEL\":\"debug\"}");
 
-        // then（记忆库由 resources 派生：过滤非 memory_store 项、保序去重）
-        assertEquals(List.of("ms_1", "ms_2"), session.memoryStoreIds());
+        // then（挂载字段透传）
         assertEquals(resources, session.resources());
-        // 其余挂载字段透传
         assertEquals(ENVIRONMENT_ID, session.environmentId());
-        assertEquals(List.of("vault_1"), session.vaultIds());
         assertEquals("{\"LOG_LEVEL\":\"debug\"}", session.environmentVariables());
         // 触发打标与初始状态与 createWithTrigger 形态一致
         assertEquals(TRIGGER_TYPE, session.triggerType());
@@ -173,16 +164,14 @@ class AgentSessionTest {
     }
 
     @Test
-    void should_normalizeMountFields_when_createWithMounts_given_nullEnvVarsAndVaults() {
-        // when（null 挂载入参：环境变量收敛空 JSON、保管库 / 派生记忆库收敛空列表）
+    void should_normalizeMountFields_when_createWithMounts_given_nullEnvVars() {
+        // when（null 挂载入参：环境变量收敛空 JSON、挂载资源收敛空列表）
         AgentSession session = AgentSession.createWithMounts(
                 USER_ID, AGENT_ID, AGENT_VERSION, null, TITLE, null, null,
-                null, null, null, null);
+                null, null, null);
 
         // then
         assertEquals("{}", session.environmentVariables());
-        assertEquals(List.of(), session.vaultIds());
-        assertEquals(List.of(), session.memoryStoreIds());
         assertEquals(List.of(), session.resources());
         assertNull(session.environmentId());
     }
@@ -205,7 +194,7 @@ class AgentSessionTest {
         SessionResource existing = SessionResource.file("file_1", "mounts/a.txt");
         AgentSession session = AgentSession.createWithMounts(
                 USER_ID, AGENT_ID, AGENT_VERSION, METADATA, TITLE, null, null,
-                List.of(existing), ENVIRONMENT_ID, List.of(), null);
+                List.of(existing), ENVIRONMENT_ID, null);
         SessionResource appended = SessionResource.file("file_2", null);
 
         // when
@@ -230,7 +219,7 @@ class AgentSessionTest {
         // given
         AgentSession session = AgentSession.createWithMounts(
                 USER_ID, AGENT_ID, AGENT_VERSION, METADATA, TITLE, null, null,
-                List.of(SessionResource.file("file_1", null)), null, null, null);
+                List.of(SessionResource.file("file_1", null)), null, null);
 
         // when（null 追加等价空追加）
         AgentSession updated = session.withAppendedResources(null);
@@ -378,69 +367,23 @@ class AgentSessionTest {
         assertEquals(MountViolationType.QUOTA_EXCEEDED, ex.violation());
     }
 
-    @Test
-    void should_rejectNonFileAppend_when_appendFiles_given_githubRepositoryAddition() {
-        // given（本期仅 file 可追加，且该批次无字节元数据）
-        AgentSession session = validSession();
-
-        // when & then（类型门禁先于就绪 / 配额判定）
-        MountViolationException ex = assertThrows(MountViolationException.class,
-                () -> session.appendFiles(
-                        List.of(SessionResource.githubRepository("https://github.com/acme/app.git", "ghp_t", "main")),
-                        Map.of()));
-
-        assertEquals(MountViolationType.APPEND_TYPE_UNSUPPORTED, ex.violation());
-        assertEquals(SessionResource.GITHUB_REPO_TYPE, ex.subject());
-    }
-
-    // ==================== 挂载行为下沉：removeResource / rotateResourceToken / findResource ====================
+    // ==================== 挂载行为下沉：removeResource / findResource ====================
 
     @Test
-    void should_removeFileResource_when_removeResource_given_fileMountedWithMemoryStore() {
-        // given（混挂：file_1 + 记忆库 ms_1）
+    void should_removeFileResource_when_removeResource_given_mountedFile() {
+        // given（混挂：file_1 + file_2）
         AgentSession session = sessionWithResources(
                 SessionResource.file("file_1", "mounts/a.txt"),
-                SessionResource.memoryStore("ms_1", "read_only", null));
+                SessionResource.file("file_2", null));
         String fileId = session.resources().get(0).id();
 
         // when
         AgentSession remaining = session.removeResource(fileId);
 
-        // then（仅剔除目标项，记忆库关联按替换规则重算后保持）
+        // then（仅剔除目标项）
         assertEquals(1, remaining.resources().size());
-        assertEquals(SessionResource.MEMORY_STORE_TYPE, remaining.resources().get(0).type());
-        assertEquals(List.of("ms_1"), remaining.memoryStoreIds());
+        assertEquals("file_2", remaining.resources().get(0).fileId());
         assertEquals(2, session.resources().size());
-    }
-
-    @Test
-    void should_rejectRemove_when_removeResource_given_githubRepositoryMount() {
-        // given
-        AgentSession session = sessionWithResources(
-                SessionResource.githubRepository("https://github.com/acme/app.git", "ghp_t", "main"));
-        String repoId = session.resources().get(0).id();
-
-        // when & then（github 挂载创建后不可摘除）
-        MountViolationException ex = assertThrows(MountViolationException.class,
-                () -> session.removeResource(repoId));
-
-        assertEquals(MountViolationType.REMOVE_TYPE_UNSUPPORTED, ex.violation());
-        assertEquals(SessionResource.GITHUB_REPO_TYPE, ex.subject());
-        assertTrue(ex.getMessage().contains("不可摘除"));
-    }
-
-    @Test
-    void should_rejectRemove_when_removeResource_given_memoryStoreMount() {
-        // given
-        AgentSession session = sessionWithResources(SessionResource.memoryStore("ms_1", null, null));
-        String memoryStoreId = session.resources().get(0).id();
-
-        // when & then
-        MountViolationException ex = assertThrows(MountViolationException.class,
-                () -> session.removeResource(memoryStoreId));
-
-        assertEquals(MountViolationType.REMOVE_TYPE_UNSUPPORTED, ex.violation());
-        assertEquals(SessionResource.MEMORY_STORE_TYPE, ex.subject());
     }
 
     @Test
@@ -457,88 +400,16 @@ class AgentSessionTest {
     }
 
     @Test
-    void should_replaceTokenOnly_when_rotateResourceToken_given_githubMount() {
-        // given
-        AgentSession session = sessionWithResources(
-                SessionResource.githubRepository("https://github.com/acme/app.git", "ghp_old", "main"));
-        String repoId = session.resources().get(0).id();
-
-        // when
-        AgentSession rotated = session.rotateResourceToken(repoId, "ghp_new");
-
-        // then（资源 ID 与仓库地址 / 检出分支保持不变，仅令牌覆盖）
-        assertEquals(1, rotated.resources().size());
-        assertEquals(repoId, rotated.resources().get(0).id());
-        assertEquals("ghp_new", rotated.resources().get(0).authorizationToken());
-        assertEquals("https://github.com/acme/app.git", rotated.resources().get(0).url());
-        assertEquals("main", rotated.resources().get(0).checkout());
-        assertEquals("ghp_old", session.resources().get(0).authorizationToken());
-    }
-
-    @Test
-    void should_rejectBlankToken_when_rotateResourceToken_given_blankNewToken() {
-        // given
-        AgentSession session = sessionWithResources(
-                SessionResource.githubRepository("https://github.com/acme/app.git", "ghp_old", "main"));
-        String repoId = session.resources().get(0).id();
-
-        // when & then（空令牌轮换会清空既有凭证，必须先于寻址与类型门禁拒绝）
-        MountViolationException ex = assertThrows(MountViolationException.class,
-                () -> session.rotateResourceToken(repoId, "  "));
-
-        assertEquals(MountViolationType.TOKEN_BLANK, ex.violation());
-        assertNull(ex.subject());
-    }
-
-    @Test
-    void should_preferBlankTokenViolation_when_rotateResourceToken_given_blankTokenAndUnknownResource() {
-        // given（两个条件同时成立：判定顺序即状态码优先级 400 先于 404）
-        AgentSession session = sessionWithResources(SessionResource.file("file_1", null));
-
-        // when & then
-        MountViolationException ex = assertThrows(MountViolationException.class,
-                () -> session.rotateResourceToken("sesr_missing", null));
-
-        assertEquals(MountViolationType.TOKEN_BLANK, ex.violation());
-    }
-
-    @Test
-    void should_reportNotFound_when_rotateResourceToken_given_unknownResourceId() {
-        // given
-        AgentSession session = sessionWithResources(SessionResource.file("file_1", null));
-
-        // when & then
-        MountViolationException ex = assertThrows(MountViolationException.class,
-                () -> session.rotateResourceToken("sesr_missing", "ghp_new"));
-
-        assertEquals(MountViolationType.MOUNTED_RESOURCE_NOT_FOUND, ex.violation());
-    }
-
-    @Test
-    void should_rejectRotate_when_rotateResourceToken_given_fileMount() {
-        // given
-        AgentSession session = sessionWithResources(SessionResource.file("file_1", null));
-        String fileId = session.resources().get(0).id();
-
-        // when & then
-        MountViolationException ex = assertThrows(MountViolationException.class,
-                () -> session.rotateResourceToken(fileId, "ghp_new"));
-
-        assertEquals(MountViolationType.ROTATE_TYPE_UNSUPPORTED, ex.violation());
-        assertEquals(SessionResource.FILE_TYPE, ex.subject());
-    }
-
-    @Test
     void should_findMountedResource_when_findResource_given_hitAndMiss() {
         // given
         AgentSession session = sessionWithResources(
                 SessionResource.file("file_1", "mounts/a.txt"),
-                SessionResource.githubRepository("https://github.com/acme/app.git", "ghp_t", null));
-        String repoId = session.resources().get(1).id();
+                SessionResource.file("file_2", null));
+        String fileId = session.resources().get(1).id();
 
         // when & then（命中返回条目本体，未命中返回 empty 交由调用方映射状态码）
-        assertTrue(session.findResource(repoId).isPresent());
-        assertEquals("https://github.com/acme/app.git", session.findResource(repoId).orElseThrow().url());
+        assertTrue(session.findResource(fileId).isPresent());
+        assertEquals("file_2", session.findResource(fileId).orElseThrow().fileId());
         assertTrue(session.findResource("sesr_missing").isEmpty());
         assertTrue(validSession().findResource("sesr_any").isEmpty());
     }
@@ -769,20 +640,16 @@ class AgentSessionTest {
     @Test
     void should_preserveMountAndTriggerFields_when_restore_given_persistedRow() {
         // given
-        List<String> vaultIds = List.of("vault_1");
-        List<String> memoryStoreIds = List.of("ms_1", "ms_2");
         String envVars = "{\"OPENAI_BASE\":\"https://api.example.com\"}";
-        List<SessionResource> resources = List.of(SessionResource.memoryStore("ms_1", "read_write", null));
+        List<SessionResource> resources = List.of(SessionResource.file("file_1", "mounts/a.txt"));
 
         // when
-        AgentSession restored = restoredWithMounts(vaultIds, memoryStoreIds, envVars, resources);
+        AgentSession restored = restoredWithMounts(envVars, resources);
 
         // then（restore 原样恢复挂载模型、触发打标与审计字段）
         assertEquals(ID, restored.id());
         assertEquals(SESSION_ID, restored.sessionId());
         assertEquals(ENVIRONMENT_ID, restored.environmentId());
-        assertEquals(vaultIds, restored.vaultIds());
-        assertEquals(memoryStoreIds, restored.memoryStoreIds());
         assertEquals(envVars, restored.environmentVariables());
         assertEquals(resources, restored.resources());
         assertEquals(TRIGGER_TYPE, restored.triggerType());
@@ -796,11 +663,9 @@ class AgentSessionTest {
     @Test
     void should_normalizeListAndJsonFields_when_restore_given_nullCollectionsAndBlankEnvVars() {
         // when（null 列表收敛为空列表、空白环境变量 JSON 收敛为空对象文本）
-        AgentSession session = restoredWithMounts(null, null, "   ", null);
+        AgentSession session = restoredWithMounts("   ", null);
 
         // then
-        assertEquals(List.of(), session.vaultIds());
-        assertEquals(List.of(), session.memoryStoreIds());
         assertEquals(List.of(), session.resources());
         assertEquals("{}", session.environmentVariables());
     }
@@ -808,18 +673,14 @@ class AgentSessionTest {
     @Test
     void should_copyCollectionsDefensively_when_restore_given_mutableLists() {
         // given（调用方持有可变列表：会话须防御性复制且对外不可变）
-        List<String> vaultIds = new ArrayList<>(List.of("vault_1"));
         List<SessionResource> resources = new ArrayList<>(List.of(SessionResource.file("file_1", null)));
 
         // when
-        AgentSession session = restoredWithMounts(vaultIds, List.of(), "{}", resources);
-        vaultIds.add("vault_2");
+        AgentSession session = restoredWithMounts("{}", resources);
         resources.add(SessionResource.file("file_2", null));
 
         // then（外部集合后续变更不影响已构造会话）
-        assertEquals(List.of("vault_1"), session.vaultIds());
         assertEquals(1, session.resources().size());
-        assertThrows(UnsupportedOperationException.class, () -> session.vaultIds().add("vault_3"));
         assertThrows(UnsupportedOperationException.class,
                 () -> session.resources().add(SessionResource.file("file_3", null)));
     }
@@ -873,14 +734,12 @@ class AgentSessionTest {
 
     @Test
     void should_preserveMountAndAuditFields_when_withStatusAndArchive_given_mountedSession() {
-        // given（会话挂载执行环境、保管库、记忆库、环境变量与两类挂载资源）
-        List<String> vaultIds = List.of("vault_1", "vault_2");
-        List<String> memoryStoreIds = List.of("ms_1");
+        // given（会话挂载执行环境、环境变量与挂载资源）
         String envVars = "{\"OPENAI_BASE\":\"https://api.example.com\"}";
         List<SessionResource> resources = List.of(
                 SessionResource.file("file_1", "mounts/a.txt"),
-                SessionResource.githubRepository("https://github.com/acme/app.git", "ghp_token", "main"));
-        AgentSession session = restoredWithMounts(vaultIds, memoryStoreIds, envVars, resources);
+                SessionResource.file("file_2", null));
+        AgentSession session = restoredWithMounts(envVars, resources);
 
         // when（状态 / 相位派生与归档均须原样透传挂载字段）
         AgentSession running = session.withStatus(AgentSessionStatus.RUNNING).withPhase(TurnPhase.RUNNING);
@@ -889,8 +748,6 @@ class AgentSessionTest {
         // then
         for (AgentSession derived : List.of(running, archived)) {
             assertEquals(ENVIRONMENT_ID, derived.environmentId(), "执行环境不得丢失");
-            assertEquals(vaultIds, derived.vaultIds(), "保管库列表不得丢失");
-            assertEquals(memoryStoreIds, derived.memoryStoreIds(), "记忆库列表不得丢失");
             assertEquals(envVars, derived.environmentVariables(), "会话级环境变量不得丢失");
             assertEquals(resources, derived.resources(), "挂载资源不得丢失");
             assertEquals(CREATED_BY, derived.createdBy());
@@ -1025,7 +882,7 @@ class AgentSessionTest {
             AgentSessionStatus status, TurnPhase turnPhase, String metadata, String title,
             OffsetDateTime archivedAt) {
         return new AgentSession(ID, sessionId, userId, agentId, agentVersion, status, turnPhase, metadata, title,
-                ENVIRONMENT_ID, List.of(), List.of(), "{}", List.of(), null, null,
+                ENVIRONMENT_ID, "{}", List.of(), null, null,
                 TS, archivedAt, TS, TS, CREATED_BY, UPDATED_BY);
     }
 
@@ -1035,7 +892,7 @@ class AgentSessionTest {
     private AgentSession newTriggeredSession(String triggerType, String triggerId) {
         return new AgentSession(ID, SESSION_ID, USER_ID, AGENT_ID, AGENT_VERSION,
                 AgentSessionStatus.IDLE, TurnPhase.IDLE, METADATA, TITLE,
-                ENVIRONMENT_ID, List.of(), List.of(), "{}", List.of(), triggerType, triggerId,
+                ENVIRONMENT_ID, "{}", List.of(), triggerType, triggerId,
                 TS, null, TS, TS, CREATED_BY, UPDATED_BY);
     }
 
@@ -1045,18 +902,17 @@ class AgentSessionTest {
     private AgentSession restored(AgentSessionStatus status, TurnPhase turnPhase, String metadata,
             OffsetDateTime archivedAt) {
         return AgentSession.restore(ID, SESSION_ID, USER_ID, AGENT_ID, AGENT_VERSION, status, turnPhase, metadata,
-                TITLE, ENVIRONMENT_ID, List.of(), List.of(), "{}", List.of(),
+                TITLE, ENVIRONMENT_ID, "{}", List.of(),
                 TRIGGER_TYPE, TRIGGER_ID, TS, archivedAt, TS, TS, CREATED_BY, UPDATED_BY);
     }
 
     /**
-     * 以规范取值经 restore 恢复会话（仅开放挂载列表、环境变量 JSON 与挂载资源），供归一化 / 透传用例复用。
+     * 以规范取值经 restore 恢复会话（仅开放环境变量 JSON 与挂载资源），供归一化 / 透传用例复用。
      */
-    private AgentSession restoredWithMounts(List<String> vaultIds, List<String> memoryStoreIds,
-            String environmentVariables, List<SessionResource> resources) {
+    private AgentSession restoredWithMounts(String environmentVariables, List<SessionResource> resources) {
         return AgentSession.restore(ID, SESSION_ID, USER_ID, AGENT_ID, AGENT_VERSION,
                 AgentSessionStatus.IDLE, null, METADATA, TITLE, ENVIRONMENT_ID,
-                vaultIds, memoryStoreIds, environmentVariables, resources,
+                environmentVariables, resources,
                 TRIGGER_TYPE, TRIGGER_ID, TS, null, TS, TS, CREATED_BY, UPDATED_BY);
     }
 
@@ -1065,7 +921,7 @@ class AgentSessionTest {
      */
     private AgentSession sessionWithResources(SessionResource... resources) {
         return AgentSession.createWithMounts(USER_ID, AGENT_ID, AGENT_VERSION, METADATA, TITLE,
-                null, null, List.of(resources), null, null, null);
+                null, null, List.of(resources), null, null);
     }
 
     /**

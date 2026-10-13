@@ -14,35 +14,32 @@ import java.util.Set;
 
 /**
  * Agent 工具配置值对象（{@code agent_version.tools_json} 数组条目，Agent tool 契约结构）。
- * <p>按 {@code type} 区分四类工具配置：</p>
+ * <p>按 {@code type} 区分两类工具配置：</p>
  * <ul>
  *   <li>{@code agent_toolset_20260401} —— 内置工具集：白名单 {@code enabled_tools}、
  *       隐藏/拒绝名单 {@code disallowed_tools}、逐工具配置 {@code configs[]}；</li>
- *   <li>{@code browser_toolset_20260714} —— 浏览器工具集（仅 type 字段）；</li>
- *   <li>{@code mcp_toolset} —— 引用 {@code mcp_servers[].name} 的 MCP 工具集 + {@code configs[]}；</li>
  *   <li>{@code custom} —— 自定义工具：name/description/input_schema（JSON Schema，type 须为 object），
  *       不支持 {@code configs}/{@code permission_policy}。</li>
  * </ul>
+ * <p>MCP 服务器声明能力已废止（{@code mcp_toolset} 工具类型不再支持，请求携带即 400），
+ * 浏览器工具集（{@code browser_toolset_*}）本期不实现。</p>
  *
- * @param type            工具类型（四选一）
+ * @param type            工具类型（agent_toolset / custom）
  * @param enabledTools    内置工具白名单（agent_toolset）
  * @param disallowedTools   内置工具隐藏/拒绝名单（agent_toolset）
- * @param configs         逐工具配置项（agent_toolset / mcp_toolset）
- * @param mcpServerName   引用的 MCP 服务器名（mcp_toolset 必填）
+ * @param configs         逐工具配置项（agent_toolset）
  * @param name            自定义工具名（custom 必填）
  * @param description     自定义工具描述（custom 必填）
  * @param inputSchema     自定义工具输入 JSON Schema（custom 必填，type 须为 object）
  */
 public record AgentTool(String type, List<String> enabledTools, List<String> disallowedTools,
-                        List<ToolConfig> configs, String mcpServerName,
+                        List<ToolConfig> configs,
                         String name, String description, Map<String, Object> inputSchema) {
 
     /** 内置工具集类型（含白名单/黑名单/逐工具配置）。 */
     public static final String TYPE_AGENT_TOOLSET = "agent_toolset_20260401";
-    /** 浏览器工具集类型。 */
+    /** 浏览器工具集类型（本期不实现，构造即拒绝）。 */
     public static final String TYPE_BROWSER_TOOLSET = "browser_toolset_20260714";
-    /** MCP 工具集类型（引用已声明的 MCP 服务器）。 */
-    public static final String TYPE_MCP_TOOLSET = "mcp_toolset";
     /** 自定义工具类型。 */
     public static final String TYPE_CUSTOM = "custom";
     /** 单版本工具数量上限（tools ≤128）。 */
@@ -62,7 +59,8 @@ public record AgentTool(String type, List<String> enabledTools, List<String> dis
 
     /**
      * 紧凑构造器：按类型校验工具配置不变量（互斥名单、名单越界、custom 必填项与 schema 形态）。
-     * <p>浏览器工具集（任何 {@code browser_toolset_*}）本期不实现，构造即拒绝（400 invalid_request_error）。</p>
+     * <p>浏览器工具集（任何 {@code browser_toolset_*}）本期不实现，构造即拒绝（400 invalid_request_error）；
+     * {@code mcp_toolset} 工具类型已废止，同样视为类型非法拒绝。</p>
      *
      * @throws IllegalArgumentException 类型非法 / 浏览器工具集 / 名单越界 / enabled 与 disallowed 交集非空 /
      *                                  custom 约束不满足
@@ -75,8 +73,8 @@ public record AgentTool(String type, List<String> enabledTools, List<String> dis
         if (TYPE_BROWSER_TOOLSET.equals(type) || (type != null && type.startsWith("browser_toolset"))) {
             throw new IllegalArgumentException("浏览器工具集本期不实现");
         }
-        if (!TYPE_AGENT_TOOLSET.equals(type) && !TYPE_MCP_TOOLSET.equals(type) && !TYPE_CUSTOM.equals(type)) {
-            throw new IllegalArgumentException("工具类型非法，须为 agent_toolset/mcp_toolset/custom");
+        if (!TYPE_AGENT_TOOLSET.equals(type) && !TYPE_CUSTOM.equals(type)) {
+            throw new IllegalArgumentException("工具类型非法，须为 agent_toolset/custom");
         }
         if (TYPE_AGENT_TOOLSET.equals(type)) {
             validateBuiltinNames(enabledTools, "enabled_tools");
@@ -86,9 +84,6 @@ public record AgentTool(String type, List<String> enabledTools, List<String> dis
         overlap.retainAll(new HashSet<>(disallowedTools));
         if (!overlap.isEmpty()) {
             throw new IllegalArgumentException("同一工具不得同时出现在 enabled_tools 与 disallowed_tools");
-        }
-        if (TYPE_MCP_TOOLSET.equals(type) && StringUtils.isBlank(mcpServerName)) {
-            throw new IllegalArgumentException("mcp_toolset 必须引用 mcp_server_name");
         }
         if (TYPE_CUSTOM.equals(type)) {
             if (StringUtils.isBlank(name)) {
@@ -180,7 +175,6 @@ public record AgentTool(String type, List<String> enabledTools, List<String> dis
                     stringListOf(item.get("enabled_tools")),
                     stringListOf(item.get("disallowed_tools")),
                     configListOf(item.get("configs")),
-                    stringOf(item, "mcp_server_name"),
                     stringOf(item, "name"),
                     stringOf(item, "description"),
                     mapOf(item.get("input_schema"))));
@@ -207,7 +201,6 @@ public record AgentTool(String type, List<String> enabledTools, List<String> dis
             if (!tool.configs().isEmpty()) {
                 item.put("configs", tool.configs().stream().map(AgentTool::configToMap).toList());
             }
-            putIfPresent(item, "mcp_server_name", tool.mcpServerName());
             putIfPresent(item, "name", tool.name());
             putIfPresent(item, "description", tool.description());
             putIfNotEmpty(item, "input_schema", tool.inputSchema());

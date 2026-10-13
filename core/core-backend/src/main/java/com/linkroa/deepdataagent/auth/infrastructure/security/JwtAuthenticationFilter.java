@@ -43,14 +43,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             "/api/auth/login"
     );
 
-    /**
-     * MCP OAuth 回调端点（精确匹配）：授权服务器把浏览器跳转回此处，<b>不携带 Bearer 头</b>，
-     * 授权约束由发起授权时下发的一次性 state 承担（TTL + owner 绑定 + origin 记录），
-     * 故此处放行不会引入越权面。版本段随 {@link ApiVersionConstants#CURRENT_API_VERSION} 派生。
-     */
-    private static final String OAUTH_CALLBACK_PATH =
-            "/api/v" + ApiVersionConstants.CURRENT_API_VERSION + "/cloud/vaults/oauth/callback";
-
     /** 健康探针免认证（show-details=never，响应仅含 status，不泄露组件详情）。 */
     private static final String[] PUBLIC_ACTUATOR_PREFIXES = {
             "/actuator/health",
@@ -111,7 +103,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return true;
         }
         String uri = request.getRequestURI();
-        if (PUBLIC_AUTH_ENDPOINTS.contains(uri) || OAUTH_CALLBACK_PATH.equals(uri)) {
+        if (PUBLIC_AUTH_ENDPOINTS.contains(uri)) {
             return true;
         }
         for (String prefix : PUBLIC_ACTUATOR_PREFIXES) {

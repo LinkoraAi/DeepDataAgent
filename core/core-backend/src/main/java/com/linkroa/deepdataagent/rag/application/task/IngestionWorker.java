@@ -81,7 +81,8 @@ import java.util.function.Supplier;
  *   <li>Stage 0 前置校验：读取摄入上下文（{@link IngestionSourceReader#readContext(Long)}），
  *       校验源文件与知识库级 LLM 模型引用（{@code multi_model_config.modelProfileId}）均存在，
  *       任一缺失即置 FAILED；</li>
- *   <li>Stage 1 解析 + 分块：按库级解析配置选型解析器（无自动回退），解析产物中的媒体图片经
+ *   <li>Stage 1 解析 + 分块：按库级解析配置选型解析器并做<b>文档类型路由</b>
+ *       （文档类型落在引擎支持集合内才调引擎，否则走本地直读兜底，无失败自动回退），解析产物中的媒体图片经
  *       {@link MediaImagePersistenceService} 落对象存储并把引用（{@code mediaObjectKey}，
  *       仅对象键、桶概念已退役）注入多模态块 meta（单图失败仅 WARN，不阻断摄入），再经
  *       {@link MultimodalContextInjector} 为多模态块注入检索上下文（章节路径 / 邻近文本），
@@ -392,7 +393,7 @@ public class IngestionWorker {
         // 最后为多模态块注入检索上下文（章节路径 / 邻近文本）
         ParseOutcome parseOutcome = runStage(IngestionStage.PARSE, timings, () -> {
             String strategyJson = resolveStrategyJson(ctx);
-            DocumentParser parser = parserRegistry.resolve(ctx.parseConfig());
+            DocumentParser parser = parserRegistry.resolve(ctx.parseConfig(), ctx.fileType());
             ParsedDocument parsed = withFileName(parser.parse(ctx.s3File(), strategyJson,
                     ctx.multiModelConfig()), ctx.fileName());
             Map<String, MediaFileRef> mediaRefs = mediaImagePersistenceService.persistImages(

@@ -3,7 +3,6 @@ package com.linkroa.deepdataagent.runtime.domain.service;
 import com.linkroa.deepdataagent.runtime.domain.model.TerminalEventSpec;
 import com.linkroa.deepdataagent.runtime.domain.model.Transition;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.AgentSessionStatus;
-import com.linkroa.deepdataagent.runtime.domain.model.enums.DeploymentOutcome;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.TerminalNoOpReason;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.TerminalStopReason;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.TurnTerminalKind;
@@ -14,33 +13,30 @@ import java.util.Objects;
 /**
  * 轮次终态决策纯函数（决策表的唯一事实源，无 IO、无状态）。
  * <p>输入 = <b>轮次结果</b>（{@link TurnResult}）× <b>终态事务读到的 DB 当前态</b>；
- * 输出 = <b>迁移尝试链</b>（目标态 + 终态事件集 + 调度终局语义）或 <b>no-op 判定</b>。
+ * 输出 = <b>迁移尝试链</b>（目标态 + 终态事件集）或 <b>no-op 判定</b>。
  * 应用层（{@code execution.TurnFinalizer} 的终态唯一出口）只负责
  * 「查输入 → 调本函数 → 按输出落库广播」，不再内联推导任何交错分支。</p>
  *
  * <table>
  *   <caption>决策表（与公开契约收场事件集逐行对照）</caption>
- *   <tr><th>轮次结果</th><th>DB 当前态</th><th>输出</th><th>落库终态事件</th><th>调度回写</th></tr>
+ *   <tr><th>轮次结果</th><th>DB 当前态</th><th>输出</th><th>落库终态事件</th></tr>
  *   <tr><td>正常结束</td><td>running</td><td>{@code FINISH_TURN}</td>
- *       <td>{@code thread_status_idle} + {@code status_idle}（{@code end_turn}）</td><td>succeeded</td></tr>
+ *       <td>{@code thread_status_idle} + {@code status_idle}（{@code end_turn}）</td></tr>
  *   <tr><td>迭代上限</td><td>running(相位 running)</td><td>首选 {@code TERMINATE}</td>
- *       <td>{@code thread_status_terminated} + {@code status_terminated}（{@code max_iterations}）</td>
- *       <td>failed</td></tr>
+ *       <td>{@code thread_status_terminated} + {@code status_terminated}（{@code max_iterations}）</td></tr>
  *   <tr><td>迭代上限</td><td>cancelling（取消抢跑）</td><td>首选未命中 ⇒ 回退 {@code FINISH_TURN}</td>
- *       <td>{@code thread_status_idle} + {@code status_idle}（{@code interrupted}）</td><td>terminated</td></tr>
+ *       <td>{@code thread_status_idle} + {@code status_idle}（{@code interrupted}）</td></tr>
  *   <tr><td>被中断</td><td>running / cancelling</td><td>{@code FINISH_TURN}</td>
- *       <td>{@code thread_status_idle} + {@code status_idle}（{@code interrupted}）</td><td>terminated</td></tr>
+ *       <td>{@code thread_status_idle} + {@code status_idle}（{@code interrupted}）</td></tr>
  *   <tr><td>执行出错</td><td>running</td><td>{@code FINISH_TURN}</td>
- *       <td>{@code session.error} + {@code thread_status_idle} + {@code status_idle}（{@code error}）</td>
- *       <td>failed</td></tr>
+ *       <td>{@code session.error} + {@code thread_status_idle} + {@code status_idle}（{@code error}）</td></tr>
  *   <tr><td>租约丢失</td><td>任意</td><td>no-op（{@link TerminalNoOpReason#LEASE_LOST}）</td>
- *       <td>无</td><td>无</td></tr>
+ *       <td>无</td></tr>
  *   <tr><td>任意</td><td>terminated（显式指令胜出）</td><td>no-op
- *       （{@link TerminalNoOpReason#EXPLICIT_TERMINAL_WINS}）</td><td>无</td><td>无</td></tr>
+ *       （{@link TerminalNoOpReason#EXPLICIT_TERMINAL_WINS}）</td><td>无</td></tr>
  *   <tr><td>HITL 挂起</td><td>相位 awaiting_confirmation</td><td>no-op（不收尾，
  *       {@link TerminalNoOpReason#HITL_SUSPENDED}）</td>
- *       <td>挂起全程零状态事件（等待事实由事件表既有 tool_use 明细承载）</td>
- *       <td>轮未结束不回写</td></tr>
+ *       <td>挂起全程零状态事件（等待事实由事件表既有 tool_use 明细承载）</td></tr>
  * </table>
  *
  * <p><b>与 CAS 语义的等价性</b>：</p>
@@ -89,21 +85,17 @@ public final class TurnFinalizationPolicy {
             // 第 1 行：正常结束 → idle(end_turn)
             case COMPLETED -> Decision.of(List.of(
                     new Decision.Attempt(Transition.FINISH_TURN,
-                            idleClosingEvents(TerminalStopReason.STOP),
-                            DeploymentOutcome.SUCCEEDED)));
+                            idleClosingEvents(TerminalStopReason.STOP))));
             // 第 2 / 3 行：迭代上限 → 首选 terminated(max_iterations)；取消抢跑时同链回退 idle(interrupted)
             case MAX_ITERATIONS -> Decision.of(List.of(
                     new Decision.Attempt(Transition.TERMINATE,
-                            terminatedClosingEvents(),
-                            DeploymentOutcome.FAILED),
+                            terminatedClosingEvents()),
                     new Decision.Attempt(Transition.FINISH_TURN,
-                            idleClosingEvents(TerminalStopReason.INTERRUPTED),
-                            DeploymentOutcome.TERMINATED)));
+                            idleClosingEvents(TerminalStopReason.INTERRUPTED))));
             // 第 4 行：被中断 → idle(interrupted)，零中段事件
             case INTERRUPTED -> Decision.of(List.of(
                     new Decision.Attempt(Transition.FINISH_TURN,
-                            idleClosingEvents(TerminalStopReason.INTERRUPTED),
-                            DeploymentOutcome.TERMINATED)));
+                            idleClosingEvents(TerminalStopReason.INTERRUPTED))));
             // 第 5 行：执行出错 → error 事件 + 收场二事件 idle(error)
             case EXECUTION_ERROR -> Decision.of(List.of(
                     new Decision.Attempt(Transition.FINISH_TURN,
@@ -111,8 +103,7 @@ public final class TurnFinalizationPolicy {
                                     TerminalEventSpec.threadStatusEvent(AgentSessionStatus.IDLE,
                                             TerminalStopReason.ERROR),
                                     TerminalEventSpec.statusEvent(AgentSessionStatus.IDLE,
-                                            TerminalStopReason.ERROR)),
-                            DeploymentOutcome.FAILED)));
+                                            TerminalStopReason.ERROR)))));
             case HITL_SUSPENDED, LEASE_LOST ->
                     throw new IllegalStateException("分支已在函数首部短路，不可达: " + kind);
         };

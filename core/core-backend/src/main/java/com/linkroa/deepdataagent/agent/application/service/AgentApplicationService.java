@@ -10,7 +10,6 @@ import com.linkroa.deepdataagent.agent.domain.model.AgentDefinition;
 import com.linkroa.deepdataagent.agent.domain.model.AgentListFilter;
 import com.linkroa.deepdataagent.agent.domain.model.AgentTool;
 import com.linkroa.deepdataagent.agent.domain.model.AgentVersion;
-import com.linkroa.deepdataagent.agent.domain.model.McpServer;
 import com.linkroa.deepdataagent.agent.domain.model.ModelProfile;
 import com.linkroa.deepdataagent.agent.domain.model.ModelRef;
 import com.linkroa.deepdataagent.agent.domain.model.SkillBinding;
@@ -37,6 +36,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -71,8 +71,8 @@ public class AgentApplicationService {
         String modelProfileId = resolveModel(command.modelJson(), ownerId);
         // 技能绑定校验 + 钉版解析（custom 校验 skill 资产存在，动态版不落版本键）
         String skillsJson = resolveSkillBindings(command.skillsJson());
-        // 工具 / MCP 服务器配置结构校验（类型词汇、互斥名单、引用完整性、数量上限）
-        validateConfigStructure(command.toolsJson(), command.mcpServersJson(), skillsJson);
+        // 工具配置结构校验（类型词汇、互斥名单、数量上限）
+        validateConfigStructure(command.toolsJson(), skillsJson);
         // multiagent 本期不实现，非空提交 400
         AgentConfigValidator.validateMultiagentAbsent(command.multiagent());
 
@@ -86,7 +86,7 @@ public class AgentApplicationService {
                     command.name(), command.description(),
                     command.systemPrompt(),
                     modelProfileId, command.modelJson(), command.metadataJson(),
-                    command.toolsJson(), command.mcpServersJson(),
+                    command.toolsJson(),
                     skillsJson,
                     command.multiagent());
             return agentDefinitionRepository.update(saved.withLatestVersion(v1.versionNumber()));
@@ -103,8 +103,8 @@ public class AgentApplicationService {
         String modelProfileId = resolveModel(command.modelJson(), AuthContext.requireUserId());
         // 技能绑定校验 + 钉版解析（custom 校验 skill 资产存在，动态版不落版本键）
         String skillsJson = resolveSkillBindings(command.skillsJson());
-        // 工具 / MCP 服务器配置结构校验（类型词汇、互斥名单、引用完整性、数量上限）
-        validateConfigStructure(command.toolsJson(), command.mcpServersJson(), skillsJson);
+        // 工具配置结构校验（类型词汇、互斥名单、数量上限）
+        validateConfigStructure(command.toolsJson(), skillsJson);
         // multiagent 本期不实现，非空提交 400
         AgentConfigValidator.validateMultiagentAbsent(command.multiagent());
 
@@ -119,7 +119,7 @@ public class AgentApplicationService {
                     name, description,
                     command.systemPrompt(),
                     modelProfileId, command.modelJson(), command.metadataJson(),
-                    command.toolsJson(), command.mcpServersJson(),
+                    command.toolsJson(),
                     skillsJson, command.multiagent());
             agentDefinitionRepository.update(updated.withLatestVersion(version.versionNumber()));
             return version;
@@ -135,7 +135,7 @@ public class AgentApplicationService {
     private AgentVersion publishVersionInTransaction(AgentDefinition definition, String name, String description,
                                                      String systemPrompt,
                                                      String modelProfileId, String modelJson, String metadataJson,
-                                                     String toolsJson, String mcpServersJson,
+                                                     String toolsJson,
                                                      String skillsJson, String multiagent) {
         int maxVersion = agentVersionRepository.findMaxVersionNumber(definition.agentId());
         int nextVersion = versionDomainService.nextVersionNumber(maxVersion);
@@ -149,7 +149,6 @@ public class AgentApplicationService {
                 modelProfileId,
                 modelJson,
                 toolsJson,
-                mcpServersJson,
                 skillsJson,
                 normalizeMultiagent(multiagent),
                 metadataJson
@@ -392,7 +391,7 @@ public class AgentApplicationService {
                     name, description,
                     latest.systemPrompt(),
                     latest.modelProfileId(), latest.modelJson(), latest.metadataJson(),
-                    latest.toolsJson(), latest.mcpServersJson(),
+                    latest.toolsJson(),
                     latest.skillsJson(), latest.multiagent());
             return agentDefinitionRepository.update(
                     definition.withNameAndDescription(name, description).withLatestVersion(snapshot.versionNumber()));
@@ -428,7 +427,9 @@ public class AgentApplicationService {
     /**
      * 模型引用解析：解析 {@code model_json}（字符串简写或对象形态）→ 目录校验（不在目录 / 已禁用 /
      * 档位不支持 → 400）→ 内部供应商映射（租户键覆盖默认键，未映射返回 {@code null}，运行时装配
-     * 回退默认目录模型 + 可用供应商）。映射命中时内部配置须存在且 ENABLED（管理员误禁 → 404）。
+     * 回退默认目录模型 + 可用供应商）。映射命中时内部配置须存在且 ENABLED（管理员误禁 → 404），
+     * 且须<b>归属当前请求 owner</b>（与装配期 {@code DefaultAgentVersionAssemblyPort.requireOwner}
+     * 两阶段对称，跨租户引用一律 404）。
      *
      * @param modelJson 模型引用 JSON（请求经转换器序列化，字符串或对象形态）
      * @param ownerId   租户用户 id（映射解析用）
@@ -442,18 +443,23 @@ public class AgentApplicationService {
         modelCatalogService.validateModel(modelRef);
         String profileId = modelCatalogService.resolveProfileId(modelRef.id(), ownerId);
         if (profileId != null) {
-            ModelProfileValidator.validateReferable(modelProfileRepository.findByProfileId(profileId).orElse(null));
+            ModelProfile profile = modelProfileRepository.findByProfileId(profileId).orElse(null);
+            ModelProfileValidator.validateReferable(profile);
+            // 归属校验（fail-fast，落库前完成）：模型配置须归属当前请求 owner，
+            // 与装配期 DefaultAgentVersionAssemblyPort.requireOwner 语义一致，不匹配统一 404。
+            if (!Objects.equals(profile.ownerId(), ownerId)) {
+                throw new ResourceNotFoundException("模型配置不存在");
+            }
         }
         return profileId;
     }
 
     /**
-     * 工具 / MCP 服务器 / 技能配置的跨列表结构校验（解析即校验类型词汇与单条不变量）。
+     * 工具 / 技能配置的跨列表结构校验（解析即校验类型词汇与单条不变量）。
      */
-    private void validateConfigStructure(String toolsJson, String mcpServersJson, String skillsJson) {
+    private void validateConfigStructure(String toolsJson, String skillsJson) {
         AgentConfigValidator.validate(
                 AgentTool.parse(toolsJson),
-                McpServer.parse(mcpServersJson),
                 SkillBinding.parse(skillsJson));
     }
 

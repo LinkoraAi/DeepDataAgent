@@ -60,9 +60,8 @@ final class RoundExecutionTemplate {
     /**
      * 执行一轮：<b>启动续约</b> → 装配 → 激活中断句柄 → 订阅事件流并阻塞 → 四出口收轮 → 停续约 + 释放 Agent。
      *
-     * <p>续约先于装配启动：MCP 建连与工具枚举在 {@code agentFactory.build()} 内<b>同步</b>执行，
-     * 多服务器场景（上限 20 台）可耗时数分钟；若等装配完成才起续约，这段窗口内无人续约，
-     * 10min TTL 可能先到期而被他实例接管（D5③ 容量预案）。</p>
+     * <p>续约先于装配启动：技能物化与沙箱装配在 {@code agentFactory.build()} 内执行，
+     * 若等装配完成才起续约，这段窗口内无人续约，10min TTL 可能先到期而被他实例接管（D5③ 容量预案）。</p>
      *
      * @param ctx         本轮显式执行上下文（数据 + 端口 + 编排回调）
      * @param fluxSupplier 流供给（给定已装配 Agent 产出冷流：新一轮 streamEvents / 续跑轮 resumeConfirmation）
@@ -74,12 +73,6 @@ final class RoundExecutionTemplate {
         LeaseRenewalHandle leaseRenewal = startLeaseRenewal(ctx);
         try {
             AgentAssemblySpec spec = ctx.assembler().apply(ctx.session());
-            // 启动前登记本轮挂载保管库凭据明文至轮次运行态：工具结果落库 / SSE 广播与错误终态前
-            // 经 SecretMasker.maskExactValues 精确掩码已知秘密回显（明文仅内存瞬态，不进日志 / 沙箱）
-            ctx.runState().registerMountedVaultSecrets(spec.vaultCredentials());
-            // MCP 工具权限策略登记（D15 事件投影）：agent.mcp_tool_use 载荷的 evaluated_permission
-            // 与工厂下发框架的权限规则同源（同一份 mcp_toolset 策略、同一运行时实名约定）
-            ctx.runState().registerMcpToolPolicies(spec.toolPolicies());
             agent = ctx.agentFactory().build(spec);
             built = true;
             // 定向中断：槽位键与流供给下发运行时的 (userId, sessionId) 同源（D7）

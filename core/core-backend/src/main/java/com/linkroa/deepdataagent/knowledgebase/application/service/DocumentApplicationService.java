@@ -14,6 +14,7 @@ import com.linkroa.deepdataagent.knowledgebase.application.result.DedupHit;
 import com.linkroa.deepdataagent.knowledgebase.application.result.DocumentContentResult;
 import com.linkroa.deepdataagent.knowledgebase.application.result.UploadDocumentResult;
 import com.linkroa.deepdataagent.knowledgebase.application.validation.ChunkStrategyConfigValidator;
+import com.linkroa.deepdataagent.knowledgebase.application.validation.ChunkStrategyFileTypeValidator;
 import com.linkroa.deepdataagent.knowledgebase.application.validation.DocumentValidator;
 import com.linkroa.deepdataagent.knowledgebase.application.validation.KnowledgeBaseValidator;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.DedupPolicyConfig;
@@ -87,7 +88,6 @@ public class DocumentApplicationService {
             Map.entry(FileType.TXT, "text/plain"),
             Map.entry(FileType.MD, "text/markdown"),
             Map.entry(FileType.CSV, "text/csv"),
-            Map.entry(FileType.HTML, "text/html"),
             Map.entry(FileType.PNG, "image/png"),
             Map.entry(FileType.JPG, "image/jpeg"),
             Map.entry(FileType.JPEG, "image/jpeg"));
@@ -276,6 +276,9 @@ public class DocumentApplicationService {
         DocumentValidator.validateFileSize((long) content.length, maxFileSize.toBytes());
         // 文档级分块策略在落对象存储与开启登记事务前完成拒绝式校验：非法即零写入、零残留对象
         ChunkStrategyConfigValidator.validate(command.chunkStrategy());
+        // 分块策略 × 文档类型联合校验：生效策略取文档级优先、否则库级；不匹配即 400，
+        // 同样先于落对象存储与登记事务（非法即零写入、零残留对象）
+        ChunkStrategyFileTypeValidator.validate(fileType, resolveChunkStrategy(command.chunkStrategy(), knowledgeBase));
         String contentHash = documentDedupService.sha256Hex(content);
         S3File stored = storeSourceFile(command.kbId(), fileType, command.contentType(), content);
         UploadDocumentResult result;
@@ -965,9 +968,12 @@ public class DocumentApplicationService {
     }
 
     /**
-     * 确定本次重建实际生效的分块策略：请求覆盖优先，未覆盖时回退到知识库当前分块配置快照；
+     * 确定实际生效的分块策略：请求覆盖（文档级）优先，未覆盖时回退到知识库当前分块配置快照（库级）；
      * 知识库未配置分块策略时返回 {@code null}，保持「文档级为空则继承库级」的原语义。
-     * <p>回退到库级快照时同样执行拒绝式校验（请求覆盖值已由调用方 {@link #reparse} 在事务外校验），
+     * <p>复用面：①{@link #reparse}({@code ReparseDocumentCommand}) 重建策略刷新；
+     * ②{@link #upload}({@code UploadDocumentCommand}) 的分块策略 × 文档类型联合校验
+     * （{@link ChunkStrategyFileTypeValidator}）。</p>
+     * <p>回退到库级快照时同样执行拒绝式校验（请求覆盖值已由调用方在事务外校验），
      * 非法即在写库前抛出，MUST NOT 把非法策略写入文档级配置。</p>
      *
      * @param override      请求携带的分块策略覆盖 JSON，可为空

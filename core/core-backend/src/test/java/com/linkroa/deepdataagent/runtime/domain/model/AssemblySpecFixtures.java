@@ -7,7 +7,6 @@ import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec.Sandbox;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec.ToolExecutionPolicy;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec.ToolGovernance;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec.ToolVisibility;
-import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec.VaultCredentialRef;
 
 import java.util.List;
 import java.util.Map;
@@ -56,15 +55,13 @@ public final class AssemblySpecFixtures {
         return Sandbox.of(image, memoryBytes, cpuCount);
     }
 
-    public static MountView mounts(List<Skill> skills, List<MemoryStoreRef> memoryStoreRefs,
-                                   List<VaultCredentialRef> vaultCredentials,
-                                   Map<String, String> envVars,
+    public static MountView mounts(List<Skill> skills, Map<String, String> envVars,
                                    List<AgentAssemblySpec.FileMountRef> fileMounts) {
-        return new MountView(skills, memoryStoreRefs, vaultCredentials, envVars, fileMounts);
+        return new MountView(skills, envVars, fileMounts);
     }
 
     public static MountView noMounts() {
-        return new MountView(List.of(), List.of(), List.of(), Map.of(), List.of());
+        return new MountView(List.of(), Map.of(), List.of());
     }
 
     public static ToolGovernance governance(List<ToolExecutionPolicy> policies, ToolVisibility visibility) {

@@ -1,19 +1,13 @@
 package com.linkroa.deepdataagent.runtime.application.service.assembly;
 
 import com.linkroa.deepdataagent.agent.api.dto.EnvironmentReferenceDTO;
-import com.linkroa.deepdataagent.agent.application.dto.AgentMcpServerDTO;
 import com.linkroa.deepdataagent.agent.application.dto.ResolvedAgentAssemblyDTO;
 import com.linkroa.deepdataagent.agent.application.dto.ResolvedModelCredentialDTO;
 import com.linkroa.deepdataagent.agent.application.port.AgentVersionAssemblyPort;
-import com.linkroa.deepdataagent.memory.api.MemoryStoreApi;
-import com.linkroa.deepdataagent.memory.api.dto.MemoryStoreReferenceDTO;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec;
 import com.linkroa.deepdataagent.runtime.domain.model.AgentSession;
-import com.linkroa.deepdataagent.runtime.domain.model.MemoryStoreRef;
 import com.linkroa.deepdataagent.runtime.domain.model.SessionResource;
 import com.linkroa.deepdataagent.runtime.infrastructure.config.AgentRuntimeProperties;
-import com.linkroa.deepdataagent.vault.application.dto.ResolvedVaultCredentialDTO;
-import com.linkroa.deepdataagent.vault.application.port.VaultCredentialResolutionPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,32 +26,26 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * {@link RuntimeAgentAssemblyService} 运行时装配单测。
- * <p>验证装配完全来自 Agent 台账与 Session 挂载（记忆库 / 保管库 / 环境变量），
+ * <p>验证装配完全来自 Agent 台账与 Session 挂载（环境变量），
  * 缓存键含挂载签名（跨挂载不共享规格）；模型 / maxIters / system 取解析结果
- * 而非 {@code app.agent} 全局配置；沙箱资源恒取全局运行时属性
- * （环境契约不再承载沙箱明细，且装配期不再复检环境类型——执行平面守卫已在
- * 会话创建期单点完成，D16）。file 挂载走缓存未命中路径 reconcile 对账并带入视图
- * （D20 单一事实源）、挂载变化即时失效缓存且缓存命中不重复对账
+ * 而非 {@code app.agent} 全局配置；沙箱资源恒取全局运行时属性。file 挂载走缓存未命中路径
+ * reconcile 对账并带入视图（D20 单一事实源）、挂载变化即时失效缓存且缓存命中不重复对账
  * （sandbox-workspace-file-mounts D14 / D20）。</p>
  * <p><b>装配缓存改造（slim-agent-assembly R14 / D2）</b>：缓存值为无凭证明文快照，
  * 明文凭据一律不进缓存（反射读取缓存内容断言无 {@code sk-} 明文）；命中路径每轮经
  * {@code resolveModelCredential} 实时注入模型凭据（verify 次数 = 每命中轮一次，且全量
- * {@code resolve} 不因命中而重复）；跨会话同 agent + 版本互不串号（各自 sessionId /
- * ownerId / file 挂载视图独立）。</p>
+ * {@code resolve} 不因命中而重复）；跨会话同 agent + 版本互不串号。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class RuntimeAgentAssemblyServiceTest {
 
     @Mock private AgentVersionAssemblyPort agentVersionAssemblyPort;
-    @Mock private MemoryStoreApi memoryStoreApi;
-    @Mock private VaultCredentialResolutionPort vaultCredentialResolutionPort;
     @Mock private SessionMountMaterializer sessionMountMaterializer;
 
     /** 运行时全局配置：直注真实配置对象（配置类无逻辑，无需 mock） */
@@ -75,8 +63,6 @@ class RuntimeAgentAssemblyServiceTest {
         runtimeProperties.setSandboxMemoryBytes(8192L);
         runtimeProperties.setSandboxCpuCount(4L);
         ReflectionTestUtils.setField(resolver, "runtimeProperties", runtimeProperties);
-        ReflectionTestUtils.setField(resolver, "memoryStoreApi", memoryStoreApi);
-        ReflectionTestUtils.setField(resolver, "vaultCredentialResolutionPort", vaultCredentialResolutionPort);
         ReflectionTestUtils.setField(resolver, "sessionMountMaterializer", sessionMountMaterializer);
         ReflectionTestUtils.setField(resolver, "objectMapper", new ObjectMapper());
     }
@@ -88,8 +74,7 @@ class RuntimeAgentAssemblyServiceTest {
                 .thenReturn(new ResolvedAgentAssemblyDTO(
                         "agent-a", 1, "v1", "台账系统提示词", "# 项目约定\n\n统一使用中文回复。",
                         "openai:gpt-4", 10, "sk-plain",
-                        "https://api.example.com/v1", null, null, null,
-                        List.of()));
+                        "https://api.example.com/v1", List.of(), null));
         AgentSession session = AgentSession.create("1", "agent-a", "1", "{}", null);
 
         // when
@@ -103,7 +88,7 @@ class RuntimeAgentAssemblyServiceTest {
         // AGENTS.md 随契约进入规格，供工厂物化到 Agent 工作区根
         assertEquals("# 项目约定\n\n统一使用中文回复。", spec.agentsMd());
         assertEquals(10, spec.maxIters());
-        // 未挂环境与版本快照引用：沙箱等运行时基础设施参数仍取 app.agent 配置
+        // 沙箱等运行时基础设施参数仍取 app.agent 配置
         assertEquals("python:3.12", spec.sandbox().image());
         assertEquals(8192L, spec.sandbox().memoryBytes());
         assertEquals(4L, spec.sandbox().cpuCount());
@@ -111,12 +96,11 @@ class RuntimeAgentAssemblyServiceTest {
         assertEquals("sk-plain", spec.credential());
         assertEquals("https://api.example.com/v1", spec.apiEndpointUrl());
         assertTrue(spec.skills().isEmpty());
-        assertTrue(spec.memoryStoreRefs().isEmpty());
         assertTrue(spec.environmentVariables().isEmpty());
     }
 
     @Test
-    void should_useGlobalSandboxAndMemory_when_assemble_given_versionWithEnvironmentReference() {
+    void should_useGlobalSandbox_when_assemble_given_versionWithEnvironmentReference() {
         // given（版本快照携带环境引用：契约不再承载沙箱明细，沙箱资源恒取全局运行时属性）
         EnvironmentReferenceDTO environment = new EnvironmentReferenceDTO(
                 "env-1", "数据分析沙箱", "cloud", "pip install pandas");
@@ -124,128 +108,16 @@ class RuntimeAgentAssemblyServiceTest {
                 .thenReturn(new ResolvedAgentAssemblyDTO(
                         "agent-a", 1, "v1", "台账系统提示词", "# 项目约定\n\n统一使用中文回复。",
                         "openai:gpt-4", 10, "sk-plain",
-                        "https://api.example.com/v1", null, environment,
-                        List.of(new MemoryStoreReferenceDTO("ms-1", "会话记忆")),
-                        List.of()));
+                        "https://api.example.com/v1", List.of(), environment));
         AgentSession session = AgentSession.create("1", "agent-a", "1", "{}", null);
 
         // when
         AgentAssemblySpec spec = resolver.assemble(session);
 
-        // then（沙箱取全局默认，记忆引用物化为运行时值对象）
+        // then（沙箱取全局默认）
         assertEquals("python:3.12", spec.sandbox().image());
         assertEquals(8192L, spec.sandbox().memoryBytes());
         assertEquals(4L, spec.sandbox().cpuCount());
-        assertEquals(1, spec.memoryStoreRefs().size());
-        MemoryStoreRef ref = spec.memoryStoreRefs().get(0);
-        assertEquals("ms-1", ref.storeId());
-        assertEquals("会话记忆", ref.name());
-    }
-
-    @Test
-    void should_mapVaultCredentials_when_assemble_given_versionWithVaultCredentials() {
-        // given（会话未挂保管库：保留版本快照凭证兜底，解密明文映射为运行时 VaultCredentialRef 值对象）
-        ResolvedVaultCredentialDTO vaultCredential = new ResolvedVaultCredentialDTO(
-                "vault-1", "cr-1", "static_bearer", "https://db.example.com", "sk-plain");
-        when(agentVersionAssemblyPort.resolve("agent-a", "1", 1L))
-                .thenReturn(new ResolvedAgentAssemblyDTO(
-                        "agent-a", 1, "v1", "台账系统提示词", "# 项目约定\n\n统一使用中文回复。",
-                        "openai:gpt-4", 10, "sk-plain",
-                        "https://api.example.com/v1", null, null, null,
-                        List.of(vaultCredential)));
-
-        // when
-        AgentAssemblySpec spec = resolver.assemble(AgentSession.create("1", "agent-a", "1", "{}", null));
-
-        // then（凭证元数据与解密明文一并映射，明文仅内存持有）
-        assertEquals(1, spec.vaultCredentials().size());
-        AgentAssemblySpec.VaultCredentialRef ref = spec.vaultCredentials().get(0);
-        assertEquals("vault-1", ref.vaultId());
-        assertEquals("cr-1", ref.credentialId());
-        assertEquals("static_bearer", ref.authType());
-        assertEquals("https://db.example.com", ref.target());
-        assertEquals("sk-plain", ref.token());
-    }
-
-    @Test
-    void should_mapMcpConnectionsInDeclaredOrder_when_assemble_given_versionDeclaresMcpServers() {
-        // given（版本快照声明两路 MCP 服务器：结构化条目经防腐映射进入本 BC 连接清单）
-        when(agentVersionAssemblyPort.resolve("agent-a", "1", 1L))
-                .thenReturn(dtoWithMcpServers(List.of(
-                        new AgentMcpServerDTO("github", "url", "https://api.githubcopilot.com/mcp"),
-                        new AgentMcpServerDTO("weather", "url", "https://mcp.weather.example.com/v2"))));
-        when(agentVersionAssemblyPort.resolveModelCredential("agent-a", "1", 1L))
-                .thenReturn(new ResolvedModelCredentialDTO(null, "https://api.example.com/v1"));
-        AgentSession session = AgentSession.create("1", "agent-a", "1", "{}", null);
-
-        // when（首轮未命中走全量装配 → 次轮命中无凭证快照装配）
-        AgentAssemblySpec miss = resolver.assemble(session);
-        AgentAssemblySpec hit = resolver.assemble(session);
-
-        // then（非空、保声明顺序；命中路径清单与内容稳定——连接清单随快照缓存且不含凭据材料）
-        assertEquals(List.of("github", "weather"),
-                miss.mcpConnections().stream().map(AgentAssemblySpec.McpConnection::name).toList());
-        assertEquals("https://api.githubcopilot.com/mcp", miss.mcpConnections().get(0).url());
-        assertEquals("https://mcp.weather.example.com/v2", miss.mcpConnections().get(1).url());
-        assertEquals(miss.mcpConnections(), hit.mcpConnections());
-    }
-
-    @Test
-    void should_returnEmptyMcpConnections_when_assemble_given_versionWithoutMcpDeclaration() {
-        // given（版本未声明 MCP：连接清单为空，工厂据此不下发 mcpServers，行为零扰动）
-        when(agentVersionAssemblyPort.resolve("agent-a", "1", 1L)).thenReturn(snapshotDto(null));
-
-        // when
-        AgentAssemblySpec spec = resolver.assemble(
-                AgentSession.create("1", "agent-a", "1", "{}", null));
-
-        // then
-        assertTrue(spec.mcpConnections().isEmpty());
-    }
-
-    @Test
-    void should_skipVaultResolution_when_assemble_given_sessionWithoutVaultMountButUrlMatchesOtherSessionVault() {
-        // given（A 的 Vault 凭证 URL 与 B 版本声明的 MCP 服务器 URL 全等；B 未挂载任何 Vault——
-        //        D2.1 绑定与解析分离：凭证按 Session 挂载解析，MUST NOT 因 URL 相同而跨会话命中）
-        when(agentVersionAssemblyPort.resolve("agent-a", "1", 2L))
-                .thenReturn(dtoWithMcpServers(List.of(
-                        new AgentMcpServerDTO("github", "url", "https://api.githubcopilot.com/mcp"))));
-        AgentSession sessionB = AgentSession.create("2", "agent-a", "1", "{}", null);
-
-        // when
-        AgentAssemblySpec spec = resolver.assemble(sessionB);
-
-        // then（版本声明的 MCP 连接照常进入清单，但 B 无挂载 → 零凭证解析、零明文材料）
-        assertEquals(List.of("github"),
-                spec.mcpConnections().stream().map(AgentAssemblySpec.McpConnection::name).toList());
-        assertTrue(spec.vaultCredentials().isEmpty());
-        verify(vaultCredentialResolutionPort, never()).resolveVaultCredentials(any(), any());
-    }
-
-    @Test
-    void should_resolveMountedStoresAndVaults_when_assemble_given_sessionMounts() {
-        // given（Session 挂载记忆库与保管库：经契约 / 端口显式 owner 解析，优先于版本快照）
-        when(agentVersionAssemblyPort.resolve("agent-a", "1", 1L)).thenReturn(snapshotDto(null));
-        when(memoryStoreApi.resolveByIds(1L, List.of("ms_9")))
-                .thenReturn(List.of(new MemoryStoreReferenceDTO("ms_9", "台账记忆")));
-        when(vaultCredentialResolutionPort.resolveVaultCredentials(1L, List.of("vault-1")))
-                .thenReturn(List.of(new ResolvedVaultCredentialDTO(
-                        "vault-1", "cr-1", "static_bearer", "https://db.example.com", "sk-plain")));
-        AgentSession session = AgentSession.createWithMounts("1", "agent-a", "1", "{}", null,
-                null, null, List.of(SessionResource.memoryStore("ms_9", "read_only", null)),
-                null, List.of("vault-1"), null);
-
-        // when
-        AgentAssemblySpec spec = resolver.assemble(session);
-
-        // then（挂载记忆库 / 保管库凭证物化进装配规格）
-        assertEquals(1, spec.memoryStoreRefs().size());
-        assertEquals("ms_9", spec.memoryStoreRefs().get(0).storeId());
-        assertEquals("台账记忆", spec.memoryStoreRefs().get(0).name());
-        assertEquals(1, spec.vaultCredentials().size());
-        assertEquals("vault-1", spec.vaultCredentials().get(0).vaultId());
-        verify(memoryStoreApi).resolveByIds(1L, List.of("ms_9"));
-        verify(vaultCredentialResolutionPort).resolveVaultCredentials(1L, List.of("vault-1"));
     }
 
     @Test
@@ -253,7 +125,7 @@ class RuntimeAgentAssemblyServiceTest {
         // given（会话级环境变量 JSON 文本解析为键值映射，供工厂注入沙箱数据面）
         when(agentVersionAssemblyPort.resolve("agent-a", "1", 1L)).thenReturn(snapshotDto(null));
         AgentSession session = AgentSession.createWithMounts("1", "agent-a", "1", "{}", null,
-                null, null, List.of(), null, List.of(), "{\"LOG_LEVEL\":\"debug\",\"TZ\":\"Asia/Shanghai\"}");
+                null, null, List.of(), null, "{\"LOG_LEVEL\":\"debug\",\"TZ\":\"Asia/Shanghai\"}");
 
         // when
         AgentAssemblySpec spec = resolver.assemble(session);
@@ -267,7 +139,7 @@ class RuntimeAgentAssemblyServiceTest {
         // given（非法 JSON 文本：装配拒绝而非静默丢弃挂载）
         when(agentVersionAssemblyPort.resolve("agent-a", "1", 1L)).thenReturn(snapshotDto(null));
         AgentSession session = AgentSession.createWithMounts("1", "agent-a", "1", "{}", null,
-                null, null, List.of(), null, List.of(), "not-a-json");
+                null, null, List.of(), null, "not-a-json");
 
         // when & then
         assertThrows(IllegalArgumentException.class, () -> resolver.assemble(session));
@@ -279,9 +151,9 @@ class RuntimeAgentAssemblyServiceTest {
         //       装配期不再复检环境类型，隔离仅由 mountSignature 承担（D16））
         when(agentVersionAssemblyPort.resolve("agent-a", "1", 1L)).thenReturn(snapshotDto(null));
         AgentSession sessionA = AgentSession.createWithMounts("1", "agent-a", "1", "{}", null,
-                null, null, List.of(), "env-a", List.of(), null);
+                null, null, List.of(), "env-a", null);
         AgentSession sessionB = AgentSession.createWithMounts("1", "agent-a", "1", "{}", null,
-                null, null, List.of(), "env-b", List.of(), null);
+                null, null, List.of(), "env-b", null);
 
         // when
         AgentAssemblySpec specA = resolver.assemble(sessionA);
@@ -300,7 +172,7 @@ class RuntimeAgentAssemblyServiceTest {
         List<AgentAssemblySpec.FileMountRef> view = List.of(
                 new AgentAssemblySpec.FileMountRef("file_1", "sales.csv", 2048L, "mounts/file_1"));
         AgentSession session = AgentSession.createWithMounts("1", "agent-a", "1", "{}", null,
-                null, null, List.of(SessionResource.file("file_1", null)), null, List.of(), null);
+                null, null, List.of(SessionResource.file("file_1", null)), null, null);
         when(sessionMountMaterializer.reconcile(session, 1L)).thenReturn(view);
 
         // when
@@ -409,12 +281,10 @@ class RuntimeAgentAssemblyServiceTest {
 
     @Test
     void should_notCachePlaintextCredential_when_assemble_given_secretCredential() throws Exception {
-        // given（首轮 miss 装配：模型明文凭据与保管库明文均不得进入无凭证快照）
+        // given（首轮 miss 装配：模型明文凭据不得进入无凭证快照）
         when(agentVersionAssemblyPort.resolve("agent-a", "1", 1L)).thenReturn(new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "台账系统提示词", null, "openai:gpt-4",
-                10, "sk-super-secret-token", "https://api.example.com/v1", List.of(), null, List.of(),
-                List.of(new ResolvedVaultCredentialDTO(
-                        "vault-1", "cr-1", "static_bearer", "https://db.example.com", "vault-plain-secret"))));
+                10, "sk-super-secret-token", "https://api.example.com/v1", List.of(), null));
         AgentSession session = AgentSession.create("1", "agent-a", "1", "{}", null);
 
         // when（单轮 miss 装配，缓存写入一条快照）
@@ -422,7 +292,6 @@ class RuntimeAgentAssemblyServiceTest {
 
         // then（spec 携明文供工厂注入数据面）
         assertEquals("sk-super-secret-token", spec.credential());
-        assertEquals("vault-plain-secret", spec.vaultCredentials().get(0).token());
         // 快照类型 MUST NOT 声明任何明文凭据字段
         Class<?> snapshotType = Class.forName(RuntimeAgentAssemblyService.class.getName()
                 + "$CachedAssemblySnapshot");
@@ -437,7 +306,6 @@ class RuntimeAgentAssemblyServiceTest {
         assertEquals(1, ((AssemblyLruCache<?, ?>) cache).size());
         String dump = String.valueOf(ReflectionTestUtils.getField(cache, "map"));
         assertFalse(dump.contains("sk-super-secret-token"), "模型明文凭证泄露进缓存: " + dump);
-        assertFalse(dump.contains("vault-plain-secret"), "保管库明文泄露进缓存: " + dump);
     }
 
     @Test
@@ -447,9 +315,9 @@ class RuntimeAgentAssemblyServiceTest {
         when(agentVersionAssemblyPort.resolveModelCredential("agent-a", "1", 1L))
                 .thenReturn(new ResolvedModelCredentialDTO(null, "https://api.example.com/v1"));
         AgentSession sessionA = AgentSession.createWithMounts("1", "agent-a", "1", "{}", null,
-                null, null, List.of(SessionResource.file("file_a", null)), null, List.of(), null);
+                null, null, List.of(SessionResource.file("file_a", null)), null, null);
         AgentSession sessionB = AgentSession.createWithMounts("1", "agent-a", "1", "{}", null,
-                null, null, List.of(SessionResource.file("file_b", null)), null, List.of(), null);
+                null, null, List.of(SessionResource.file("file_b", null)), null, null);
         when(sessionMountMaterializer.reconcile(sessionA, 1L)).thenReturn(List.of(
                 new AgentAssemblySpec.FileMountRef("file_a", "a.csv", 10L, "mounts/file_a")));
         when(sessionMountMaterializer.reconcile(sessionB, 1L)).thenReturn(List.of(
@@ -481,7 +349,7 @@ class RuntimeAgentAssemblyServiceTest {
         when(agentVersionAssemblyPort.resolveModelCredential("agent-a", "1", 1L))
                 .thenReturn(new ResolvedModelCredentialDTO("sk-plain", "https://api.example.com/v1"));
         AgentSession session = AgentSession.createWithMounts("1", "agent-a", "1", "{}", null,
-                null, null, List.of(), null, List.of(), "{\"K\":\"V\"}");
+                null, null, List.of(), null, "{\"K\":\"V\"}");
 
         // when
         AgentAssemblySpec miss = resolver.assemble(session);
@@ -500,8 +368,6 @@ class RuntimeAgentAssemblyServiceTest {
         assertEquals(miss.maxIters(), hit.maxIters());
         assertEquals(miss.sandbox(), hit.sandbox());
         assertEquals(miss.skills(), hit.skills());
-        assertEquals(miss.memoryStoreRefs(), hit.memoryStoreRefs());
-        assertEquals(miss.vaultCredentials(), hit.vaultCredentials());
         assertEquals(miss.environmentVariables(), hit.environmentVariables());
         assertEquals(miss.fileMounts(), hit.fileMounts());
         assertEquals(miss.toolPolicies(), hit.toolPolicies());
@@ -514,23 +380,13 @@ class RuntimeAgentAssemblyServiceTest {
     private ResolvedAgentAssemblyDTO snapshotDto(EnvironmentReferenceDTO environment) {
         return new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "台账系统提示词", null, "openai:gpt-4",
-                10, null, "https://api.example.com/v1", List.of(), environment,
-                List.of(), List.of());
-    }
-
-    /** 声明指定 MCP 服务器清单的版本快照契约（其余固定）。 */
-    private ResolvedAgentAssemblyDTO dtoWithMcpServers(List<AgentMcpServerDTO> mcpServers) {
-        return new ResolvedAgentAssemblyDTO(
-                "agent-a", 1, "v1", "台账系统提示词", null, "openai:gpt-4",
-                10, null, "https://api.example.com/v1", List.of(), null,
-                List.of(), List.of(), null, null, List.of(), null, mcpServers);
+                10, null, "https://api.example.com/v1", List.of(), environment);
     }
 
     /** 携带指定模型明文凭据的版本快照契约（其余固定）。 */
     private ResolvedAgentAssemblyDTO credentialBearingDto(String credential) {
         return new ResolvedAgentAssemblyDTO(
                 "agent-a", 1, "v1", "台账系统提示词", null, "openai:gpt-4",
-                10, credential, "https://api.example.com/v1", List.of(), null,
-                List.of(), List.of());
+                10, credential, "https://api.example.com/v1", List.of(), null);
     }
 }

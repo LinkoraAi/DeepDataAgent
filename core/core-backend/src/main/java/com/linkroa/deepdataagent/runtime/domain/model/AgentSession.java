@@ -23,9 +23,9 @@ import java.util.UUID;
  * 原子 CAS 保证。新会话初始为 {@code idle / idle}。</p>
  * <p><b>归档是正交维度</b>：{@code archivedAt} 时间戳独立于 {@code status}，
  * 可与任意状态组合（如终止后归档）。归档不经状态机迁移，只写时间戳列。</p>
- * <p>挂载模型：{@code environmentId}（执行环境）、{@code vaultIds}（保管库）、
- * {@code memoryStoreIds}（记忆库）、{@code environmentVariables}（会话级环境变量 JSON 文本，
- * 仅入参接受、永不在响应中回显）、{@code resources}（挂载资源引用，见 {@link SessionResource}）。</p>
+ * <p>挂载模型：{@code environmentId}（执行环境）、{@code environmentVariables}
+ * （会话级环境变量 JSON 文本，仅入参接受、永不在响应中回显）、{@code resources}
+ * （挂载资源引用，本期仅 file，见 {@link SessionResource}）。</p>
  * <p>触发打标：{@code triggerType} / {@code triggerId} 承载「由调度器触发新建」的溯源标记
  * （{@code null}=普通用户会话），触发即新建全新会话、绝不复用。</p>
  */
@@ -40,8 +40,6 @@ public record AgentSession(
         String metadata,
         String title,
         String environmentId,
-        List<String> vaultIds,
-        List<String> memoryStoreIds,
         String environmentVariables,
         List<SessionResource> resources,
         String triggerType,
@@ -86,9 +84,6 @@ public record AgentSession(
         if (StringUtils.isNotBlank(triggerId) && StringUtils.isBlank(triggerType)) {
             throw new IllegalArgumentException("触发来源ID存在时必须携带触发类型");
         }
-        // 挂载列表归一：null 收敛为空列表、防御性复制
-        vaultIds = vaultIds == null ? List.of() : List.copyOf(vaultIds);
-        memoryStoreIds = memoryStoreIds == null ? List.of() : List.copyOf(memoryStoreIds);
         // 会话级环境变量：null 收敛为空 JSON 对象文本
         environmentVariables = StringUtils.isBlank(environmentVariables) ? "{}" : environmentVariables;
         // 挂载资源归一：null 收敛为空列表、防御性复制（元素自身经 SessionResource 紧凑构造器校验）
@@ -127,7 +122,7 @@ public record AgentSession(
     }
 
     /**
-     * 创建新会话并打标触发来源（携带挂载资源，普通用户创建时触发标记为 null；未挂接环境 / 保管库）。
+     * 创建新会话并打标触发来源（携带挂载资源，普通用户创建时触发标记为 null；未挂接环境）。
      *
      * @param triggerType 触发来源类型（manual / webhook / cron，源码小写；可空=普通用户会话）
      * @param triggerId   触发来源调度器业务ID（deployment_id；triggerType 存在时必填）
@@ -144,19 +139,16 @@ public record AgentSession(
             List<SessionResource> resources
     ) {
         return createWithMounts(userId, agentId, agentVersion, metadata, title,
-                triggerType, triggerId, resources, null, List.of(), null);
+                triggerType, triggerId, resources, null, null);
     }
 
     /**
      * 创建新会话并挂接全量挂载字段（Session 创建标准形状）。
-     * <p>{@code memoryStoreIds} 由挂载资源派生：收集 {@code type=memory_store} 项的
-     * {@code memoryStoreId}（保序去重），不作为独立入参——记忆库关联只经 resources 表达。</p>
      *
      * @param triggerType          触发来源类型（manual / webhook / cron，源码小写；可空=普通用户会话）
      * @param triggerId            触发来源调度器业务ID（deployment_id；triggerType 存在时必填）
      * @param resources            会话挂载资源引用（可空，经紧凑构造器归一为空列表）
      * @param environmentId        运行环境业务ID（可空）
-     * @param vaultIds             保管库业务ID列表（可空，归一为空列表）
      * @param environmentVariables 会话级环境变量 JSON 文本（可空，空白归一为 {@code "{}"}）
      */
     public static AgentSession createWithMounts(
@@ -169,17 +161,10 @@ public record AgentSession(
             String triggerId,
             List<SessionResource> resources,
             String environmentId,
-            List<String> vaultIds,
             String environmentVariables
     ) {
         OffsetDateTime now = OffsetDateTime.now(ZoneId.of("Asia/Shanghai"));
         List<SessionResource> normalizedResources = resources == null ? List.of() : resources;
-        // 关联记忆库派生：挂载资源中 memory_store 项的 ID 集合（保序去重）
-        List<String> derivedMemoryStoreIds = normalizedResources.stream()
-                .filter(resource -> SessionResource.MEMORY_STORE_TYPE.equals(resource.type()))
-                .map(SessionResource::memoryStoreId)
-                .distinct()
-                .toList();
         return new AgentSession(
                 null,
                 SESSION_ID_PREFIX + UUID.randomUUID().toString().replace("-", ""),
@@ -191,8 +176,6 @@ public record AgentSession(
                 metadata == null || metadata.isBlank() ? "{}" : metadata,
                 title,
                 environmentId,
-                vaultIds,
-                derivedMemoryStoreIds,
                 environmentVariables,
                 normalizedResources,
                 triggerType,
@@ -220,8 +203,6 @@ public record AgentSession(
             String metadata,
             String title,
             String environmentId,
-            List<String> vaultIds,
-            List<String> memoryStoreIds,
             String environmentVariables,
             List<SessionResource> resources,
             String triggerType,
@@ -237,7 +218,7 @@ public record AgentSession(
                 id, sessionId, userId, agentId, agentVersion, status,
                 turnPhase == null ? TurnPhase.IDLE : turnPhase,
                 metadata == null ? "{}" : metadata,
-                title, environmentId, vaultIds, memoryStoreIds, environmentVariables, resources,
+                title, environmentId, environmentVariables, resources,
                 triggerType, triggerId, lastActiveAt, archivedAt,
                 createdAt, updatedAt, createdBy, updatedBy
         );
@@ -253,7 +234,7 @@ public record AgentSession(
         OffsetDateTime now = OffsetDateTime.now(ZoneId.of("Asia/Shanghai"));
         return new AgentSession(
                 id, sessionId, userId, agentId, agentVersion, nextStatus, turnPhase,
-                metadata, title, environmentId, vaultIds, memoryStoreIds, environmentVariables,
+                metadata, title, environmentId, environmentVariables,
                 resources, triggerType, triggerId, now, archivedAt, createdAt,
                 now, createdBy, updatedBy
         );
@@ -269,7 +250,7 @@ public record AgentSession(
         OffsetDateTime now = OffsetDateTime.now(ZoneId.of("Asia/Shanghai"));
         return new AgentSession(
                 id, sessionId, userId, agentId, agentVersion, status, nextPhase,
-                metadata, title, environmentId, vaultIds, memoryStoreIds, environmentVariables,
+                metadata, title, environmentId, environmentVariables,
                 resources, triggerType, triggerId, lastActiveAt, archivedAt, createdAt,
                 now, createdBy, updatedBy
         );
@@ -286,7 +267,7 @@ public record AgentSession(
         OffsetDateTime now = OffsetDateTime.now(ZoneId.of("Asia/Shanghai"));
         return new AgentSession(
                 id, sessionId, userId, agentId, agentVersion, status, turnPhase,
-                metadata, title, environmentId, vaultIds, memoryStoreIds, environmentVariables,
+                metadata, title, environmentId, environmentVariables,
                 resources, triggerType, triggerId, now, now, createdAt, now,
                 createdBy, updatedBy
         );
@@ -294,9 +275,8 @@ public record AgentSession(
 
     /**
      * 派生追加挂载资源后的会话（创建后追加挂载专用，不可变派生）。
-     * <p>追加项按序拼接至现有 {@code resources} 尾部；{@code memoryStoreIds} 保持原值——
-     * 追加路径仅允许 file 类型资源（应用层守卫），记忆库关联不变。
-     * {@code updated_at} 刷新为当前时刻（即挂载时刻）。</p>
+     * <p>追加项按序拼接至现有 {@code resources} 尾部；{@code updated_at} 刷新为当前时刻
+     * （即挂载时刻）。</p>
      *
      * @param additional 追加的挂载资源项（可空=不追加）
      * @return 追加后的会话
@@ -309,18 +289,15 @@ public record AgentSession(
         }
         return new AgentSession(
                 id, sessionId, userId, agentId, agentVersion, status, turnPhase,
-                metadata, title, environmentId, vaultIds, memoryStoreIds, environmentVariables,
+                metadata, title, environmentId, environmentVariables,
                 List.copyOf(merged), triggerType, triggerId, lastActiveAt, archivedAt,
                 createdAt, now, createdBy, updatedBy
         );
     }
 
     /**
-     * 派生整体替换挂载资源后的会话（资源轮换 / 移除专用，不可变派生）。
-     * <p>替换集合整体覆盖 {@code resources}，并复用创建路径的派生规则重算
-     * {@code memoryStoreIds}（收集 {@code type=memory_store} 项的 memoryStoreId，
-     * 保序去重）——记忆库挂载被移除时关联随之消失。
-     * {@code updated_at} 刷新为当前时刻。</p>
+     * 派生整体替换挂载资源后的会话（资源移除专用，不可变派生）。
+     * <p>替换集合整体覆盖 {@code resources}；{@code updated_at} 刷新为当前时刻。</p>
      *
      * @param replacement 替换后的全量挂载资源列表（可空=清空挂载）
      * @return 替换后的会话
@@ -328,15 +305,9 @@ public record AgentSession(
     public AgentSession withResourcesReplaced(List<SessionResource> replacement) {
         OffsetDateTime now = OffsetDateTime.now(ZoneId.of("Asia/Shanghai"));
         List<SessionResource> normalized = replacement == null ? List.of() : List.copyOf(replacement);
-        // 与 createWithMounts 同规则：记忆库关联只经 resources 派生表达
-        List<String> derivedMemoryStoreIds = normalized.stream()
-                .filter(resource -> SessionResource.MEMORY_STORE_TYPE.equals(resource.type()))
-                .map(SessionResource::memoryStoreId)
-                .distinct()
-                .toList();
         return new AgentSession(
                 id, sessionId, userId, agentId, agentVersion, status, turnPhase,
-                metadata, title, environmentId, vaultIds, derivedMemoryStoreIds, environmentVariables,
+                metadata, title, environmentId, environmentVariables,
                 normalized, triggerType, triggerId, lastActiveAt, archivedAt,
                 createdAt, now, createdBy, updatedBy
         );
@@ -370,44 +341,16 @@ public record AgentSession(
     }
 
     /**
-     * 移除挂载资源（资源管理契约 {@code delete} 的领域动作）：仅 {@code file} 类型可移除，
-     * {@code github_repository / memory_store} 创建后不可摘除。
+     * 移除挂载资源（资源管理契约 {@code delete} 的领域动作）：本期挂载仅 file 类型，故一律可移除。
      *
      * @param resourceId 待移除的挂载资源业务 ID（{@code sesr_}）
-     * @return 移除后的会话（不可变派生，记忆库关联按替换规则重算）
-     * @throws MountViolationException 资源未命中 / 非 file 类型
+     * @return 移除后的会话（不可变派生）
+     * @throws MountViolationException 资源未命中
      */
     public AgentSession removeResource(String resourceId) {
-        SessionResource target = mountedOrThrow(resourceId);
-        if (!SessionResource.FILE_TYPE.equals(target.type())) {
-            throw MountViolationException.removeTypeUnsupported(target.type());
-        }
+        mountedOrThrow(resourceId);
         return withResourcesReplaced(resources.stream()
                 .filter(resource -> !resource.id().equals(resourceId))
-                .toList());
-    }
-
-    /**
-     * 轮换 GitHub 仓库挂载令牌（资源管理契约 {@code update} 的领域动作）。
-     * <p>判定顺序即状态码优先级：空令牌（400）先于资源寻址（404）先于类型门禁（400）。
-     * 新旧令牌均不经由日志 / 响应泄露（响应装配层剔除令牌字段）。</p>
-     *
-     * @param resourceId 目标挂载资源业务 ID（{@code sesr_}）
-     * @param newToken   新访问令牌（非空）
-     * @return 轮换后的会话（不可变派生，资源 ID 与其余字段保持不变）
-     * @throws MountViolationException 令牌为空 / 资源未命中 / 非 github_repository 类型
-     */
-    public AgentSession rotateResourceToken(String resourceId, String newToken) {
-        if (StringUtils.isBlank(newToken)) {
-            throw MountViolationException.blankToken();
-        }
-        SessionResource target = mountedOrThrow(resourceId);
-        if (!SessionResource.GITHUB_REPO_TYPE.equals(target.type())) {
-            throw MountViolationException.rotateTypeUnsupported(target.type());
-        }
-        SessionResource rotated = target.withAuthorizationToken(newToken);
-        return withResourcesReplaced(resources.stream()
-                .map(resource -> resource.id().equals(resourceId) ? rotated : resource)
                 .toList());
     }
 
@@ -466,7 +409,7 @@ public record AgentSession(
     }
 
     /**
-     * 是否仍可变更挂载资源（已归档与已终止会话挂载冻结；其余状态可追加 / 移除 / 轮换）。
+     * 是否仍可变更挂载资源（已归档与已终止会话挂载冻结；其余状态可追加 / 移除）。
      *
      * @return true=可变更挂载
      */

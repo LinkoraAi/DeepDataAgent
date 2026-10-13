@@ -46,27 +46,31 @@ public interface AgentRuntimeCommandConvert {
 
     /**
      * 创建请求遗留字段拒绝（对齐 sessions spec「创建请求遗留字段被拒」）：
-     * 内联 {@code environment}、{@code vaults}、顶层 {@code memory_store_ids} 与
+     * 内联 {@code environment}、{@code vaults}、{@code vault_ids}、顶层 {@code memory_store_ids} 与
      * {@code delta_flush_interval_ms} 任一<b>非空提交</b>即抛参错（400 invalid_request_error），
      * 会话不落库——不得静默忽略，否则客户端会「创建成功但挂载丢失」。
-     * <p>Memory Store 只能经 {@code resources[].memory_store} 挂载、Vault 只能经 {@code vault_ids[]}。</p>
+     * <p>本期挂载仅支持 {@code resources[].file}；保管库 / 记忆库能力面已下线，相关字段一律拒绝。</p>
      *
      * @param environment          内联环境遗留字段（非 null 即拒）
      * @param vaults               旧保管库列表遗留字段（非 null 即拒）
+     * @param vaultIds             保管库 ID 列表遗留字段（非 null 即拒）
      * @param memoryStoreIds       顶层记忆库列表遗留字段（非 null 即拒）
      * @param deltaFlushIntervalMs 增量帧冲刷间隔遗留字段（非 null 即拒）
      * @throws IllegalArgumentException 任一遗留字段非空提交
      */
-    default void rejectLegacyCreateFields(Object environment, List<Object> vaults,
+    default void rejectLegacyCreateFields(Object environment, List<Object> vaults, List<String> vaultIds,
                                           List<Object> memoryStoreIds, Object deltaFlushIntervalMs) {
         if (environment != null) {
             throw new IllegalArgumentException("environment 字段已废止，运行环境须经 environment_id 绑定");
         }
         if (vaults != null) {
-            throw new IllegalArgumentException("vaults 字段已废止，保管库须经 vault_ids[] 绑定");
+            throw new IllegalArgumentException("vaults 字段已废止，保管库能力面已下线");
+        }
+        if (vaultIds != null) {
+            throw new IllegalArgumentException("vault_ids 字段已废除，挂载资源仅支持 file 类型");
         }
         if (memoryStoreIds != null) {
-            throw new IllegalArgumentException("memory_store_ids 字段已废止，记忆库须经 resources[].memory_store 挂载");
+            throw new IllegalArgumentException("memory_store_ids 字段已废除，挂载资源仅支持 file 类型");
         }
         if (deltaFlushIntervalMs != null) {
             throw new IllegalArgumentException("delta_flush_interval_ms 字段已废止");
@@ -138,23 +142,22 @@ public interface AgentRuntimeCommandConvert {
      * {@link #toAgentReference(Object)} 归一——显式版本原样下发、省略为 null 由服务侧解析激活版本；
      * {@code metadataJson} 由接口层序列化，触发标记恒为空 = 普通用户会话）。
      * <p>挂载资源以已归一的 {@link SessionResourceItem} 列表传入（协议字段原样承载），
-     * 由 {@link #toSessionResources} 按类型分派领域工厂；环境变量键值对在此序列化为 JSON 文本；
-     * 环境 / 保管库 / 挂载的存在性与归属校验由应用服务承担。</p>
+     * 由 {@link #toSessionResources} 按类型分派领域工厂；{@code environmentId} 为协议必填的运行环境 ID，
+     * 原样下发由应用服务校验存在性 / 归属 / 执行平面；环境变量键值对在此序列化为 JSON 文本。</p>
      */
     default CreateSessionCommand toCreateCommand(String userId, String agentId, String agentVersion, String title,
                                                  String metadataJson, List<SessionResourceItem> resources,
-                                                 List<String> vaultIds, String environmentId,
-                                                 Map<String, Object> environmentVariables) {
+                                                 String environmentId, Map<String, Object> environmentVariables) {
         return new CreateSessionCommand(userId, agentId, agentVersion, title, metadataJson,
-                null, null, toSessionResources(resources), environmentId, vaultIds,
+                null, null, toSessionResources(resources), environmentId,
                 toEnvironmentVariablesJson(environmentVariables));
     }
 
     /**
      * 已归一挂载资源项 → 领域值对象列表（null / 空收敛为空列表）。
-     * <p>按 {@code type} 分派四工厂（file / github_repository / git_repository / memory_store）；
-     * 未知类型直接拒绝（400 校验错误），不得静默降级——否则领域构造器的类型不变量将被架空
-     * （挂载语义漂移成文件展开）。字段不变量由各工厂紧凑构造器兜底。</p>
+     * <p><b>本期仅支持 file 类型</b>：非 file 类型（github_repository / git_repository /
+     * memory_store 等）直接拒绝（400 invalid_request_error），不得静默降级——否则领域构造器的
+     * 类型不变量将被架空（挂载语义漂移成文件展开）。字段不变量由工厂紧凑构造器兜底。</p>
      *
      * @param resources 已判别的挂载资源项（type + 按类型取用字段）
      */
@@ -167,25 +170,13 @@ public interface AgentRuntimeCommandConvert {
                 .toList();
     }
 
-    /** 单资源项按类型分派领域工厂（未知类型拒绝：判别式映射的必要守卫）。 */
+    /** 单资源项按类型分派领域工厂（仅 file；其余类型拒绝：仅支持 file 资源）。 */
     private static SessionResource toSessionResource(SessionResourceItem resource) {
         String type = resource.type();
         if (SessionResource.FILE_TYPE.equals(type)) {
             return SessionResource.file(resource.file_id(), resource.mount_path());
         }
-        if (SessionResource.GITHUB_REPO_TYPE.equals(type)) {
-            return SessionResource.githubRepository(resource.url(),
-                    resource.authorization_token(), resource.checkout());
-        }
-        if (SessionResource.GIT_REPO_TYPE.equals(type)) {
-            return SessionResource.gitRepository(resource.url(),
-                    resource.password(), resource.checkout());
-        }
-        if (SessionResource.MEMORY_STORE_TYPE.equals(type)) {
-            return SessionResource.memoryStore(resource.memory_store_id(), resource.access(),
-                    resource.instructions());
-        }
-        throw new IllegalArgumentException("不支持的挂载资源类型: " + type);
+        throw new IllegalArgumentException("不支持的挂载资源类型（仅支持 file）: " + type);
     }
 
     /**
@@ -248,7 +239,7 @@ public interface AgentRuntimeCommandConvert {
 
     /**
      * 会话列表查询（契约端点 {@code GET /sessions}）：过滤集合严格对齐公开契约
-     * {@code agent_id / agent_version / deployment_id / memory_store_id / statuses[] /
+     * {@code agent_id / agent_version / deployment_id / statuses[] /
      * include_archived / created_at[gt|gte|lt|lte] / order}（<b>无</b> environment_id 与 metadata），
      * 叠加 shared/api-conventions Cursor 约定（limit 越界、page 与 after_id/before_id 互斥违规、
      * 非法状态名、非法时间 / order 统一抛 IAE → 400 {@code invalid_request_error}）。
@@ -258,7 +249,7 @@ public interface AgentRuntimeCommandConvert {
      * @param page     不透明下页游标（响应 {@code next_page} 原样回传，与 after_id/before_id 互斥）
      */
     default ListSessionsQuery toListQuery(String userId, String agentId, String agentVersion,
-                                          String deploymentId, String memoryStoreId, List<String> statuses,
+                                          String deploymentId, List<String> statuses,
                                           Boolean includeArchived,
                                           String createdAtGt, String createdAtGte,
                                           String createdAtLt, String createdAtLte,
@@ -269,7 +260,6 @@ public interface AgentRuntimeCommandConvert {
                 agentId,
                 agentVersion,
                 deploymentId,
-                memoryStoreId,
                 parseStatuses(statuses),
                 Boolean.TRUE.equals(includeArchived),
                 parseInstant("created_at[gt]", createdAtGt),

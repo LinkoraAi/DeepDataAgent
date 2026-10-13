@@ -35,9 +35,6 @@ public class AgentVersionEntity extends BaseEntity {
     /** 内联工具配方（JSONB） */
     @TableField(typeHandler = PostgresJsonbTypeHandler.class)
     private String toolsJson;
-    /** 内联外部 MCP 工具源配方（JSONB） */
-    @TableField(typeHandler = PostgresJsonbTypeHandler.class)
-    private String mcpServersJson;
     /** 技能引用配方（JSONB） */
     @TableField(typeHandler = PostgresJsonbTypeHandler.class)
     private String skillsJson;

@@ -1,19 +1,15 @@
 package com.linkroa.deepdataagent.runtime.application.service.execution;
 
-import com.linkroa.deepdataagent.agent.api.DeploymentRunLifecycleApi;
 import com.linkroa.deepdataagent.runtime.application.port.ChatEventPersister;
 import com.linkroa.deepdataagent.runtime.application.service.CoordinationLeaseService;
 import com.linkroa.deepdataagent.runtime.domain.event.AgentStreamSignal;
 import com.linkroa.deepdataagent.runtime.domain.event.ChatEventFactory;
 import com.linkroa.deepdataagent.runtime.domain.event.ChatEventFactory.AssembledEvent;
-import com.linkroa.deepdataagent.runtime.domain.event.TurnFinished;
 import com.linkroa.deepdataagent.runtime.domain.model.ChatEvent;
-import com.linkroa.deepdataagent.runtime.domain.model.McpToolRuntimeName;
 import com.linkroa.deepdataagent.runtime.domain.model.TerminalEventSpec;
 import com.linkroa.deepdataagent.runtime.domain.model.Transition;
 import com.linkroa.deepdataagent.runtime.domain.model.TurnControl;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.AgentSessionStatus;
-import com.linkroa.deepdataagent.runtime.domain.model.enums.DeploymentOutcome;
 import com.linkroa.deepdataagent.runtime.domain.model.runstate.ConfirmCandidateBatch;
 import com.linkroa.deepdataagent.runtime.domain.model.runstate.ToolCallAggregator;
 import com.linkroa.deepdataagent.runtime.domain.model.runstate.TurnRunState;
@@ -28,7 +24,6 @@ import jakarta.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -37,7 +32,7 @@ import java.util.List;
 
 /**
  * turn 收口服务（decompose-command-facade 3.1）：轮次四终局出口（正常 / 失败 / 中断 / 挂起）
- * 与终态唯一编排、严格排空协议事务侧协作、调度运行终局回写的自持服务。
+ * 与终态唯一编排、严格排空协议事务侧协作的自持服务。
  * <p>方法体自原命令门面（decompose-command-facade 4.4 已物理删除）纯搬移，四条红线（design Context 硬约束）
  * 次序与语义零变化：
  * <ol>
@@ -49,7 +44,7 @@ import java.util.List;
  *       与事务<b>之前</b>，两条对称分支归一为「空批次」拒绝，异常沿 {@code onStreamError →
  *       finalizeFailed} 收敛为执行错误终态，MUST NOT 落任何等待事件；</li>
  *   <li><b>防止永久阻塞的收尾</b>：落库失败标记命中时在 catch 内捕获处理（真 no-op + {@code turn.finish()} +
- *       释放租约），不写终态、不发 {@code TurnFinished}，MUST NOT 让异常穿透流回调线程；</li>
+ *       释放租约），不写终态，MUST NOT 让异常穿透流回调线程；</li>
  *   <li><b>挂起即物理轮终局</b>：{@code clearInFlightStreamOnSuspend} →
  *       {@code markConfirmationPending} → {@code turn.finish()} → 释放租约的先后顺序不变。</li>
  * </ol></p>
@@ -78,11 +73,6 @@ public class TurnFinalizer {
     private TurnEventWriter turnEventWriter;
     @Resource
     private CoordinationLeaseService coordinationLeaseService;
-    /** Spring 原生事件发布器（工具性设施直注，迭代裁决 2026-09-13）：轮次终局在终态事务内发布
-     *  {@link TurnFinished}，由 {@code infrastructure.assembly.DeploymentRunOutcomeListener}
-     *  于 AFTER_COMMIT 回写调度运行终态（回滚不发）。 */
-    @Resource
-    private ApplicationEventPublisher applicationEventPublisher;
 
     /**
      * 进入 HITL 等待确认态（durable）：挂起事务<b>前</b>先在事务外整队排空（design D1 严格排空
@@ -223,8 +213,7 @@ public class TurnFinalizer {
 
     /**
      * 执行错误终态（决策表第 5 行）：会话回 idle + {@code session.error}（含 type/code/message）
-     * + 状态事件同事务落库并广播；错误信息在构造轮次结果前完成脱敏——先按本轮挂载保管库凭据
-     * 明文精确掩码（MCP 注册 / 调用异常消息可能回显 token），再走形态脱敏 + 截断。
+     * + 状态事件同事务落库并广播；错误信息在构造轮次结果前完成脱敏（形态脱敏 + 截断）。
      */
     public void finalizeFailed(ExecutionContext context, String message) {
         // fail-closed 守卫：租约丢失后任何终态汇聚路径都不得写终态（含流异常 / catch 异常收敛）
@@ -237,8 +226,7 @@ public class TurnFinalizer {
             log.debug("本轮已终态化，跳过重复错误终态: sessionId={}", context.sessionId());
             return;
         }
-        String sanitized = SecretMasker.sanitize(SecretMasker.maskExactValues(
-                blankToDefault(message, "agent 执行失败"), context.runState().mountedVaultSecrets()));
+        String sanitized = SecretMasker.sanitize(blankToDefault(message, "agent 执行失败"));
         saveAndBroadcastTerminal(context, TurnResult.executionError(sanitized));
     }
 
@@ -246,8 +234,8 @@ public class TurnFinalizer {
      * 中断终态（决策表第 4 行）：会话回 idle + 收场二事件（{@code thread_status_idle} +
      * {@code status_idle}，{@code stop_reason.type=interrupted}）同事务落库并广播。
      * <p>经前置含 canceling 的 {@code TO_IDLE} 迁移收敛，取消链 {@code processing → canceling → idle} 由此闭环。</p>
-     * <p><b>中断配对补偿</b>：收场前先对本轮仍执行中的内置 / MCP 工具调用补合成错误结果
-     * （{@code agent.tool_result} / {@code agent.mcp_tool_result}），保证事件表无悬空 tool_use；
+     * <p><b>中断配对补偿</b>：收场前先对本轮仍执行中的工具调用补合成错误结果
+     * （{@code agent.tool_result}），保证事件表无悬空 tool_use；
      * 合成结果不落 {@code session.error}、不改写中断终态语义（终态仍为收场二事件
      * {@code stop_reason=interrupted}）。</p>
      */
@@ -268,8 +256,8 @@ public class TurnFinalizer {
 
     /**
      * 中断配对补偿（见 runtime/events 规格「中断不留下悬空 tool_use」）：对本轮 TOOL_CALL_END
-     * 已落库 tool_use 但结果未到的执行中工具调用，逐条补落合成错误结果（MCP 实名走
-     * {@code agent.mcp_tool_result}，其余走 {@code agent.tool_result}）。合成结果经写入底座
+     * 已落库 tool_use 但结果未到的执行中工具调用，逐条补落合成错误结果（走
+     * {@code agent.tool_result}）。合成结果经写入底座
      * 落库并在收场事务前随严格排空协议整队排空，seq 恒低于收场二事件（先于终态可见）。
      */
     private void compensateInFlightToolCalls(ExecutionContext context) {
@@ -284,26 +272,10 @@ public class TurnFinalizer {
                 pending.size(), context.sessionId());
     }
 
-    /** 合成中断错误结果装配：MCP 实名（{@code mcp__} 前缀）走 MCP 形态，其余走内置形态。 */
+    /** 合成中断错误结果装配：落 {@code agent.tool_result}。 */
     private static AssembledEvent syntheticInterruptedResult(ToolCallAggregator.PendingToolUse call) {
-        String mcpServerName = McpToolRuntimeName.serverNameOf(call.toolName());
-        if (mcpServerName == null) {
-            return ChatEventFactory.INSTANCE.toolResult(call.toolCallId(), call.toolName(),
-                    "error", INTERRUPTED_TOOL_OUTPUT, false);
-        }
-        return ChatEventFactory.INSTANCE.mcpToolResult(call.toolCallId(), call.toolName(), mcpServerName,
+        return ChatEventFactory.INSTANCE.toolResult(call.toolCallId(), call.toolName(),
                 "error", INTERRUPTED_TOOL_OUTPUT, false);
-    }
-
-    /**
-     * 调度运行终局语义 → agent BC 发布语言值（跨 BC 契约常量仅出现在应用层，领域决策表不持有）。
-     */
-    private static String deploymentOutcomeValue(DeploymentOutcome outcome) {
-        return switch (outcome) {
-            case SUCCEEDED -> DeploymentRunLifecycleApi.OUTCOME_SUCCEEDED;
-            case FAILED -> DeploymentRunLifecycleApi.OUTCOME_FAILED;
-            case TERMINATED -> DeploymentRunLifecycleApi.OUTCOME_TERMINATED;
-        };
     }
 
     /**
@@ -384,10 +356,6 @@ public class TurnFinalizer {
                     saved.add(chatEvent);
                 }
                 sessionRepository.touchLastActive(sessionId);
-                // 终局事件随本事务发布：提交成功后 AFTER_COMMIT 监听器才回写调度运行
-                // （非调度触发由监听器按空 triggerType 忽略；真 no-op / 回滚均不发）
-                applicationEventPublisher.publishEvent(new TurnFinished(sessionId, context.session().triggerType(),
-                        deploymentOutcomeValue(adopted.outcome())));
                 return List.copyOf(saved);
             });
             toBroadcast = committed == null ? List.of() : committed;

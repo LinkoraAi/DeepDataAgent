@@ -135,7 +135,7 @@ class RoundExecutionTemplateTest {
                 .withMaxIters(1)
                 .withSandbox(new AgentAssemblySpec.Sandbox("ubuntu:22.04", null, null))
                 .withMountView(new AgentAssemblySpec.MountView(
-                        List.of(), List.of(), List.of(), Map.of(), List.of()))
+                        List.of(), Map.of(), List.of()))
                 .build();
     }
 

@@ -1,17 +1,12 @@
 package com.linkroa.deepdataagent.runtime.domain.model.runstate;
 
-import com.linkroa.deepdataagent.runtime.domain.model.AgentAssemblySpec;
-import com.linkroa.deepdataagent.runtime.domain.model.McpToolRuntimeName;
 import com.linkroa.deepdataagent.runtime.domain.model.enums.ChatEventType;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.Collection;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 单轮运行态门面（组合五件并发组件 + 散点字段），替代原 785 行 {@code AgentRunState} 大类。
@@ -25,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <tr><td>{@link ToolResultWindow}</td><td>head+tail 截断（16KB）与 tool_result 缓冲</td></tr>
  *   <tr><td>{@link ConfirmCandidateBatch}</td><td>HITL 待确认候选登记与批次匹配</td></tr>
  *   <tr><td>{@link RoundGuard}</td><td>中断 / 租约丢失 / 终态 / 挂起四位 + exceedMaxIters + abort 句柄</td></tr>
- *   <tr><td>门面散点</td><td>modelName / textPersisted / modelSpan / mountedVaultSecrets / mcpToolPermissions</td></tr>
+ *   <tr><td>门面散点</td><td>modelName / textPersisted / modelSpan</td></tr>
  * </table>
  * <p>方法签名与原 {@code AgentRunState} 逐一对应（委托到底层组件），保证调用点行为等价；
  * 跨组件协调仅 {@link #tryFinalize()}（领取资格后清进行中流 / 聚合缓冲）。</p>
@@ -50,77 +45,6 @@ public final class TurnRunState {
     private OffsetDateTime modelSpanStart;
     /** 本轮模型调用开始事件的 evt_ ID（span.model_request_end 的配对键；惰性生成） */
     private String modelStartEventId;
-    /**
-     * 本轮挂载保管库凭证的解密明文集合（启动前装配一次性登记，信号线程只读；并发集合保证安全发布）。
-     * <p>唯一用途：工具结果落库 / SSE 广播与错误终态前，经 {@code SecretMasker.maskExactValues}
-     * 把已知秘密的回显精确掩码（形态正则覆盖不了任意字节 token 的兜底）。
-     * <b>MUST NOT 进日志 / toString / 任何序列化面</b>——仅内存瞬态，随本轮对象作废。</p>
-     */
-    private final Set<String> mountedVaultSecrets = ConcurrentHashMap.newKeySet();
-
-    /**
-     * 登记本轮挂载的保管库凭据明文（装配产出规格后、构建 Agent 前调用；空白 token 跳过）。
-     *
-     * @param credentials 本轮材料化的保管库凭证引用（可空 = 无挂载）
-     */
-    public void registerMountedVaultSecrets(List<AgentAssemblySpec.VaultCredentialRef> credentials) {
-        if (credentials == null) {
-            return;
-        }
-        for (AgentAssemblySpec.VaultCredentialRef ref : credentials) {
-            if (ref != null && ref.token() != null && !ref.token().isBlank()) {
-                mountedVaultSecrets.add(ref.token());
-            }
-        }
-    }
-
-    /** 本轮已知凭据明文快照（精确掩码输入；无挂载时为空列表）。 */
-    public List<String> mountedVaultSecrets() {
-        return List.copyOf(mountedVaultSecrets);
-    }
-
-    // ==================== MCP 工具权限求值（D15 事件投影） ====================
-
-    /**
-     * 本轮版本策略中 MCP 工具命中的权限规则（运行时实名 → evaluated_permission）。
-     * <p>装配后一次性登记，信号线程只读；未登记的工具按平台默认放行路径求值为 {@code allow}。
-     * 与框架权限引擎同源（同一份 {@code mcp_toolset} 策略、同一实名约定），用于事件载荷
-     * {@code evaluated_permission} 的可归属表达。</p>
-     */
-    private final Map<String, String> mcpToolPermissions = new ConcurrentHashMap<>();
-
-    /**
-     * 登记本轮 MCP 工具权限策略（装配产出规格后、构建 Agent 前调用一次）。
-     * <p>仅 MCP 来源的策略项（{@code mcpServerName} 非空）登记；含 MCP 服务器名与工具名的
-     * 运行时实名经 {@link McpToolRuntimeName#of} 派生，与工厂下发框架的权限规则键完全一致。</p>
-     *
-     * @param policies 本轮逐工具权限策略（可空 = 无策略）
-     */
-    public void registerMcpToolPolicies(List<AgentAssemblySpec.ToolExecutionPolicy> policies) {
-        if (policies == null) {
-            return;
-        }
-        for (AgentAssemblySpec.ToolExecutionPolicy policy : policies) {
-            if (policy == null || policy.mcpServerName() == null || policy.mcpServerName().isBlank()) {
-                continue;
-            }
-            mcpToolPermissions.put(
-                    McpToolRuntimeName.of(policy.mcpServerName(), policy.name()), policy.permissionPolicy());
-        }
-    }
-
-    /**
-     * 工具调用求值结果（{@code allow} / {@code ask} / {@code deny}）。
-     * <p>{@code always_allow} 与未配置策略的工具均为 {@code allow}（框架默认放行路径）；
-     * {@code always_ask} 触发 HITL 暂停、{@code always_deny} 由平台拒绝执行。</p>
-     *
-     * @param runtimeToolName 运行时工具实名（可空）
-     * @return 求值结果（缺省 {@code allow}）
-     */
-    public String evaluatedPermissionOf(String runtimeToolName) {
-        String policy = runtimeToolName == null ? null : mcpToolPermissions.get(runtimeToolName);
-        return AgentAssemblySpec.ToolExecutionPolicy.evaluatedPermissionOf(policy);
-    }
 
     // ==================== 文本输出累积（TextBlockAccumulator） ====================
 
