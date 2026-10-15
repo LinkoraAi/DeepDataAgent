@@ -2,6 +2,7 @@ package com.linkroa.deepdataagent.datasource.domain.service;
 
 import com.linkroa.deepdataagent.datasource.domain.model.DatasourceConnection;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.DatasourceStatus;
+import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -32,7 +33,7 @@ public class DatasourceConnectionDomainService {
      */
     public void validateCanEnable(DatasourceConnection connection) {
         if (connection.status() != DatasourceStatus.DISABLED) {
-            throw new IllegalStateException("只有处于已禁用状态的数据源才能被启用");
+            throw new ResourceConflictException("只有处于已禁用状态的数据源才能被启用");
         }
     }
 
@@ -43,7 +44,7 @@ public class DatasourceConnectionDomainService {
      */
     public void validateCanDisable(DatasourceConnection connection) {
         if (connection.status() != DatasourceStatus.ENABLED) {
-            throw new IllegalStateException("只有处于已启用状态的数据源才能被禁用");
+            throw new ResourceConflictException("只有处于已启用状态的数据源才能被禁用");
         }
     }
 
@@ -54,7 +55,7 @@ public class DatasourceConnectionDomainService {
      */
     public void validateCanDelete(DatasourceConnection connection) {
         if (connection.status() != DatasourceStatus.DISABLED) {
-            throw new IllegalStateException("只有处于已禁用状态的数据源才能被删除");
+            throw new ResourceConflictException("只有处于已禁用状态的数据源才能被删除");
         }
     }
 
@@ -65,7 +66,7 @@ public class DatasourceConnectionDomainService {
      */
     public void validateCanSync(DatasourceConnection connection) {
         if (connection.status() != DatasourceStatus.ENABLED) {
-            throw new IllegalStateException("只有处于已启用状态的数据源才能同步元数据");
+            throw new ResourceConflictException("只有处于已启用状态的数据源才能同步元数据");
         }
     }
 

@@ -16,6 +16,8 @@ import com.linkroa.deepdataagent.datasource.domain.strategy.DatasourceConnection
 import com.linkroa.deepdataagent.datasource.infrastructure.adapter.ApiResponseParser;
 import com.linkroa.deepdataagent.datasource.infrastructure.client.ApiPaginationHandler;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
+import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
+import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -65,38 +67,38 @@ class DatasourceApplicationServiceTest {
     void should_throwException_when_createDatasource_given_duplicateName() {
         when(connectionRepository.findByName("existing")).thenReturn(Optional.of(createApiConnection(1L)));
         CreateDatasourceCommand command = new CreateDatasourceCommand("existing", DatasourceType.API, null, null, null, null);
-        assertThrows(DeepDataAgentException.class, () -> service.createDatasource(command));
+        assertThrows(ResourceConflictException.class, () -> service.createDatasource(command));
     }
 
     @Test
     void should_throwException_when_updateDatasource_given_notFound() {
         when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(999L, "name", null, null);
-        assertThrows(DeepDataAgentException.class, () -> service.updateDatasource(command));
+        assertThrows(ResourceNotFoundException.class, () -> service.updateDatasource(command));
     }
 
     @Test
     void should_throwException_when_enableDatasource_given_notFound() {
         when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
-        assertThrows(DeepDataAgentException.class, () -> service.enableDatasource(999L));
+        assertThrows(ResourceNotFoundException.class, () -> service.enableDatasource(999L));
     }
 
     @Test
     void should_throwException_when_disableDatasource_given_notFound() {
         when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
-        assertThrows(DeepDataAgentException.class, () -> service.disableDatasource(999L));
+        assertThrows(ResourceNotFoundException.class, () -> service.disableDatasource(999L));
     }
 
     @Test
     void should_throwException_when_deleteDatasource_given_notFound() {
         when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
-        assertThrows(DeepDataAgentException.class, () -> service.deleteDatasource(999L));
+        assertThrows(ResourceNotFoundException.class, () -> service.deleteDatasource(999L));
     }
 
     @Test
     void should_throwException_when_getDatasource_given_notFound() {
         when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
-        assertThrows(DeepDataAgentException.class, () -> service.getDatasource(999L));
+        assertThrows(ResourceNotFoundException.class, () -> service.getDatasource(999L));
     }
 
     @Test
@@ -112,7 +114,7 @@ class DatasourceApplicationServiceTest {
     void should_throwException_when_testConnection_given_notFound() {
         when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
         TestConnectionCommand command = new TestConnectionCommand(999L, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
-        assertThrows(DeepDataAgentException.class, () -> service.testConnection(command));
+        assertThrows(ResourceNotFoundException.class, () -> service.testConnection(command));
     }
 
     @Test
@@ -347,7 +349,7 @@ class DatasourceApplicationServiceTest {
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(1L, "duplicate-name", null, null);
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(existing));
         when(connectionRepository.findByName("duplicate-name")).thenReturn(Optional.of(other));
-        assertThrows(DeepDataAgentException.class, () -> service.updateDatasource(command));
+        assertThrows(ResourceConflictException.class, () -> service.updateDatasource(command));
     }
 
     @Test
@@ -423,7 +425,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_throwException_when_syncMetadata_given_connectionNotFound() {
         when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
-        assertThrows(DeepDataAgentException.class, () -> service.syncMetadata(999L));
+        assertThrows(ResourceNotFoundException.class, () -> service.syncMetadata(999L));
     }
 
     @Test
@@ -528,7 +530,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_throwException_when_previewTableData_given_connectionNotFound() {
         when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
-        assertThrows(DeepDataAgentException.class, () -> service.previewTableData(999L, "users", 10));
+        assertThrows(ResourceNotFoundException.class, () -> service.previewTableData(999L, "users", 10));
     }
 
     @Test
@@ -537,7 +539,7 @@ class DatasourceApplicationServiceTest {
                 DatasourceStatus.DISABLED, new JdbcConnectionConfig("localhost", 3306, "db", "u", "p", null),
                 null, null, null, null, null);
         when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
-        assertThrows(DeepDataAgentException.class, () -> service.previewTableData(1L, "users", 10));
+        assertThrows(ResourceConflictException.class, () -> service.previewTableData(1L, "users", 10));
     }
 
     @Test
@@ -707,7 +709,7 @@ class DatasourceApplicationServiceTest {
         var schemaCommand = new ApiSchemaCommand(
                 "test", HttpMethod.GET, "http://example.com", null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null);
-        assertThrows(DeepDataAgentException.class, () -> service.createApiSchema(1L, schemaCommand));
+        assertThrows(ResourceConflictException.class, () -> service.createApiSchema(1L, schemaCommand));
     }
 
     @Test
@@ -716,7 +718,7 @@ class DatasourceApplicationServiceTest {
         var schemaCommand = new ApiSchemaCommand(
                 "test", HttpMethod.GET, "http://example.com", null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null);
-        assertThrows(DeepDataAgentException.class, () -> service.createApiSchema(1L, schemaCommand));
+        assertThrows(ResourceNotFoundException.class, () -> service.createApiSchema(1L, schemaCommand));
     }
 
     @Test
@@ -737,7 +739,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_throwException_when_deleteApiSchema_given_notFound() {
         when(apiSchemaRepository.findById(1L)).thenReturn(Optional.empty());
-        assertThrows(DeepDataAgentException.class, () -> service.deleteApiSchema(1L));
+        assertThrows(ResourceNotFoundException.class, () -> service.deleteApiSchema(1L));
     }
 
     @Test
@@ -760,7 +762,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_throwException_when_getApiSchemaDetail_given_notFound() {
         when(apiSchemaRepository.findById(1L)).thenReturn(Optional.empty());
-        assertThrows(DeepDataAgentException.class, () -> service.getApiSchemaDetail(1L));
+        assertThrows(ResourceNotFoundException.class, () -> service.getApiSchemaDetail(1L));
     }
 
     @Test

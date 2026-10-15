@@ -2,6 +2,7 @@ package com.linkroa.deepdataagent.datasource.domain.service;
 
 import com.linkroa.deepdataagent.datasource.domain.model.*;
 import com.linkroa.deepdataagent.datasource.domain.model.enums.*;
+import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -35,7 +36,7 @@ class DatasourceConnectionDomainServiceTest {
     @Test
     void should_throwException_when_enableAlreadyEnabled_given_enabledConnection() {
         DatasourceConnection connection = createConnection(DatasourceStatus.ENABLED);
-        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> domainService.validateCanEnable(connection));
+        ResourceConflictException ex = assertThrows(ResourceConflictException.class, () -> domainService.validateCanEnable(connection));
         assertTrue(ex.getMessage().contains("已禁用"));
     }
 
@@ -48,7 +49,7 @@ class DatasourceConnectionDomainServiceTest {
     @Test
     void should_throwException_when_disableAlreadyDisabled_given_disabledConnection() {
         DatasourceConnection connection = createConnection(DatasourceStatus.DISABLED);
-        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> domainService.validateCanDisable(connection));
+        ResourceConflictException ex = assertThrows(ResourceConflictException.class, () -> domainService.validateCanDisable(connection));
         assertTrue(ex.getMessage().contains("已启用"));
     }
 
@@ -61,7 +62,7 @@ class DatasourceConnectionDomainServiceTest {
     @Test
     void should_throwException_when_deleteEnabledConnection_given_enabledConnection() {
         DatasourceConnection connection = createConnection(DatasourceStatus.ENABLED);
-        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> domainService.validateCanDelete(connection));
+        ResourceConflictException ex = assertThrows(ResourceConflictException.class, () -> domainService.validateCanDelete(connection));
         assertTrue(ex.getMessage().contains("已禁用"));
     }
 
@@ -74,7 +75,7 @@ class DatasourceConnectionDomainServiceTest {
     @Test
     void should_throwException_when_syncDisabledConnection_given_disabledConnection() {
         DatasourceConnection connection = createConnection(DatasourceStatus.DISABLED);
-        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> domainService.validateCanSync(connection));
+        ResourceConflictException ex = assertThrows(ResourceConflictException.class, () -> domainService.validateCanSync(connection));
         assertTrue(ex.getMessage().contains("已启用"));
     }
 

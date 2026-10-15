@@ -17,9 +17,12 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * 第 2 段（index 1）解析，并经语义化解析器归一为版本号 {@code 1.0.0}，与控制器
  * {@code @RequestMapping(version = "1")} 声明匹配。</p>
  * <p>范围控制：对 {@code runtime.controller}、{@code agent.controller}、
- * {@code skill.controller}、{@code file.controller} 包下的
+ * {@code skill.controller}、{@code file.controller}、{@code knowledgebase.controller}、
+ * {@code rag.controller} 包下的
  * REST 控制器挂载 {@code /api/{version}} 路径前缀（skill 管理面对齐对外统一
- * {@code /api/v1/...} 形态；全部云 Agent 资源端点统一挂 {@code /api/v1/cloud/*}）；
+ * {@code /api/v1/...} 形态；全部云 Agent 资源端点统一挂 {@code /api/v1/cloud/*}；
+ * 知识库与 RAG 域统一挂 {@code /api/v1/knowledge-base/*}、{@code /api/v1/rag/*}，
+ * 与控制器自身拼装的切片媒体相对 URL 及网关转发规则保持一致）；
  * auth 等其余上下文控制器路径形态保持不变，版本解析谓词返回 false 时回落到默认版本，
  * 避免误解析非版本段而影响既有接口。</p>
  * <p>本期只交付 v1：所有版本化控制器固定声明 {@code CURRENT_API_VERSION}；更高主版本请求
@@ -31,12 +34,15 @@ public class ApiVersioningConfig implements WebMvcConfigurer {
     /** 版本化路径前缀：{@code version} 以 URI 变量形式声明，供版本段解析与路径匹配共用。 */
     private static final String VERSIONED_PATH_PREFIX = "/api/{version}";
 
-    /** 启用版本化的控制器包前缀（运行时 + Agent 管理 + 技能资产 / 文件）。 */
+    /** 启用版本化的控制器包前缀（运行时 + Agent 管理 + 技能资产 / 文件 + 知识库 / RAG / 数据源）。 */
     private static final String[] VERSIONED_CONTROLLER_PACKAGES = {
             "com.linkroa.deepdataagent.runtime.controller",
             "com.linkroa.deepdataagent.agent.controller",
             "com.linkroa.deepdataagent.skill.controller",
-            "com.linkroa.deepdataagent.file.controller"
+            "com.linkroa.deepdataagent.file.controller",
+            "com.linkroa.deepdataagent.knowledgebase.controller",
+            "com.linkroa.deepdataagent.rag.controller",
+            "com.linkroa.deepdataagent.datasource.controller"
     };
 
     /**
@@ -58,14 +64,15 @@ public class ApiVersioningConfig implements WebMvcConfigurer {
      */
     @Override
     public void configurePathMatch(PathMatchConfigurer configurer) {
-        configurer.addPathPrefix(VERSIONED_PATH_PREFIX, this::isVersionedController);
+        configurer.addPathPrefix(VERSIONED_PATH_PREFIX, ApiVersioningConfig::isVersionedController);
     }
 
     /**
-     * 判断控制器类型是否属于启用版本化的上下文（runtime / agent / skill / file）。
+     * 判断控制器类型是否属于启用版本化的上下文（runtime / agent / skill / file / knowledgebase / rag）。
      * <p>其余上下文（auth 等）接口路径形态保持不变。</p>
+     * <p>包可见静态方法，便于单元测试直接断言包归属，无需启动上下文。</p>
      */
-    private boolean isVersionedController(Class<?> controllerType) {
+    static boolean isVersionedController(Class<?> controllerType) {
         if (!controllerType.isAnnotationPresent(RestController.class)) {
             return false;
         }

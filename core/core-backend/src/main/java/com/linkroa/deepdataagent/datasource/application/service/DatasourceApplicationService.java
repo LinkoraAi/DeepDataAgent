@@ -19,6 +19,8 @@ import com.linkroa.deepdataagent.datasource.infrastructure.adapter.ApiResponsePa
 import com.linkroa.deepdataagent.datasource.infrastructure.client.ApiConnectionStrategy;
 import com.linkroa.deepdataagent.datasource.infrastructure.client.ApiPaginationHandler;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
+import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
+import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -33,10 +35,12 @@ import java.util.Map;
 
 /**
  * 数据源应用服务（用例编排：连接管理 / 元数据同步 / API 表配置 / 响应解析）。
- * <p>7.4 起 datasource 收敛为<b>内部工具装配能力</b>：面向用户的独立
- * REST API 面（{@code /api/datasource/*}）已移除，本服务不再经协议层暴露，
+ * <p>对外经 {@code /api/v1/datasource/*} 版本化管理面暴露（见 {@code datasource.controller}）；
  * 方法签名只使用命令 / 查询 / 领域模型与应用层读模型，凭证仍经加密存储、
- * 不随任何对外契约泄露；未来由 runtime 自定义工具装配链路进程内消费。</p>
+ * 由协议层响应 DTO 统一脱敏，不随任何对外契约泄露明文。</p>
+ * <p>错误语义：资源不存在抛 {@link ResourceNotFoundException}（404）、
+ * 名称冲突与状态非法操作抛 {@link ResourceConflictException}（409）、
+ * 参数与格式校验抛 {@link DeepDataAgentException} / {@link IllegalArgumentException}（400）。</p>
  */
 @Service
 public class DatasourceApplicationService {
@@ -90,7 +94,7 @@ public class DatasourceApplicationService {
 
     public DatasourceConnection createDatasource(CreateDatasourceCommand command) {
         if (connectionRepository.findByName(command.name()).isPresent()) {
-            throw new DeepDataAgentException("数据源名称已被使用");
+            throw new ResourceConflictException("数据源名称已被使用");
         }
         if (command.type() == DatasourceType.JDBC && command.jdbcConfig() != null) {
             DatasourceValidator.validatePostgresqlSchema(command.subType(), command.jdbcConfig().schema());
@@ -116,11 +120,11 @@ public class DatasourceApplicationService {
 
     public DatasourceConnection updateDatasource(UpdateDatasourceCommand command) {
         DatasourceConnection existing = connectionRepository.findById(command.id())
-                .orElseThrow(() -> new DeepDataAgentException("数据源不存在"));
+                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
         if (command.name() != null && !command.name().equals(existing.name())) {
             connectionRepository.findByName(command.name())
                     .filter(c -> !c.id().equals(existing.id()))
-                    .ifPresent(c -> { throw new DeepDataAgentException("数据源名称已被使用"); });
+                    .ifPresent(c -> { throw new ResourceConflictException("数据源名称已被使用"); });
         }
         if (command.jdbcConfig() != null) {
             DatasourceValidator.validatePostgresqlSchema(existing.subType(), command.jdbcConfig().schema());
@@ -136,7 +140,7 @@ public class DatasourceApplicationService {
 
     public void enableDatasource(Long id) {
         DatasourceConnection connection = connectionRepository.findById(id)
-                .orElseThrow(() -> new DeepDataAgentException("数据源不存在"));
+                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
         domainService.validateCanEnable(connection);
         DatasourceConnectionStrategy strategy = strategyFactory.getStrategy(connection.type(), connection.subType());
         DatasourceConnectionStrategy.ConnectionTestResult result = strategy.testConnection(connection);
@@ -148,14 +152,14 @@ public class DatasourceApplicationService {
 
     public void disableDatasource(Long id) {
         DatasourceConnection connection = connectionRepository.findById(id)
-                .orElseThrow(() -> new DeepDataAgentException("数据源不存在"));
+                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
         domainService.validateCanDisable(connection);
         transactionTemplate.executeWithoutResult(status -> connectionRepository.updateStatus(id, DatasourceStatus.DISABLED));
     }
 
     public void deleteDatasource(Long id) {
         DatasourceConnection connection = connectionRepository.findById(id)
-                .orElseThrow(() -> new DeepDataAgentException("数据源不存在"));
+                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
         domainService.validateCanDelete(connection);
         transactionTemplate.executeWithoutResult(status -> {
             if (connection.type() == DatasourceType.API) {
@@ -170,7 +174,7 @@ public class DatasourceApplicationService {
     public DatasourceConnectionStrategy.ConnectionTestResult testConnection(TestConnectionCommand command) {
         if (command.id() != null) {
             DatasourceConnection connection = connectionRepository.findById(command.id())
-                    .orElseThrow(() -> new DeepDataAgentException("数据源不存在"));
+                    .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
             DatasourceConnectionStrategy strategy = strategyFactory.getStrategy(connection.type(), connection.subType());
             return strategy.testConnection(connection);
         }
@@ -196,14 +200,14 @@ public class DatasourceApplicationService {
 
     public DatasourceConnection getDatasource(Long id) {
         return connectionRepository.findById(id)
-                .orElseThrow(() -> new DeepDataAgentException("数据源不存在"));
+                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
     }
 
     // ==================== Metadata Operations ====================
 
     public void syncMetadata(Long connectionId) {
         DatasourceConnection connection = connectionRepository.findById(connectionId)
-                .orElseThrow(() -> new DeepDataAgentException("数据源不存在"));
+                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
         domainService.validateCanSync(connection);
         // 同步为可重入增量对账（schema/表/列逐条 upsert 与软删各自落库）：不包整体事务，
         // 远程元数据抽取不占用本地数据库连接；中途失败时已对账部分保留，下次同步补齐
@@ -219,7 +223,7 @@ public class DatasourceApplicationService {
 
     public PaginatedResult<TableInfo> listTables(TableListQuery query) {
         DatasourceConnection connection = connectionRepository.findById(query.connectionId())
-                .orElseThrow(() -> new DeepDataAgentException("数据源不存在"));
+                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
 
         List<DatabaseSchema> schemas = databaseSchemaRepository.findByConnectionId(connection.id());
         if (schemas.isEmpty()) {
@@ -250,10 +254,10 @@ public class DatasourceApplicationService {
 
     public List<Map<String, Object>> previewTableData(Long connectionId, String tableName, int limit) {
         DatasourceConnection connection = connectionRepository.findById(connectionId)
-            .orElseThrow(() -> new DeepDataAgentException("数据源不存在"));
+            .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
 
         if (connection.status() != DatasourceStatus.ENABLED) {
-            throw new DeepDataAgentException("数据源已禁用，请先启用数据源");
+            throw new ResourceConflictException("数据源已禁用，请先启用数据源");
         }
 
         DatasourceConnectionStrategy strategy = strategyFactory.getStrategy(connection.type(), connection.subType());
@@ -372,9 +376,9 @@ public class DatasourceApplicationService {
 
     public ApiSchema createApiSchema(Long connectionId, ApiSchemaCommand schemaCommand) {
         DatasourceConnection connection = connectionRepository.findById(connectionId)
-                .orElseThrow(() -> new DeepDataAgentException("数据源不存在"));
+                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
         if (connection.type() != DatasourceType.API) {
-            throw new DeepDataAgentException("仅支持API类型数据源");
+            throw new ResourceConflictException("仅支持API类型数据源");
         }
         return transactionTemplate.execute(status -> saveApiSchema(connectionId, schemaCommand));
     }
@@ -450,7 +454,7 @@ public class DatasourceApplicationService {
      */
     public ApiSchema updateApiSchema(Long schemaId, ApiSchemaCommand command) {
         ApiSchema existing = apiSchemaRepository.findById(schemaId)
-                .orElseThrow(() -> new DeepDataAgentException("API表不存在"));
+                .orElseThrow(() -> new ResourceNotFoundException("API表不存在"));
 
         ApiRequestConfig existingConfig = existing.config() != null ? existing.config() : ApiRequestConfig.defaultConfig();
 
@@ -523,7 +527,7 @@ public class DatasourceApplicationService {
 
     public void deleteApiSchema(Long schemaId) {
         apiSchemaRepository.findById(schemaId)
-                .orElseThrow(() -> new DeepDataAgentException("API表不存在"));
+                .orElseThrow(() -> new ResourceNotFoundException("API表不存在"));
         transactionTemplate.executeWithoutResult(status -> {
             apiFieldRepository.deleteByApiSchemaId(schemaId);
             apiSchemaRepository.deleteById(schemaId);
@@ -543,7 +547,7 @@ public class DatasourceApplicationService {
      */
     public ApiSchemaDetail getApiSchemaDetail(Long schemaId) {
         ApiSchema schema = apiSchemaRepository.findById(schemaId)
-                .orElseThrow(() -> new DeepDataAgentException("API表不存在"));
+                .orElseThrow(() -> new ResourceNotFoundException("API表不存在"));
         List<ApiField> fields = apiFieldRepository.findByApiSchemaId(schemaId);
         return new ApiSchemaDetail(schema, fields);
     }
@@ -646,9 +650,9 @@ public class DatasourceApplicationService {
     private ApiSchema buildApiSchemaForParse(ParseApiResponseCommand command) {
         if (command.connectionId() != null) {
             DatasourceConnection savedConnection = connectionRepository.findById(command.connectionId())
-                    .orElseThrow(() -> new DeepDataAgentException("数据源不存在"));
+                    .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
             if (savedConnection.type() != DatasourceType.API) {
-                throw new DeepDataAgentException("仅支持API数据源");
+                throw new ResourceConflictException("仅支持API数据源");
             }
             List<ApiSchema> existingSchemas = apiSchemaRepository.findByConnectionId(command.connectionId());
             if (!existingSchemas.isEmpty()) {
