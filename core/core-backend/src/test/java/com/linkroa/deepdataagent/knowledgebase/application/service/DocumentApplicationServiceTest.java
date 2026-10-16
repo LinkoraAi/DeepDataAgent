@@ -8,10 +8,12 @@ import com.linkroa.deepdataagent.knowledgebase.api.IngestionTaskSubmitter;
 import com.linkroa.deepdataagent.knowledgebase.application.command.DeleteDocumentCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.ReparseDocumentCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.UploadDocumentCommand;
+import com.linkroa.deepdataagent.knowledgebase.application.port.DocumentTextExtractPort;
 import com.linkroa.deepdataagent.knowledgebase.application.port.KbAssetStoragePort;
 import com.linkroa.deepdataagent.knowledgebase.application.query.ListDocumentQuery;
 import com.linkroa.deepdataagent.knowledgebase.application.result.DedupHit;
 import com.linkroa.deepdataagent.knowledgebase.application.result.DocumentContentResult;
+import com.linkroa.deepdataagent.knowledgebase.application.result.DocumentTextPreviewResult;
 import com.linkroa.deepdataagent.knowledgebase.application.result.UploadDocumentResult;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.DedupPolicyConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.Document;
@@ -43,6 +45,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.unit.DataSize;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -125,6 +128,8 @@ class DocumentApplicationServiceTest {
     private DocumentDedupService documentDedupService;
     @Mock
     private KbAssetStoragePort kbAssetStoragePort;
+    @Mock
+    private DocumentTextExtractPort documentTextExtractPort;
     @Mock
     private TransactionTemplate transactionTemplate;
     @Mock
@@ -1635,6 +1640,125 @@ class DocumentApplicationServiceTest {
         // then
         assertTrue(exception.getMessage().contains("缺少对象键"));
         verify(kbAssetStoragePort, never()).open(anyString());
+    }
+
+    // ==================== 办公文档纯文本预览（openTextPreview） ====================
+
+    /**
+     * 构造可观察 close 行为的内容流（断言预览结束后源文件流必定关闭）。
+     *
+     * @param closed 长度为 1 的关闭标记数组，close 后置为 true
+     * @return 包装后的内容流
+     */
+    private InputStream trackingStream(boolean[] closed) {
+        return new ByteArrayInputStream(new byte[] {1, 2, 3}) {
+            @Override
+            public void close() throws IOException {
+                closed[0] = true;
+                super.close();
+            }
+        };
+    }
+
+    @Test
+    void should_returnExtractedText_when_openTextPreview_given_docxDocument() {
+        // given：DOCX 经提取端口返回带截断标记的纯文本
+        String objectKey = "rag/10/source/手册.docx";
+        String s3File = "{\"objectKey\":\"" + objectKey + "\"}";
+        when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(
+                buildDocumentWithS3FileAndType(FileType.DOCX, "手册.docx", s3File)));
+        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        boolean[] closed = {false};
+        when(kbAssetStoragePort.open(objectKey)).thenReturn(Optional.of(
+                new KbAssetStoragePort.OpenedObject(trackingStream(closed), 10L)));
+        when(documentTextExtractPort.extract(any()))
+                .thenReturn(new DocumentTextExtractPort.ExtractedText("第一章 概述", true));
+
+        // when
+        DocumentTextPreviewResult result = service.openTextPreview(DOC_ID);
+
+        // then
+        assertEquals(DOC_ID, result.documentId());
+        assertEquals("手册.docx", result.fileName());
+        assertEquals(FileType.DOCX, result.fileType());
+        assertEquals("第一章 概述", result.text());
+        assertTrue(result.truncated());
+        assertTrue(closed[0]);
+        verify(documentTextExtractPort).extract(any());
+    }
+
+    @Test
+    void should_throwBadRequest_when_openTextPreview_given_pdfTypeNotOffice() {
+        // given：PDF 浏览器可原生渲染，走 /content；文本提取端点拒绝
+        String objectKey = "rag/10/source/手册.pdf";
+        when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(
+                buildDocumentWithS3FileAndType(FileType.PDF, "手册.pdf", "{\"objectKey\":\"" + objectKey + "\"}")));
+        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+
+        // when
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> service.openTextPreview(DOC_ID));
+
+        // then
+        assertTrue(exception.getMessage().contains("无需文本提取"));
+        verify(kbAssetStoragePort, never()).open(anyString());
+        verifyNoInteractions(documentTextExtractPort);
+    }
+
+    @Test
+    void should_throwBadRequest_when_openTextPreview_given_deletingKnowledgeBase() {
+        // given
+        String s3File = "{\"objectKey\":\"rag/10/source/手册.docx\"}";
+        when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(
+                buildDocumentWithS3FileAndType(FileType.DOCX, "手册.docx", s3File)));
+        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.DELETING)));
+
+        // when
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> service.openTextPreview(DOC_ID));
+
+        // then
+        assertTrue(exception.getMessage().contains("知识库不可用"));
+        verify(kbAssetStoragePort, never()).open(anyString());
+        verifyNoInteractions(documentTextExtractPort);
+    }
+
+    @Test
+    void should_throwNotFound_when_openTextPreview_given_sourceObjectMissing() {
+        // given：引用合法但对象存储中对象不存在
+        String objectKey = "rag/10/source/手册.xlsx";
+        when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(
+                buildDocumentWithS3FileAndType(FileType.XLSX, "手册.xlsx", "{\"objectKey\":\"" + objectKey + "\"}")));
+        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(kbAssetStoragePort.open(objectKey)).thenReturn(Optional.empty());
+
+        // when
+        ResourceNotFoundException exception = assertThrows(ResourceNotFoundException.class,
+                () -> service.openTextPreview(DOC_ID));
+
+        // then
+        assertTrue(exception.getMessage().contains("文档源文件对象不存在"));
+        verifyNoInteractions(documentTextExtractPort);
+    }
+
+    @Test
+    void should_throwBadRequest_when_openTextPreview_given_extractorFails() {
+        // given：加密 / 损坏文档导致 Tika 提取失败，端口按约定抛 IllegalStateException
+        String objectKey = "rag/10/source/加密.pptx";
+        when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(
+                buildDocumentWithS3FileAndType(FileType.PPTX, "加密.pptx", "{\"objectKey\":\"" + objectKey + "\"}")));
+        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(kbAssetStoragePort.open(objectKey)).thenReturn(Optional.of(
+                new KbAssetStoragePort.OpenedObject(new ByteArrayInputStream(new byte[] {1}), 1L)));
+        when(documentTextExtractPort.extract(any())).thenThrow(new IllegalStateException("加密文档无法解析"));
+
+        // when
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> service.openTextPreview(DOC_ID));
+
+        // then
+        assertTrue(exception.getMessage().contains("无法在线预览"));
+        verify(documentTextExtractPort).extract(any());
     }
 
     // ==================== 删除链·媒体图片对象清理 ====================

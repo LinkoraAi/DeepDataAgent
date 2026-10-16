@@ -8,10 +8,12 @@ import com.linkroa.deepdataagent.knowledgebase.api.IngestionTaskSubmitter;
 import com.linkroa.deepdataagent.knowledgebase.application.command.DeleteDocumentCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.ReparseDocumentCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.UploadDocumentCommand;
+import com.linkroa.deepdataagent.knowledgebase.application.port.DocumentTextExtractPort;
 import com.linkroa.deepdataagent.knowledgebase.application.port.KbAssetStoragePort;
 import com.linkroa.deepdataagent.knowledgebase.application.query.ListDocumentQuery;
 import com.linkroa.deepdataagent.knowledgebase.application.result.DedupHit;
 import com.linkroa.deepdataagent.knowledgebase.application.result.DocumentContentResult;
+import com.linkroa.deepdataagent.knowledgebase.application.result.DocumentTextPreviewResult;
 import com.linkroa.deepdataagent.knowledgebase.application.result.UploadDocumentResult;
 import com.linkroa.deepdataagent.knowledgebase.application.validation.ChunkStrategyConfigValidator;
 import com.linkroa.deepdataagent.knowledgebase.application.validation.ChunkStrategyFileTypeValidator;
@@ -44,8 +46,11 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -106,6 +111,14 @@ public class DocumentApplicationService {
 
     /** 所属知识库不可用时回传给内容访问端点的业务错误消息 */
     private static final String ERROR_KB_UNAVAILABLE = "知识库不可用，禁止访问文档内容";
+
+    /** 浏览器无法原生渲染、需服务端提取纯文本预览的办公文档类型集合 */
+    private static final Set<FileType> TEXT_PREVIEW_FILE_TYPES = EnumSet.of(
+            FileType.DOC, FileType.DOCX, FileType.XLS, FileType.XLSX,
+            FileType.PPT, FileType.PPTX);
+
+    /** 文件类型不支持文本预览时的业务错误消息 */
+    private static final String ERROR_TEXT_PREVIEW_UNSUPPORTED = "当前文件类型支持浏览器直接预览，无需文本提取";
 
     /** 分块策略 JSON 解析器（无状态，进程内共享） */
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -173,6 +186,9 @@ public class DocumentApplicationService {
     /** 知识库对象资产存储访问端口（源文件读写与删除） */
     private final KbAssetStoragePort kbAssetStoragePort;
 
+    /** 文档纯文本提取端口（办公类文档在线预览，Tika 适配实现） */
+    private final DocumentTextExtractPort documentTextExtractPort;
+
     /** 媒体图片对象清理服务：删除链与换版清退复用的「按前缀清空」原语 */
     private final MediaImageCleanupService mediaImageCleanupService;
 
@@ -202,6 +218,7 @@ public class DocumentApplicationService {
      * @param knowledgeBaseRepository      知识库仓储
      * @param documentDedupService         文档判重服务
      * @param kbAssetStoragePort           知识库对象资产存储访问端口
+     * @param documentTextExtractPort      文档纯文本提取端口（办公类文档在线预览）
      * @param mediaImageCleanupService     媒体图片对象清理服务
      * @param transactionTemplate          编程式事务模板
      * @param ingestionCancellationApi     在飞摄入任务掐灭端口（跨 BC 端口，实现位于 rag BC）
@@ -215,6 +232,7 @@ public class DocumentApplicationService {
                                       KnowledgeBaseRepository knowledgeBaseRepository,
                                       DocumentDedupService documentDedupService,
                                       KbAssetStoragePort kbAssetStoragePort,
+                                      DocumentTextExtractPort documentTextExtractPort,
                                       MediaImageCleanupService mediaImageCleanupService,
                                       TransactionTemplate transactionTemplate,
                                       IngestionCancellationApi ingestionCancellationApi,
@@ -227,6 +245,7 @@ public class DocumentApplicationService {
         this.knowledgeBaseRepository = knowledgeBaseRepository;
         this.documentDedupService = documentDedupService;
         this.kbAssetStoragePort = kbAssetStoragePort;
+        this.documentTextExtractPort = documentTextExtractPort;
         this.mediaImageCleanupService = mediaImageCleanupService;
         this.transactionTemplate = transactionTemplate;
         this.ingestionCancellationApi = ingestionCancellationApi;
@@ -537,6 +556,46 @@ public class DocumentApplicationService {
                 .orElseThrow(() -> new ResourceNotFoundException("文档源文件对象不存在"));
         String contentType = CONTENT_TYPE_BY_FILE_TYPE.getOrDefault(document.fileType(), DEFAULT_CONTENT_TYPE);
         return new DocumentContentResult(document.fileName(), contentType, opened.size(), opened.content());
+    }
+
+    /**
+     * 打开办公类文档的纯文本预览（DOC / DOCX / XLS / XLSX / PPT / PPTX）。
+     * <p>浏览器无法原生渲染这些格式，故复用 {@link #openContent(Long)} 的同一前置闸门
+     * （文档 404、知识库 ACTIVE、存储引用合法、对象存在 404）拿到源文件内容流后，
+     * 经 {@link DocumentTextExtractPort}（Tika 适配）在应用层进程内提取纯文本，
+     * 全程无数据库写入、无长事务；文本提取为有界 CPU/内存操作（实现侧截断 20 万字符）。</p>
+     *
+     * @param id 文档ID
+     * @return 纯文本预览结果（文件名、文件类型、文本、是否截断）
+     * @throws ResourceNotFoundException 文档不存在或已删除（404）/ 源文件对象缺失（404）
+     * @throws DeepDataAgentException    知识库不可用 / 存储引用缺失或非法（400）/ 非办公类型不支持文本提取（400）
+     */
+    public DocumentTextPreviewResult openTextPreview(Long id) {
+        Document document = documentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("文档不存在"));
+        KnowledgeBase knowledgeBase = knowledgeBaseRepository.findById(document.kbId())
+                .orElseThrow(() -> new DeepDataAgentException(ERROR_KB_UNAVAILABLE));
+        if (!knowledgeBase.isActive()) {
+            throw new DeepDataAgentException(ERROR_KB_UNAVAILABLE);
+        }
+        if (!TEXT_PREVIEW_FILE_TYPES.contains(document.fileType())) {
+            throw new DeepDataAgentException(ERROR_TEXT_PREVIEW_UNSUPPORTED);
+        }
+        S3File s3File = parseS3File(document);
+        KbAssetStoragePort.OpenedObject opened = kbAssetStoragePort.open(s3File.objectKey())
+                .orElseThrow(() -> new ResourceNotFoundException("文档源文件对象不存在"));
+        // 源文件流在提取完成后立即关闭：不把流带出应用层，避免连接 / 流资源悬挂
+        try (InputStream content = opened.content()) {
+            DocumentTextExtractPort.ExtractedText extracted = documentTextExtractPort.extract(content);
+            return new DocumentTextPreviewResult(document.id(), document.fileName(),
+                    document.fileType(), extracted.content(), extracted.truncated());
+        } catch (IOException e) {
+            throw new DeepDataAgentException("读取文档内容失败，无法生成文本预览");
+        } catch (IllegalStateException e) {
+            // 提取端口约定：加密 / 损坏 / 不支持容器等解析失败统一以 IllegalStateException 上抛
+            log.warn("办公文档文本预览提取失败，documentId={}, fileName={}", id, document.fileName(), e);
+            throw new DeepDataAgentException("文档内容解析失败，无法在线预览，请下载后查看");
+        }
     }
 
     /**

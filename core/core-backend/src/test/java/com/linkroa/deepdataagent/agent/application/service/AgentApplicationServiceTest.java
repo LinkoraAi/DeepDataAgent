@@ -141,6 +141,42 @@ class AgentApplicationServiceTest {
     }
 
     @Test
+    void should_bindProfileDirectly_when_createAgent_given_modelIdIsProfileId() {
+        // given（直接绑定：模型 id 即内部 profile_id，发布期固化进版本快照，不经目录与供应商映射）
+        when(modelProfileRepository.findByProfileId("profile-1"))
+                .thenReturn(Optional.of(profileWithOwner(1L)));
+        when(agentDefinitionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(agentDefinitionRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(agentVersionRepository.findMaxVersionNumber(anyString())).thenReturn(0);
+        when(agentVersionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // when
+        service.createAgent(new CreateAgentCommand("绑定助手", null, "你是助手", "\"profile-1\"",
+                null, null, null, null));
+
+        // then（快照 model_profile_id = 绑定配置；目录校验与映射解析均不发生）
+        ArgumentCaptor<AgentVersion> captor = ArgumentCaptor.forClass(AgentVersion.class);
+        verify(agentVersionRepository).save(captor.capture());
+        assertEquals("profile-1", captor.getValue().modelProfileId());
+        verify(modelCatalogService, never()).validateModel(any());
+        verify(modelCatalogService, never()).resolveProfileId(anyString(), any());
+    }
+
+    @Test
+    void should_throwNotFound_when_createAgent_given_directBoundProfileOwnedByOther() {
+        // given（直接绑定的模型配置归属他人：统一 404，不区分不存在与越权）
+        when(modelProfileRepository.findByProfileId("profile-1"))
+                .thenReturn(Optional.of(profileWithOwner(2L)));
+
+        // when & then
+        ResourceNotFoundException ex = assertThrows(ResourceNotFoundException.class,
+                () -> service.createAgent(new CreateAgentCommand("越权助手", null, "你是助手", "\"profile-1\"",
+                        null, null, null, null)));
+        assertEquals("模型配置不存在", ex.getMessage());
+        verify(agentVersionRepository, never()).save(any());
+    }
+
+    @Test
     void should_allowDuplicateName_when_createAgent_given_sameNameAsExisting() {
         // given（名称不再做 owner 内唯一约束：同名可共存）
         when(modelCatalogService.resolveProfileId("ultimate", 1L)).thenReturn(null);
@@ -171,6 +207,7 @@ class AgentApplicationServiceTest {
     @Test
     void should_throwNotFound_when_createAgent_given_mappedProfileMissing() {
         // given（内部供应商映射命中但配置不存在 → 404，不落任何数据）
+        when(modelProfileRepository.findByProfileId("ultimate")).thenReturn(Optional.empty());
         when(modelCatalogService.resolveProfileId("ultimate", 1L)).thenReturn("profile-1");
         when(modelProfileRepository.findByProfileId("profile-1")).thenReturn(Optional.empty());
 
@@ -182,6 +219,7 @@ class AgentApplicationServiceTest {
     @Test
     void should_throwNotFound_when_createAgent_given_modelProfileOwnedByOtherUser() {
         // given（模型配置归属他人：创建期归属校验失败 → 404，不落任何数据）
+        when(modelProfileRepository.findByProfileId("ultimate")).thenReturn(Optional.empty());
         when(modelCatalogService.resolveProfileId("ultimate", 1L)).thenReturn("profile-1");
         when(modelProfileRepository.findByProfileId("profile-1"))
                 .thenReturn(Optional.of(profileWithOwner(2L)));
@@ -196,6 +234,7 @@ class AgentApplicationServiceTest {
     @Test
     void should_createAgent_when_createAgent_given_modelProfileOwnedByCurrentUser() {
         // given（模型配置归属当前用户：归属校验通过，正常落库首版）
+        when(modelProfileRepository.findByProfileId("ultimate")).thenReturn(Optional.empty());
         when(modelCatalogService.resolveProfileId("ultimate", 1L)).thenReturn("profile-1");
         when(modelProfileRepository.findByProfileId("profile-1"))
                 .thenReturn(Optional.of(profileWithOwner(1L)));

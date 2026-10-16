@@ -268,19 +268,31 @@ public class DefaultAgentVersionAssemblyPort implements AgentVersionAssemblyPort
     }
 
     /**
-     * 解析内部供应商配置：版本快照 {@code model_profile_id}（发布期固化）优先，
-     * 缺失时经模型目录供应商映射（{@link ModelCatalogService#resolveProfileId}）按目录模型 id 兜底解析；
-     * 两条路径皆无映射视为装配失败（404，不静默切换到其它供应商）。
+     * 解析内部供应商配置（三级解析，命中即止）：
+     * <p>①版本快照 {@code model_profile_id}（发布期固化）优先；</p>
+     * <p>②<b>直接绑定</b>：快照缺失但版本模型引用的 id 本身就是内部 {@code model_profile_id}
+     * （智能体绑定的模型配置）→ 按该 id 取配置（使用绑定到智能体的模型，不依赖供应商映射）；</p>
+     * <p>③模型目录供应商映射（{@link ModelCatalogService#resolveProfileId}）按目录模型 id 兜底。</p>
+     * <p>三级皆无视为装配失败（404，不静默切换到其它供应商）。</p>
      */
     private ModelProfile resolveInternalProfile(AgentVersion versionRow, ModelRef modelRef, Long ownerId) {
-        String profileId = StringUtils.isNotBlank(versionRow.modelProfileId())
-                ? versionRow.modelProfileId()
-                : (modelRef == null ? null : modelCatalogService.resolveProfileId(modelRef.id(), ownerId));
-        if (StringUtils.isBlank(profileId)) {
-            throw new ResourceNotFoundException("该模型未配置内部供应商映射");
+        if (StringUtils.isNotBlank(versionRow.modelProfileId())) {
+            return modelProfileRepository.findByProfileId(versionRow.modelProfileId())
+                    .orElseThrow(() -> new ResourceNotFoundException("模型配置不存在"));
         }
-        return modelProfileRepository.findByProfileId(profileId)
-                .orElseThrow(() -> new ResourceNotFoundException("模型配置不存在"));
+        if (modelRef != null) {
+            // 直接绑定：模型 id 即 profile_id（运行装配仅校验存在，容忍 DISABLED，语义与①一致）
+            ModelProfile direct = modelProfileRepository.findByProfileId(modelRef.id()).orElse(null);
+            if (direct != null) {
+                return direct;
+            }
+            String mapped = modelCatalogService.resolveProfileId(modelRef.id(), ownerId);
+            if (StringUtils.isNotBlank(mapped)) {
+                return modelProfileRepository.findByProfileId(mapped)
+                        .orElseThrow(() -> new ResourceNotFoundException("模型配置不存在"));
+            }
+        }
+        throw new ResourceNotFoundException("该模型未配置内部供应商映射");
     }
 
     /**

@@ -1538,6 +1538,59 @@ class ChunkApplicationServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void should_keepMediaReference_when_replaceForDocument_given_imageDraftWithoutMediaPathInContent() {
+        // given：正文为去媒体路径行后的图片模板正文（无任何路径），媒体引用仅存于草稿元数据
+        when(documentRepository.findByIdForUpdate(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 0)));
+        when(knowledgeBaseRepository.findById(KB_ID))
+                .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(chunkRepository.saveBatch(anyList(), eq("7")))
+                .thenReturn(List.of(persistedChunk(1, 8101L)));
+        when(documentRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        String content = "图片内容分析：\n- 章节路径：营收 > 季度趋势\n- 邻近文本：下图为季度趋势。\n"
+                + "标注：N/A\n脚注：N/A\n\n视觉分析：柱状图显示销售额上升";
+        ChunkDraft draft = new ChunkDraft(1, content, 30,
+                "{\"page\":2,\"mediaObjectKey\":\"rag/1/9/images/img-1.png\"}", "IMAGE", null);
+
+        // when
+        service.replaceForDocument(DOC_ID, List.of(draft), 7L);
+
+        // then：正文不含媒体路径行，媒体引用仍由元数据驱动落 s3_file（不因删行丢失）
+        ArgumentCaptor<List<Chunk>> captor = ArgumentCaptor.forClass(List.class);
+        verify(chunkRepository).saveBatch(captor.capture(), eq("7"));
+        Chunk persisted = captor.getValue().get(0);
+        assertFalse(persisted.chunkContent().contains("图片路径："));
+        assertFalse(persisted.chunkContent().contains("Image Path:"));
+        assertEquals("{\"objectKey\":\"rag/1/9/images/img-1.png\"}", persisted.s3File());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void should_keepMediaReference_when_replaceForDocument_given_tableDraftWithoutMediaPathInContent() {
+        // given：正文为去媒体路径行后的表格模板正文（无任何路径），媒体引用仅存于草稿元数据
+        when(documentRepository.findByIdForUpdate(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 0)));
+        when(knowledgeBaseRepository.findById(KB_ID))
+                .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(chunkRepository.saveBatch(anyList(), eq("7")))
+                .thenReturn(List.of(persistedChunk(1, 8102L)));
+        when(documentRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        String content = "表格分析：\n标题：员工表\n结构：姓名|年龄\n张三|18\n脚注：N/A\n\n分析：三列员工信息表";
+        ChunkDraft draft = new ChunkDraft(1, content, 30,
+                "{\"page\":3,\"mediaObjectKey\":\"rag/1/9/images/table1.png\"}", "TABLE", null);
+
+        // when
+        service.replaceForDocument(DOC_ID, List.of(draft), 7L);
+
+        // then：正文不含媒体路径行，媒体引用仍由元数据驱动落 s3_file（不因删行丢失）
+        ArgumentCaptor<List<Chunk>> captor = ArgumentCaptor.forClass(List.class);
+        verify(chunkRepository).saveBatch(captor.capture(), eq("7"));
+        Chunk persisted = captor.getValue().get(0);
+        assertFalse(persisted.chunkContent().contains("图片路径："));
+        assertFalse(persisted.chunkContent().contains("table1.png"));
+        assertEquals("{\"objectKey\":\"rag/1/9/images/table1.png\"}", persisted.s3File());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void should_writeNullS3File_when_replaceForDocument_given_textDraftWithoutMediaMeta() {
         // given：文本切片无媒体引用键，s3_file 属预期置空
         when(documentRepository.findByIdForUpdate(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 0)));

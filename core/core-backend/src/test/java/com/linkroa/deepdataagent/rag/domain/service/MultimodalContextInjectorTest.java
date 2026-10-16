@@ -17,10 +17,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@link MultimodalContextInjector} 单元测试。
  * <p>被测服务无外部依赖，直接 new 真实实例；覆盖：</p>
  * <ul>
- *   <li>MinerU 风格标题层级（{@code text_level}）驱动的章节路径与邻近文本注入；</li>
+ *   <li>MinerU 风格标题层级（{@code text_level}）驱动的章节路径（纯标题文本、无 {@code #} 前缀）与邻近文本注入；</li>
  *   <li>标题栈「同层替换、更深压栈、更浅弹栈」维护；</li>
+ *   <li>邻近文本按位置窗口（下标 ±3）取项、窗口内多模态块跳过、内容内嵌空白归一、无省略号与截断；</li>
  *   <li>本地解析（无标题层级）→ 章节路径缺省；无邻近文本 → 邻近文本缺省；</li>
- *   <li>邻近文本按单侧上限截断；注入永不抛（null 透传、非法层级按正文处理）。</li>
+ *   <li>注入永不抛（null 透传、非法层级按正文处理）。</li>
  * </ul>
  */
 class MultimodalContextInjectorTest {
@@ -46,12 +47,11 @@ class MultimodalContextInjectorTest {
         // when
         ParsedDocument result = injector.inject(parsed);
 
-        // then：图片块章节路径为「## 营收 > ### 季度趋势」（层级即 text_level），邻近文本为前后正文拼接
+        // then：章节路径为纯标题文本（层级不进路径）；邻近文本为位置窗口内各文本块以单空格连接
         Map<String, Object> imageMeta = result.blocks().get(4).meta();
-        assertEquals("## 营收 > ### 季度趋势", imageMeta.get(MultimodalMetaKeys.META_KEY_SECTION_PATH));
-        String neighbor = (String) imageMeta.get(MultimodalMetaKeys.META_KEY_NEIGHBOR_TEXT);
-        assertTrue(neighbor.startsWith("下图为季度趋势。"));
-        assertTrue(neighbor.contains("上图说明营收增长。"));
+        assertEquals("营收 > 季度趋势", imageMeta.get(MultimodalMetaKeys.META_KEY_SECTION_PATH));
+        assertEquals("本节介绍营收情况。 季度趋势 下图为季度趋势。 上图说明营收增长。",
+                imageMeta.get(MultimodalMetaKeys.META_KEY_NEIGHBOR_TEXT));
         // then：文本块原样返回（不被注入任何键）
         assertFalse(result.blocks().get(0).meta().containsKey(MultimodalMetaKeys.META_KEY_SECTION_PATH));
     }
@@ -69,9 +69,9 @@ class MultimodalContextInjectorTest {
         // when
         ParsedDocument result = injector.inject(parsed);
 
-        // then：图片1 位于 h1>h2a；图片2 的同层 h2 已替换 h2a（栈内不再含 1.1 甲）
-        assertEquals("# 第一章 > ## 1.1 甲", result.blocks().get(2).meta().get(MultimodalMetaKeys.META_KEY_SECTION_PATH));
-        assertEquals("# 第一章 > ## 1.2 乙", result.blocks().get(4).meta().get(MultimodalMetaKeys.META_KEY_SECTION_PATH));
+        // then：章节路径无 # 前缀；图片1 位于 h1>h2a；图片2 的同层 h2 已替换 h2a（栈内不再含 1.1 甲）
+        assertEquals("第一章 > 1.1 甲", result.blocks().get(2).meta().get(MultimodalMetaKeys.META_KEY_SECTION_PATH));
+        assertEquals("第一章 > 1.2 乙", result.blocks().get(4).meta().get(MultimodalMetaKeys.META_KEY_SECTION_PATH));
     }
 
     @Test
@@ -85,10 +85,10 @@ class MultimodalContextInjectorTest {
         // when
         ParsedDocument result = injector.inject(parsed);
 
-        // then：无标题层级 → 章节路径缺省；有前后邻近文本 → 邻近文本仍注入
+        // then：无标题层级 → 章节路径缺省；有窗口内邻近文本 → 邻近文本仍注入
         Map<String, Object> tableMeta = result.blocks().get(1).meta();
         assertFalse(tableMeta.containsKey(MultimodalMetaKeys.META_KEY_SECTION_PATH));
-        assertTrue(tableMeta.containsKey(MultimodalMetaKeys.META_KEY_NEIGHBOR_TEXT));
+        assertEquals("表格前的说明。 表格后的说明。", tableMeta.get(MultimodalMetaKeys.META_KEY_NEIGHBOR_TEXT));
     }
 
     @Test
@@ -101,14 +101,59 @@ class MultimodalContextInjectorTest {
         // when
         ParsedDocument result = injector.inject(parsed);
 
-        // then：无标题且无邻近文本 → 两键均缺省（模板 N/A 兜底）
+        // then：无标题且窗口内无文本块 → 两键均缺省（模板 N/A 兜底）
         assertFalse(result.blocks().get(0).meta().containsKey(MultimodalMetaKeys.META_KEY_SECTION_PATH));
         assertFalse(result.blocks().get(0).meta().containsKey(MultimodalMetaKeys.META_KEY_NEIGHBOR_TEXT));
     }
 
     @Test
-    void should_truncateNeighborText_when_inject_given_oversizedNeighborBlock() {
-        // given：前向文本块远超 200 字符，注入应将其截断至单侧上限
+    void should_collectPositionWindowAndSkipMultimodal_when_inject_given_windowWithTextAndMediaBlocks() {
+        // given：T T T T IMG IMG2 T T T T —— IMG 下标 4，位置窗口 [1,7]（不含 4），窗口内 IMG2 应被跳过
+        ContentBlockVO a = new ContentBlockVO(ContentBlockVO.TYPE_TEXT, "段A", Map.of());
+        ContentBlockVO b = new ContentBlockVO(ContentBlockVO.TYPE_TEXT, "段B", Map.of());
+        ContentBlockVO c = new ContentBlockVO(ContentBlockVO.TYPE_TEXT, "段C", Map.of());
+        ContentBlockVO d = new ContentBlockVO(ContentBlockVO.TYPE_TEXT, "段D", Map.of());
+        ContentBlockVO image = new ContentBlockVO(ContentBlockVO.TYPE_IMAGE, "图", Map.of());
+        ContentBlockVO table = new ContentBlockVO(ContentBlockVO.TYPE_TABLE, "表", Map.of());
+        ContentBlockVO e = new ContentBlockVO(ContentBlockVO.TYPE_TEXT, "段E", Map.of());
+        ContentBlockVO f = new ContentBlockVO(ContentBlockVO.TYPE_TEXT, "段F", Map.of());
+        ContentBlockVO g = new ContentBlockVO(ContentBlockVO.TYPE_TEXT, "段G", Map.of());
+        ContentBlockVO h = new ContentBlockVO(ContentBlockVO.TYPE_TEXT, "段H", Map.of());
+        ParsedDocument parsed = new ParsedDocument("hash-1",
+                List.of(a, b, c, d, image, table, e, f, g, h));
+
+        // when
+        ParsedDocument result = injector.inject(parsed);
+
+        // then：仅窗口内 TEXT 块按序列序纳入；窗口外（段A / 段G / 段H）与窗口内多模态块（表）均不纳入
+        String neighbor = (String) result.blocks().get(4).meta().get(MultimodalMetaKeys.META_KEY_NEIGHBOR_TEXT);
+        assertEquals("段B 段C 段D 段E 段F", neighbor);
+        assertFalse(neighbor.contains("段A"));
+        assertFalse(neighbor.contains("段G"));
+        assertFalse(neighbor.contains("段H"));
+    }
+
+    @Test
+    void should_normalizeEmbeddedWhitespace_when_inject_given_neighborTextWithNewlineAndTabs() {
+        // given：前向文本块内含换行与连续制表符（版式化的「图1」行）
+        ContentBlockVO body = new ContentBlockVO(ContentBlockVO.TYPE_TEXT,
+                "今天天气不好，详见图1：\n\n\t\t\t\t\t\t\t\t图1", Map.of());
+        ContentBlockVO image = new ContentBlockVO(ContentBlockVO.TYPE_IMAGE, "图", Map.of());
+        ParsedDocument parsed = new ParsedDocument("hash-1", List.of(body, image));
+
+        // when
+        ParsedDocument result = injector.inject(parsed);
+
+        // then：内容内部的换行与连续制表符归一为单个空格，单行版式不被撑破
+        String neighbor = (String) result.blocks().get(1).meta().get(MultimodalMetaKeys.META_KEY_NEIGHBOR_TEXT);
+        assertEquals("今天天气不好，详见图1： 图1", neighbor);
+        assertFalse(neighbor.contains("\n"));
+        assertFalse(neighbor.contains("\t"));
+    }
+
+    @Test
+    void should_notTruncateNeighborText_when_inject_given_oversizedNeighborBlock() {
+        // given：前向文本块远超旧单侧上限（200 字符）
         String longText = "长".repeat(300);
         ContentBlockVO body = new ContentBlockVO(ContentBlockVO.TYPE_TEXT, longText, Map.of());
         ContentBlockVO image = new ContentBlockVO(ContentBlockVO.TYPE_IMAGE, "图", Map.of());
@@ -117,10 +162,10 @@ class MultimodalContextInjectorTest {
         // when
         ParsedDocument result = injector.inject(parsed);
 
-        // then：邻近文本被截断（abbreviate 含省略号，长度收敛在上限内）
+        // then：不做单侧截断、不追加省略号
         String neighbor = (String) result.blocks().get(1).meta().get(MultimodalMetaKeys.META_KEY_NEIGHBOR_TEXT);
-        assertTrue(neighbor.length() <= 200);
-        assertTrue(neighbor.endsWith("..."));
+        assertEquals(longText, neighbor);
+        assertFalse(neighbor.endsWith("..."));
     }
 
     @Test

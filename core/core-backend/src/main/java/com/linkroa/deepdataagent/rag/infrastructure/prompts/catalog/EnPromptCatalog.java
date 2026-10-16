@@ -15,7 +15,6 @@ public final class EnPromptCatalog {
     Image Content Analysis:
     - Section Path: {section_path}
     - Neighbor Text: {neighbor_text}
-    Image Path: {image_path}
     Captions: {captions}
     Footnotes: {footnotes}
 
@@ -24,7 +23,6 @@ public final class EnPromptCatalog {
     /** 模板 <code>table_chunk</code> 正文（迁移自 prompts/document-engine/en/chunk-template.md） */
     public static final String TABLE_CHUNK = """
     Table Analysis:
-    Image Path: {table_img_path}
     Caption: {table_caption}
     Structure: {table_body}
     Footnotes: {table_footnote}

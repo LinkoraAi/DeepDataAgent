@@ -15,7 +15,6 @@ public final class ZhPromptCatalog {
     图片内容分析：
     - 章节路径：{section_path}
     - 邻近文本：{neighbor_text}
-    图片路径：{image_path}
     标注：{captions}
     脚注：{footnotes}
 
@@ -24,7 +23,6 @@ public final class ZhPromptCatalog {
     /** 模板 <code>table_chunk</code> 正文（迁移自 prompts/document-engine/zh/chunk-template.md） */
     public static final String TABLE_CHUNK = """
     表格分析：
-    图片路径：{table_img_path}
     标题：{table_caption}
     结构：{table_body}
     脚注：{table_footnote}

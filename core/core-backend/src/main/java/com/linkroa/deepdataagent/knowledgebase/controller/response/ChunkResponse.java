@@ -16,6 +16,8 @@ import java.time.OffsetDateTime;
  * @param sourceFileName   来源文件名
  * @param sourceType       分块来源标识（ChunkSource 枚举名：PARSED=解析产生 / MANUAL=人工新增；
  *                         管理侧据此区分「可删除」与「仅可编辑」的切片）
+ * @param mediaFile        多模态图片在线预览相对 URL（{@code /api/v1/knowledge-base/chunks/{id}/media}）；
+ *                         切片未关联图片时为 {@code null}，前端据此在切片详情中一并展示图片
  * @param createdAt        创建时间
  * @param updatedAt        更新时间
  */
@@ -30,6 +32,7 @@ public record ChunkResponse(
         String chunkContentType,
         String sourceFileName,
         String sourceType,
+        String mediaFile,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {

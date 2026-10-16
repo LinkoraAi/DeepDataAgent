@@ -120,6 +120,59 @@ class KnowledgeBaseResponseConvertTest {
     }
 
     @Test
+    void should_buildMediaFileUrl_when_toResponse_given_chunkWithMediaReference() {
+        // given：切片 s3File 携带多模态图片对象键（TEXT 等非 IMAGE 形态也可能关联图片）
+        Chunk chunk = Chunk.restore(6L, 1L, 2L, 3, 88, "图文混排正文", "{}",
+                ChunkContentType.TEXT, "a.docx", "{\"objectKey\":\"rag/1/2/images/pic-1.png\"}",
+                ChunkSource.PARSED, null, null);
+
+        // when
+        ChunkResponse response = convert.toResponse(chunk);
+
+        // then：仅暴露切片媒体预览端点，对象键不外泄
+        assertEquals("/api/v1/knowledge-base/chunks/6/media", response.mediaFile());
+    }
+
+    @Test
+    void should_returnNullMediaFile_when_toResponse_given_textChunkWithoutReference() {
+        // given：纯文本切片无 s3File 引用
+        Chunk chunk = Chunk.restore(7L, 1L, 2L, 4, 12, "纯文本", "{}",
+                ChunkContentType.TEXT, "a.docx", null, ChunkSource.PARSED, null, null);
+
+        // when
+        ChunkResponse response = convert.toResponse(chunk);
+
+        // then
+        assertNull(response.mediaFile());
+    }
+
+    @Test
+    void should_returnNullMediaFile_when_toResponse_given_malformedMediaReference() {
+        // given：s3File 为非法 JSON（脏数据不得阻断列表渲染）
+        Chunk chunk = Chunk.restore(8L, 1L, 2L, 5, 12, "正文", "{}",
+                ChunkContentType.IMAGE, "a.docx", "{not-a-json", ChunkSource.PARSED, null, null);
+
+        // when
+        ChunkResponse response = convert.toResponse(chunk);
+
+        // then
+        assertNull(response.mediaFile());
+    }
+
+    @Test
+    void should_returnNullMediaFile_when_toChunkMediaFile_given_referenceMissingObjectKey() {
+        // given：JSON 合法但缺 objectKey
+        Chunk chunk = Chunk.restore(9L, 1L, 2L, 6, 12, "正文", "{}",
+                ChunkContentType.IMAGE, "a.docx", "{\"bucket\":\"legacy\"}", ChunkSource.PARSED, null, null);
+
+        // when
+        String mediaFile = convert.toChunkMediaFile(chunk);
+
+        // then
+        assertNull(mediaFile);
+    }
+
+    @Test
     void should_returnZeroCounts_when_toStatsResponse_given_nullStatistics() {
         // when
         KnowledgeBaseStatsResponse response = convert.toStatsResponse(null);

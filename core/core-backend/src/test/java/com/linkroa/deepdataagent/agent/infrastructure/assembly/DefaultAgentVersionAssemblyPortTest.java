@@ -308,6 +308,7 @@ class DefaultAgentVersionAssemblyPortTest {
         stubDefinition(false);
         when(agentVersionRepository.findByAgentIdAndVersionNumber("agent-a", 1))
                 .thenReturn(Optional.of(versionWithModel(1, "v1", "\"ultimate\"")));
+        when(modelProfileRepository.findByProfileId("ultimate")).thenReturn(Optional.empty());
         when(modelCatalogService.resolveProfileId("ultimate", OWNER)).thenReturn("p-map");
         when(modelProfileRepository.findByProfileId("p-map"))
                 .thenReturn(Optional.of(profile(ApiFormat.OPENAI, "gpt-4", "enc-cred")));
@@ -338,12 +339,48 @@ class DefaultAgentVersionAssemblyPortTest {
     }
 
     @Test
+    void should_useDirectBoundProfile_when_resolve_given_snapshotProfileIdMissingAndModelIdIsProfileId() {
+        // given（直接绑定：快照无 profileId，但模型引用 id 本身就是内部 profile_id——
+        // 使用绑定到智能体的模型，不依赖目录供应商映射）
+        stubDefinition(false);
+        when(agentVersionRepository.findByAgentIdAndVersionNumber("agent-a", 1))
+                .thenReturn(Optional.of(versionWithModel(1, "v1", "\"mp-qwen38-flash\"")));
+        when(modelProfileRepository.findByProfileId("mp-qwen38-flash"))
+                .thenReturn(Optional.of(profile(ApiFormat.OPENAI, "qwen3.8-flash", "enc-cred")));
+        when(credentialEncryptionUtil.decrypt("enc-cred")).thenReturn("sk-plain");
+
+        // when
+        ResolvedAgentAssemblyDTO resolved = port.resolve("agent-a", "1", OWNER);
+
+        // then（直接绑定命中即止，不再查询目录供应商映射）
+        assertEquals("sk-plain", resolved.credential());
+        assertEquals("openai:qwen3.8-flash", resolved.modelIndicator());
+        verify(modelCatalogService, never()).resolveProfileId(any(), any());
+    }
+
+    @Test
+    void should_throwNotFound_when_resolve_given_directBoundProfileOwnedByOther() {
+        // given（直接绑定的模型配置归属他人：统一 404，不区分不存在与越权）
+        stubDefinition(false);
+        when(agentVersionRepository.findByAgentIdAndVersionNumber("agent-a", 1))
+                .thenReturn(Optional.of(versionWithModel(1, "v1", "\"mp-x\"")));
+        when(modelProfileRepository.findByProfileId("mp-x"))
+                .thenReturn(Optional.of(profileWithOwner(ApiFormat.OPENAI, "m", "enc-cred", OTHER_OWNER)));
+
+        // when & then
+        ResourceNotFoundException ex = assertThrows(ResourceNotFoundException.class,
+                () -> port.resolve("agent-a", "1", OWNER));
+        assertEquals("模型配置不存在", ex.getMessage());
+    }
+
+    @Test
     void should_preferExplicitTuning_when_resolve_given_modelRefWithEffortAndWindow() {
         // given（对象形态引用携带显式档位：显式值优先于目录默认）
         stubDefinition(false);
         when(agentVersionRepository.findByAgentIdAndVersionNumber("agent-a", 1))
                 .thenReturn(Optional.of(versionWithModel(1, "v1",
                         "{\"id\":\"ultimate\",\"effort\":\"high\",\"context_window\":200000}")));
+        when(modelProfileRepository.findByProfileId("ultimate")).thenReturn(Optional.empty());
         when(modelCatalogService.resolveProfileId("ultimate", OWNER)).thenReturn("p-map");
         when(modelProfileRepository.findByProfileId("p-map"))
                 .thenReturn(Optional.of(profile(ApiFormat.OPENAI, "gpt-4", "enc-cred")));
@@ -364,6 +401,7 @@ class DefaultAgentVersionAssemblyPortTest {
         stubDefinition(false);
         when(agentVersionRepository.findByAgentIdAndVersionNumber("agent-a", 1))
                 .thenReturn(Optional.of(versionWithModel(1, "v1", "\"ultimate\"")));
+        when(modelProfileRepository.findByProfileId("ultimate")).thenReturn(Optional.empty());
         when(modelCatalogService.resolveProfileId("ultimate", OWNER)).thenReturn("p-map");
         when(modelProfileRepository.findByProfileId("p-map"))
                 .thenReturn(Optional.of(profile(ApiFormat.OPENAI, "gpt-4", "enc-cred")));

@@ -425,20 +425,32 @@ public class AgentApplicationService {
     }
 
     /**
-     * 模型引用解析：解析 {@code model_json}（字符串简写或对象形态）→ 目录校验（不在目录 / 已禁用 /
-     * 档位不支持 → 400）→ 内部供应商映射（租户键覆盖默认键，未映射返回 {@code null}，运行时装配
-     * 回退默认目录模型 + 可用供应商）。映射命中时内部配置须存在且 ENABLED（管理员误禁 → 404），
-     * 且须<b>归属当前请求 owner</b>（与装配期 {@code DefaultAgentVersionAssemblyPort.requireOwner}
-     * 两阶段对称，跨租户引用一律 404）。
+     * 模型引用解析：解析 {@code model_json}（字符串简写或对象形态）后按两阶段解析内部配置：
+     * <p>①<b>直接绑定</b>：模型 id 本身就是内部 {@code model_profile_id}（智能体绑定的模型配置，
+     * 前端模型下拉直选本租户启用中的配置）→ 引用合法性校验（存在且 ENABLED）+ 归属校验后直接返回，
+     * 不经模型目录与供应商映射；</p>
+     * <p>②<b>目录形态</b>：目录校验（不在目录 / 已禁用 / 档位不支持 → 400）→ 内部供应商映射
+     * （租户键覆盖默认键，未映射返回 {@code null}，运行时装配回退默认目录模型 + 可用供应商）。
+     * 映射命中时内部配置须存在且 ENABLED（管理员误禁 → 404），且须<b>归属当前请求 owner</b>
+     * （与装配期 {@code DefaultAgentVersionAssemblyPort.requireOwner} 两阶段对称，跨租户引用一律 404）。</p>
      *
      * @param modelJson 模型引用 JSON（请求经转换器序列化，字符串或对象形态）
      * @param ownerId   租户用户 id（映射解析用）
-     * @return 内部 model_profile_id；未配置映射返回 {@code null}
+     * @return 内部 model_profile_id；目录形态未配置映射返回 {@code null}
      */
     private String resolveModel(String modelJson, Long ownerId) {
         ModelRef modelRef = ModelRef.parse(modelJson);
         if (modelRef == null) {
             throw new IllegalArgumentException("模型引用不能为空");
+        }
+        // 直接绑定：模型 id 即内部 profile_id（智能体绑定的模型配置），发布期固化进版本快照
+        ModelProfile direct = modelProfileRepository.findByProfileId(modelRef.id()).orElse(null);
+        if (direct != null) {
+            ModelProfileValidator.validateReferable(direct);
+            if (!Objects.equals(direct.ownerId(), ownerId)) {
+                throw new ResourceNotFoundException("模型配置不存在");
+            }
+            return direct.profileId();
         }
         modelCatalogService.validateModel(modelRef);
         String profileId = modelCatalogService.resolveProfileId(modelRef.id(), ownerId);

@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * 多模态块检索上下文注入器。
@@ -22,11 +23,12 @@ import java.util.Map;
  * <ul>
  *   <li>{@link MultimodalMetaKeys#META_KEY_SECTION_PATH} —— 章节路径：顺序扫描全部内容块，维护一个
  *       标题栈（标题块 = {@code TEXT} 且 meta 携带解析器注入的标题层级键 {@code text_level}），
- *       遇到多模态块时按栈内层级由浅到深拼接为 {@code ## 营收 > ### 季度趋势} 形态
- *       （每级前缀 {@code #}×level、层级间以 {@code > } 连接）；栈空（无标题层级）时不写该键；</li>
- *   <li>{@link MultimodalMetaKeys#META_KEY_NEIGHBOR_TEXT} —— 邻近文本：取该块<b>前向</b>最近 {@code TEXT}
- *       块与<b>后向</b>最近 {@code TEXT} 块的可见文本，各截断至 200 字符后以省略号连接为「前…后」；
- *       前后皆无文本块时不写该键。</li>
+ *       遇到多模态块时按栈内标题文本由浅到深拼接为 {@code 营收 > 季度趋势} 形态
+ *       （层级间以 {@code > } 连接；层级仅用于栈维护，不进入路径文本）；栈空（无标题层级）时不写该键；</li>
+ *   <li>{@link MultimodalMetaKeys#META_KEY_NEIGHBOR_TEXT} —— 邻近文本：以该块在内容块序列中的下标为中心，
+ *       向前后各取 {@value #NEIGHBOR_WINDOW_SIZE} 个下标位置（不含该块自身），窗口内仅取 {@code TEXT} 块；
+ *       每个文本块先做空白归一（去首尾空白，并把内容内部的换行与连续制表符压缩为单个空格），
+ *       再以单个空格连接；窗口内无文本块时不写该键。</li>
  * </ul>
  * <p>降级与容错（注入永不抛）：</p>
  * <ul>
@@ -51,14 +53,14 @@ public class MultimodalContextInjector {
      */
     private static final String META_KEY_TEXT_LEVEL = "text_level";
 
-    /** 章节路径层级前缀（Markdown 井号） */
-    private static final String HEADING_PREFIX = "#";
     /** 章节路径层级连接符（前后各一空格） */
     private static final String SECTION_PATH_SEPARATOR = " > ";
-    /** 邻近文本单侧截断长度上限（字符） */
-    private static final int NEIGHBOR_TEXT_MAX_LENGTH = 200;
-    /** 邻近文本前后段连接省略号 */
-    private static final String NEIGHBOR_TEXT_CONNECTOR = "…";
+    /** 邻近文本位置窗口半径：以多模态块下标为中心，向前后各取该数量个下标位置 */
+    private static final int NEIGHBOR_WINDOW_SIZE = 3;
+    /** 邻近文本各文本块之间的连接符（单个空格） */
+    private static final String NEIGHBOR_TEXT_SEPARATOR = " ";
+    /** 文本块内容的空白断裂（换行与制表符及其两侧空白），归一为单个空格 */
+    private static final Pattern NEIGHBOR_WHITESPACE_BREAK = Pattern.compile("\\s*[\\r\\n\\t]+\\s*");
 
     /**
      * 为解析产物中的多模态块注入检索上下文元数据。
@@ -72,25 +74,6 @@ public class MultimodalContextInjector {
         }
         List<ContentBlockVO> source = parsed.blocks();
         int size = source.size();
-        // 前向预计算：每个位置之前最近的 TEXT 块文本（含自身为 TEXT 时取自身）——用于邻近文本的「前」段
-        String[] forwardText = new String[size];
-        String lastText = null;
-        for (int i = 0; i < size; i++) {
-            if (isTextBlock(source.get(i))) {
-                lastText = source.get(i).text();
-            }
-            forwardText[i] = lastText;
-        }
-        // 后向预计算：每个位置之后最近的 TEXT 块文本——用于邻近文本的「后」段
-        String[] backwardText = new String[size];
-        lastText = null;
-        for (int i = size - 1; i >= 0; i--) {
-            if (isTextBlock(source.get(i))) {
-                lastText = source.get(i).text();
-            }
-            backwardText[i] = lastText;
-        }
-
         List<ContentBlockVO> result = new ArrayList<>(size);
         // 标题栈：自浅到深的 (层级, 标题) 序列，层级即 text_level 值
         List<Heading> headingStack = new ArrayList<>();
@@ -105,7 +88,7 @@ public class MultimodalContextInjector {
                 result.add(block);
                 continue;
             }
-            result.add(injectBlock(block, headingStack, forwardText[i], backwardText[i]));
+            result.add(injectBlock(block, headingStack, collectWindowTexts(source, i)));
         }
         return new ParsedDocument(parsed.parsedTextHash(), result, parsed.fileName(), parsed.images());
     }
@@ -115,19 +98,18 @@ public class MultimodalContextInjector {
      *
      * @param block        多模态块
      * @param headingStack 当前标题栈（自浅到深）
-     * @param precedingText 前向最近文本块内容（可空）
-     * @param followingText 后向最近文本块内容（可空）
+     * @param windowTexts  位置窗口内各文本块归一后的内容（按序列序，可空）
      * @return 注入后的新块；无需注入或注入异常时原样返回入参块
      */
     private ContentBlockVO injectBlock(ContentBlockVO block, List<Heading> headingStack,
-                                       String precedingText, String followingText) {
+                                       List<String> windowTexts) {
         try {
             Map<String, Object> meta = new HashMap<>(ObjectUtils.isEmpty(block.meta()) ? Map.of() : block.meta());
             String sectionPath = buildSectionPath(headingStack);
             if (StringUtils.isNotBlank(sectionPath)) {
                 meta.put(MultimodalMetaKeys.META_KEY_SECTION_PATH, sectionPath);
             }
-            String neighborText = buildNeighborText(precedingText, followingText);
+            String neighborText = buildNeighborText(windowTexts);
             if (StringUtils.isNotBlank(neighborText)) {
                 meta.put(MultimodalMetaKeys.META_KEY_NEIGHBOR_TEXT, neighborText);
             }
@@ -136,6 +118,48 @@ public class MultimodalContextInjector {
             log.warn("多模态块上下文注入失败，原样保留该块：type=[{}] msg=[{}]", block.type(), e.getMessage());
             return block;
         }
+    }
+
+    /**
+     * 收集位置窗口内各文本块的归一内容：以 {@code index} 为中心，向前后各取
+     * {@link #NEIGHBOR_WINDOW_SIZE} 个下标位置（含两端、不含 {@code index} 自身），
+     * 仅取 {@code TEXT} 块，逐块做空白归一后按序列序返回。
+     *
+     * @param blocks 内容块序列
+     * @param index  多模态块下标
+     * @return 归一后的文本块内容列表；窗口内无文本块时为空列表
+     */
+    private List<String> collectWindowTexts(List<ContentBlockVO> blocks, int index) {
+        int from = Math.max(0, index - NEIGHBOR_WINDOW_SIZE);
+        int to = Math.min(blocks.size() - 1, index + NEIGHBOR_WINDOW_SIZE);
+        List<String> texts = new ArrayList<>();
+        for (int i = from; i <= to; i++) {
+            if (i == index) {
+                continue;
+            }
+            ContentBlockVO candidate = blocks.get(i);
+            if (!isTextBlock(candidate)) {
+                continue;
+            }
+            String normalized = normalizeWhitespace(candidate.text());
+            if (StringUtils.isNotBlank(normalized)) {
+                texts.add(normalized);
+            }
+        }
+        return texts;
+    }
+
+    /**
+     * 文本块内容空白归一：去除首尾空白，并把内容内部的换行与连续制表符压缩为单个空格。
+     *
+     * @param text 文本块原文，可为 null
+     * @return 归一后的单行文本；空白输入返回空串
+     */
+    private static String normalizeWhitespace(String text) {
+        if (StringUtils.isBlank(text)) {
+            return StringUtils.EMPTY;
+        }
+        return NEIGHBOR_WHITESPACE_BREAK.matcher(text).replaceAll(NEIGHBOR_TEXT_SEPARATOR).trim();
     }
 
     /**
@@ -194,7 +218,7 @@ public class MultimodalContextInjector {
     }
 
     /**
-     * 按标题栈拼接章节路径（每级 {@code #}×text_level 前缀 + 标题文本，层级间 {@code > } 连接）。
+     * 按标题栈拼接章节路径（各层标题文本间以 {@code > } 连接；层级仅用于栈维护、不进入路径文本）。
      *
      * @param headingStack 标题栈（自浅到深）
      * @return 章节路径；栈空返回 {@code null}
@@ -208,35 +232,22 @@ public class MultimodalContextInjector {
             if (path.length() > 0) {
                 path.append(SECTION_PATH_SEPARATOR);
             }
-            path.append(HEADING_PREFIX.repeat(heading.level())).append(' ').append(heading.title());
+            path.append(heading.title());
         }
         return path.toString();
     }
 
     /**
-     * 组装邻近文本：前向段与后向段各截断至上限后以省略号连接；两段皆空白返回 {@code null}。
+     * 组装邻近文本：位置窗口内各文本块归一内容以单个空格连接；无有效内容返回 {@code null}。
      *
-     * @param precedingText 前向最近文本块内容（可空）
-     * @param followingText 后向最近文本块内容（可空）
-     * @return 邻近文本（「前…后」）；无有效内容返回 {@code null}
+     * @param windowTexts 位置窗口内各文本块归一后的内容（按序列序，可空）
+     * @return 邻近文本（单空格连接的单行文本）；无有效内容返回 {@code null}
      */
-    private String buildNeighborText(String precedingText, String followingText) {
-        String before = StringUtils.trimToNull(precedingText);
-        String after = StringUtils.trimToNull(followingText);
-        if (ObjectUtils.isEmpty(before) && ObjectUtils.isEmpty(after)) {
+    private String buildNeighborText(List<String> windowTexts) {
+        if (CollectionUtils.isEmpty(windowTexts)) {
             return null;
         }
-        StringBuilder neighbor = new StringBuilder();
-        if (ObjectUtils.isNotEmpty(before)) {
-            neighbor.append(StringUtils.abbreviate(before, NEIGHBOR_TEXT_MAX_LENGTH));
-        }
-        if (ObjectUtils.isNotEmpty(after)) {
-            if (neighbor.length() > 0) {
-                neighbor.append(NEIGHBOR_TEXT_CONNECTOR);
-            }
-            neighbor.append(StringUtils.abbreviate(after, NEIGHBOR_TEXT_MAX_LENGTH));
-        }
-        return neighbor.toString();
+        return String.join(NEIGHBOR_TEXT_SEPARATOR, windowTexts);
     }
 
     /**

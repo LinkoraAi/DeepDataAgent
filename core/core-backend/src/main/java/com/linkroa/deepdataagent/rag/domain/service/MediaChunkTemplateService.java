@@ -19,6 +19,8 @@ import java.util.Map;
  * （image_chunk / table_chunk / equation_chunk / generic_chunk），产出结构化 chunk 正文：
  * enhanced caption（详描优先、摘要退化）+ 章节路径（{@code _section_path}）+
  * 邻近文本（{@code _neighbor_text}）等检索上下文一并向量化。</p>
+ * <p>正文不含媒体文件路径（图片 / 表格截图路径）：媒体引用的唯一载体是切片持有的
+ * 对象存储引用，正文中的路径既不可解析也非可访问地址，进入正文只会构成检索噪声。</p>
  * <p>仅做纯构造（含 {@link ChunkVO} 装配的便捷出口），不落库；meta 缺失字段以
  * {@code N/A} 占位，渲染永不误抛缺失占位符异常。键名读取统一复用
  * {@link MultimodalMetaKeys}，与 Stage1 及分流注入约定对齐。</p>
@@ -41,16 +43,12 @@ public class MediaChunkTemplateService {
     private static final String VAR_SECTION_PATH = "section_path";
     /** 占位符变量名：邻近文本 */
     private static final String VAR_NEIGHBOR_TEXT = "neighbor_text";
-    /** 占位符变量名：图片路径 */
-    private static final String VAR_IMAGE_PATH = "image_path";
     /** 占位符变量名：图片题注 */
     private static final String VAR_CAPTIONS = "captions";
     /** 占位符变量名：图片脚注 */
     private static final String VAR_FOOTNOTES = "footnotes";
     /** 占位符变量名：增强描述 */
     private static final String VAR_ENHANCED_CAPTION = "enhanced_caption";
-    /** 占位符变量名：表格截图路径 */
-    private static final String VAR_TABLE_IMG_PATH = "table_img_path";
     /** 占位符变量名：表格题注 */
     private static final String VAR_TABLE_CAPTION = "table_caption";
     /** 占位符变量名：表格结构体 */
@@ -168,14 +166,13 @@ public class MediaChunkTemplateService {
     }
 
     /**
-     * 图片块变量：image_path / captions / footnotes。
+     * 图片块变量：captions / footnotes。
+     * <p>媒体文件路径不进入正文：图片引用的唯一载体是切片持有的对象存储引用。</p>
      *
      * @param vars  变量表
      * @param block 内容块
      */
     private void buildImageVars(Map<String, String> vars, ContentBlockVO block) {
-        putVar(vars, VAR_IMAGE_PATH, MultimodalMetaKeys.metaString(block,
-                MultimodalMetaKeys.META_KEY_IMG_PATH, MultimodalMetaKeys.META_KEY_IMAGE_PATH));
         putVar(vars, VAR_CAPTIONS, MultimodalMetaKeys.metaString(block,
                 MultimodalMetaKeys.META_KEY_IMAGE_CAPTION, MultimodalMetaKeys.META_KEY_IMAGE_CAPTIONS));
         putVar(vars, VAR_FOOTNOTES, MultimodalMetaKeys.metaString(block,
@@ -183,14 +180,13 @@ public class MediaChunkTemplateService {
     }
 
     /**
-     * 表格块变量：table_img_path / table_caption / table_body / table_footnote。
+     * 表格块变量：table_caption / table_body / table_footnote。
+     * <p>媒体文件路径不进入正文：表格引用的唯一载体是切片持有的对象存储引用。</p>
      *
      * @param vars  变量表
      * @param block 内容块
      */
     private void buildTableVars(Map<String, String> vars, ContentBlockVO block) {
-        putVar(vars, VAR_TABLE_IMG_PATH, MultimodalMetaKeys.metaString(block,
-                MultimodalMetaKeys.META_KEY_IMG_PATH));
         putVar(vars, VAR_TABLE_CAPTION, MultimodalMetaKeys.metaString(block,
                 MultimodalMetaKeys.META_KEY_TABLE_CAPTION));
         putVar(vars, VAR_TABLE_BODY, StringUtils.defaultIfBlank(

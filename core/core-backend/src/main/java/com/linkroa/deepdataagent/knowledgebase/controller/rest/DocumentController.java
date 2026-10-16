@@ -6,11 +6,13 @@ import com.linkroa.deepdataagent.knowledgebase.application.command.UploadDocumen
 import com.linkroa.deepdataagent.knowledgebase.application.query.ListDocumentQuery;
 import com.linkroa.deepdataagent.knowledgebase.application.result.DedupHit;
 import com.linkroa.deepdataagent.knowledgebase.application.result.DocumentContentResult;
+import com.linkroa.deepdataagent.knowledgebase.application.result.DocumentTextPreviewResult;
 import com.linkroa.deepdataagent.knowledgebase.application.service.DocumentApplicationService;
 import com.linkroa.deepdataagent.knowledgebase.controller.convert.KnowledgeBaseResponseConvert;
 import com.linkroa.deepdataagent.knowledgebase.controller.request.PrecheckUploadRequest;
 import com.linkroa.deepdataagent.knowledgebase.controller.request.ReparseDocumentRequest;
 import com.linkroa.deepdataagent.knowledgebase.controller.request.UploadDocumentRequest;
+import com.linkroa.deepdataagent.knowledgebase.controller.response.DocumentPreviewTextResponse;
 import com.linkroa.deepdataagent.knowledgebase.controller.response.DocumentResponse;
 import com.linkroa.deepdataagent.knowledgebase.controller.response.DuplicateDocumentResponse;
 import com.linkroa.deepdataagent.knowledgebase.controller.response.UploadDocumentResponse;
@@ -185,6 +187,26 @@ public class DocumentController {
     @GetMapping("/{id}")
     public ApiResponse<DocumentResponse> detail(@PathVariable Long id) {
         return ApiResponse.success(KnowledgeBaseResponseConvert.INSTANCE.toResponse(applicationService.get(id)));
+    }
+
+    /**
+     * 在线预览办公类文档的纯文本（DOC / DOCX / XLS / XLSX / PPT / PPTX）。
+     * <p>这些格式浏览器无法原生渲染，由服务端经 Tika 提取纯文本回传；前置闸门与
+     * {@link #previewContent} 一致（知识库 ACTIVE、对象存在），文本超长时截断并在
+     * {@code truncated} 标记，前端提示下载查看完整内容。PDF / 图片 / 文本类请走 {@code /content}。</p>
+     *
+     * @param id 文档ID
+     * @return 纯文本预览结果
+     */
+    @GetMapping("/{id}/preview-text")
+    public ApiResponse<DocumentPreviewTextResponse> previewText(@PathVariable Long id) {
+        DocumentTextPreviewResult result = applicationService.openTextPreview(id);
+        return ApiResponse.success(new DocumentPreviewTextResponse(
+                result.documentId(),
+                result.fileName(),
+                result.fileType().name(),
+                result.text(),
+                result.truncated()));
     }
 
     /**

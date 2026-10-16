@@ -11,9 +11,15 @@ import com.linkroa.deepdataagent.knowledgebase.controller.response.UploadDocumen
 import com.linkroa.deepdataagent.knowledgebase.domain.model.Chunk;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.Document;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.KnowledgeBase;
+import com.linkroa.deepdataagent.shared.constant.api.ApiVersionConstants;
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.mapstruct.Mapper;
 import org.mapstruct.ReportingPolicy;
 import org.mapstruct.factory.Mappers;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 import java.util.Map;
@@ -37,6 +43,20 @@ public interface KnowledgeBaseResponseConvert {
 
     /** 统计结果中切片总数的键名 */
     String STATS_KEY_TOTAL_CHUNKS = "totalChunks";
+
+    /**
+     * 多模态资源可访问路径模板：知识库切片媒体在线预览端点（inline 流式代理），
+     * 与检索侧 {@code RetrievalResponseConvert} 的 modalFile 口径完全一致；
+     * 仅暴露切片 ID，不外泄对象键与对象存储凭据。
+     */
+    String MEDIA_FILE_URL_TEMPLATE = "/api/v" + ApiVersionConstants.CURRENT_API_VERSION
+            + "/knowledge-base/chunks/%s/media";
+
+    /** 切片媒体存储引用 JSON（{@code chunk.s3_file}）中的对象键字段名 */
+    String FIELD_S3_OBJECT_KEY = "objectKey";
+
+    /** 存储引用 JSON 解析器（无状态，进程内共享） */
+    ObjectMapper MEDIA_REFERENCE_MAPPER = new ObjectMapper();
 
     /**
      * 知识库聚合根 → 响应 DTO。
@@ -118,9 +138,36 @@ public interface KnowledgeBaseResponseConvert {
                 enumToName(chunk.chunkContentType()),
                 chunk.sourceFileName(),
                 enumToName(chunk.sourceType()),
+                toChunkMediaFile(chunk),
                 chunk.createdAt(),
                 chunk.updatedAt()
         );
+    }
+
+    /**
+     * 切片多模态图片引用 → 可访问资源路径（供切片详情一并展示图片）。
+     * <p>宽松解析 {@code chunk.s3File} JSON（{@code {objectKey}}）：空白引用、非法 JSON、
+     * 缺对象键（纯文本切片属此情况）一律返回 {@code null}，MUST NOT 因脏数据抛异常阻断列表渲染。
+     * 口径与 {@code MediaImageCleanupService.parseMediaReference} 保持一致。</p>
+     *
+     * @param chunk 切片聚合根，不可为 {@code null}
+     * @return 媒体预览端点相对 URL；切片未关联图片时返回 {@code null}
+     */
+    default String toChunkMediaFile(Chunk chunk) {
+        if (ObjectUtils.isEmpty(chunk) || ObjectUtils.isEmpty(chunk.id())
+                || StringUtils.isBlank(chunk.s3File())) {
+            return null;
+        }
+        try {
+            JsonNode reference = MEDIA_REFERENCE_MAPPER.readTree(chunk.s3File());
+            String objectKey = reference.path(FIELD_S3_OBJECT_KEY).stringValue(null);
+            if (StringUtils.isBlank(objectKey)) {
+                return null;
+            }
+            return String.format(MEDIA_FILE_URL_TEMPLATE, chunk.id());
+        } catch (JacksonException e) {
+            return null;
+        }
     }
 
     /**

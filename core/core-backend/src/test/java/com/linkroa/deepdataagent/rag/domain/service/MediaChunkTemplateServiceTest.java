@@ -34,8 +34,8 @@ class MediaChunkTemplateServiceTest {
 
     /**
      * 场景：图片块携带完整注入键与原始键（无脚注）。
-     * 预期：路由 image_chunk，enhanced_caption 取详描，section_path/neighbor_text/image_path/captions
-     * 均按 meta 注入，缺失的 footnotes 归一为 N/A。
+     * 预期：路由 image_chunk，enhanced_caption 取详描，section_path/neighbor_text/captions
+     * 按 meta 注入，缺失的 footnotes 归一为 N/A；正文不含媒体文件路径行（meta 有 img_path 也不进正文）。
      */
     @Test
     void should_renderImageChunkWithFullVars_when_buildChunkContent_given_imageBlockWithMeta() {
@@ -51,11 +51,12 @@ class MediaChunkTemplateServiceTest {
         // when
         String content = service.buildChunkContent(block, description, LANGUAGE);
 
-        // then：image_chunk 路由（独有标签）+ 各变量按 meta 注入 + 缺失脚注归一 N/A
+        // then：image_chunk 路由（独有标签）+ 各变量按 meta 注入 + 缺失脚注归一 N/A + 正文不含媒体路径
         assertTrue(content.contains("图片内容分析："));
         assertTrue(content.contains("- 章节路径：第一章>1.1 销售"));
         assertTrue(content.contains("- 邻近文本：上文与下文"));
-        assertTrue(content.contains("图片路径：images/sales.png"));
+        assertFalse(content.contains("图片路径："), "正文 MUST NOT 含媒体文件路径行");
+        assertFalse(content.contains("images/sales.png"), "meta 中的 img_path MUST NOT 进入正文");
         assertTrue(content.contains("标注：季度销售额柱状图"));
         assertTrue(content.contains("脚注：N/A"));
         assertTrue(content.contains("视觉分析：柱状图显示销售额上升"));
@@ -101,7 +102,8 @@ class MediaChunkTemplateServiceTest {
 
     /**
      * 场景：表格块携带 table_body/table_caption/img_path。
-     * 预期：路由 table_chunk，表格结构体与题注按 meta 注入，缺失脚注归一 N/A。
+     * 预期：路由 table_chunk，表格结构体与题注按 meta 注入，缺失脚注归一 N/A；
+     * 正文不含媒体文件路径行（meta 有 img_path 也不进正文）。
      */
     @Test
     void should_renderTableChunkWithBody_when_buildChunkContent_given_tableBlockWithMeta() {
@@ -116,9 +118,10 @@ class MediaChunkTemplateServiceTest {
         // when
         String content = service.buildChunkContent(block, description, LANGUAGE);
 
-        // then：table_chunk 路由（独有标签）+ 结构体/题注/图片路径注入 + 脚注归一 N/A
+        // then：table_chunk 路由（独有标签）+ 结构体/题注注入 + 脚注归一 N/A + 正文不含媒体路径
         assertTrue(content.contains("表格分析："));
-        assertTrue(content.contains("图片路径：images/table1.png"));
+        assertFalse(content.contains("图片路径："), "正文 MUST NOT 含媒体文件路径行");
+        assertFalse(content.contains("images/table1.png"), "meta 中的 img_path MUST NOT 进入正文");
         assertTrue(content.contains("标题：员工表"));
         assertTrue(content.contains("结构：姓名|年龄\n张三|18"));
         assertTrue(content.contains("脚注：N/A"));
