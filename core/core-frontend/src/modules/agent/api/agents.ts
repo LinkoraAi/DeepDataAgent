@@ -1,261 +1,239 @@
-/**
- * Agent 定义与版本管理接口模块（对齐后端 AgentController：/api/v1/cloud/agents）。
- * <p>「配置即版本」：创建与发布版本共用同一请求体，创建即产生 v1；发布为全量替换，
- * 未提交字段视为清空并固化进新版本快照。</p>
- * <p>列表与版本历史遵循 Cursor 约定（limit/after_id/before_id →
- * {data, first_id, last_id, has_more}，创建时间/发布号降序，不提供 total）。</p>
- * <p>模型引用对齐系统模型目录：字符串简写（目录模型 id）或对象形态
- * {@code {id, effort?, context_window?}}，响应按提交形态回显；
- * 内部供应商映射（modelProfileId）不在对外契约出现。</p>
- * <p>结构化字段（tools / mcp_servers / skills / metadata）请求与响应均为结构化 JSON 值，
- * 未配置时响应回落空数组 / 空对象；AGENTS.md（agents_md）已废止，提交即 400。</p>
- */
-import { fetchJson, type CursorPageResponse } from '@/shared/api/http';
-import type { ModelEffort } from './cloud-models';
-import type { SkillBinding } from './skills';
+import { get, post, del, buildQuery } from '@/shared/api/http';
+import type { CursorPage } from '@/shared/types/api';
 
-/** 模型引用对象形态（effort / context_window 须在该目录模型支持档位内）。 */
-export interface CloudModelRef {
+/**
+ * 智能体与模型目录端点（后端 AgentController / CloudModelController，前缀 /api/v1/cloud/agents 与 /api/v1/cloud/models）。
+ * <p>契约要点（逐字段核对后端代码）：</p>
+ * <ul>
+ *   <li>创建：POST /agents（body=AgentConfigRequest）→ 完整 Agent 对象（version=1）；</li>
+ *   <li>改定义属性：POST /agents/{id}（body=UpdateAgentRequest，version 必填乐观锁）→ 生成新版本快照，
+ *       版本不匹配 409 conflict_error；</li>
+ *   <li>发版：POST /agents/{id}/versions（body=AgentConfigRequest 全量配置）→ 版本快照对象；</li>
+ *   <li>版本历史：GET /agents/{id}/versions（发布号降序游标，游标为版本号字符串，有下一页回传 next_page）；</li>
+ *   <li>激活/归档/删除：POST /agents/{id}/versions/{n}/activate、POST /agents/{id}/archive、DELETE /agents/{id}；</li>
+ *   <li>Agent 对象与版本快照对外<b>同形</b>（{@link AgentWire}），差别仅在 version 取值口径。</li>
+ * </ul>
+ * <p>已废止字段（agents_md、mcp_servers、multiagent 非空、model.speed）MUST NOT 出现在任何提交载荷中，
+ * 本模块的请求类型不提供这些字段，装配逻辑见 ../mappers.ts。</p>
+ */
+
+/** 智能体端点前缀（版本化云资源路径）。 */
+const BASE = '/api/v1/cloud/agents';
+
+/** 模型引用字符串简写形态：目录模型 id 或内部 model_profile_id（等价于默认调优参数）。 */
+export type ModelRefStringWire = string;
+
+/**
+ * 模型引用对象形态（后端 ModelRef：{id, effort?, context_window?}）。
+ * effort 线格式词汇为 none|low|medium|high|xhigh|max；context_window 为正整数档位。
+ */
+export interface ModelRefObjectWire {
+  /** 目录模型 id */
   id: string;
-  effort?: ModelEffort;
+  /** 推理 effort 档位（省略 = 目录缺省档位） */
+  effort?: string;
+  /** 上下文窗口档位（省略 = 目录缺省窗口） */
   context_window?: number;
 }
 
-/** 模型引用：目录模型 id 字符串简写，或对象形态（两种提交形态等价）。 */
-export type ModelRef = string | CloudModelRef;
+/** 模型引用对外形态：按提交形态回显，故两种形态都可能出现在响应里。 */
+export type ModelRefWire = ModelRefStringWire | ModelRefObjectWire;
 
-/** 内置工具集类型（enabled_tools / disallowed_tools / configs）。 */
-export const AGENT_TOOLSET_TYPE = 'agent_toolset_20260401';
-/** 浏览器工具集类型（本期不实现，提交即 400）。 */
-export const BROWSER_TOOLSET_TYPE = 'browser_toolset_20260714';
-/** MCP 工具集类型（引用 mcp_servers[].name）。 */
-export const MCP_TOOLSET_TYPE = 'mcp_toolset';
-/** 自定义工具类型。 */
-export const CUSTOM_TOOL_TYPE = 'custom';
-
-/** 内置工具名全集（白 / 黑名单仅可引用这 11 个名字，越界 400）。 */
-export const BUILTIN_TOOL_NAMES = [
-  'Bash',
-  'DeliverArtifacts',
-  'Edit',
-  'Glob',
-  'Grep',
-  'ImageGen',
-  'ImageSearch',
-  'Read',
-  'WebFetch',
-  'WebSearch',
-  'Write',
-] as const;
-
-/** 工具权限策略值域（空 = 平台默认）。 */
-export const TOOL_PERMISSION_POLICIES = ['always_allow', 'always_ask', 'always_deny'] as const;
-
-/** 逐工具配置项（agent_toolset / mcp_toolset 适用；custom 不支持）。 */
-export interface AgentToolConfigRecipe {
+/** 内置工具集条目的逐工具配置（后端 AgentTool.ToolConfig）。 */
+export interface AgentToolConfigWire {
+  /** 工具名（须在 11 个内置工具白名单内） */
   name: string;
-  /** false = 隐藏并拒绝调用；省略 = 默认启用 */
-  enabled?: boolean | null;
-  permission_policy?: string | null;
+  /** 是否启用（省略 = 默认启用；false = 隐藏并拒绝调用） */
+  enabled?: boolean;
+  /** 权限策略（省略 = 平台默认）：always_allow|always_ask|always_deny */
+  permission_policy?: string;
 }
 
-/** 工具配方条目（公开四类，按 type 取用相应字段）。 */
-export interface AgentToolRecipe {
+/** 内置工具集条目（type 恒 agent_toolset_20260401）。 */
+export interface AgentToolsetItemWire {
   type: string;
-  /** 内置工具白名单（省略 / 空数组 = 默认内置工具集，非清空） */
+  /** 白名单（空/省略 = 全量基座暴露） */
   enabled_tools?: string[];
-  /** 内置工具隐藏 / 拒绝名单 */
+  /** 隐藏/拒绝名单（与 enabled_tools 不得交集） */
   disallowed_tools?: string[];
-  configs?: AgentToolConfigRecipe[];
-  /** mcp_toolset 必填：须匹配某个 mcp_servers[].name */
-  mcp_server_name?: string;
-  /** custom 必填 */
+  /** 逐工具配置 */
+  configs?: AgentToolConfigWire[];
+}
+
+/** 自定义工具条目（type 恒 custom；不支持 configs/permission_policy）。 */
+export interface AgentCustomToolWire {
+  type: string;
+  /** 工具名（不得与内置重名、不得为 advisor、不得含 __ 或 mcp__ 前缀） */
   name?: string;
-  /** custom 必填 */
+  /** 工具描述（必填） */
   description?: string;
-  /** custom 必填：JSON Schema，type 须为 "object" */
+  /** 输入 JSON Schema（type 须为 object） */
   input_schema?: Record<string, unknown>;
 }
 
-/** 内联外部 MCP 工具源配方（仅 type=url）。 */
-export interface McpServerRecipe {
-  name: string;
+/** 工具配方条目联合类型（响应侧未做窄化判别，按 type 分支消费）。 */
+export type AgentToolWire = AgentToolsetItemWire | AgentCustomToolWire;
+
+/** 技能绑定条目（后端 SkillBinding：version 省略或 "latest" 为动态版，其余为钉版 epoch 串）。 */
+export interface AgentSkillBindingWire {
+  /** 绑定类型：catalog / custom */
   type: string;
-  url: string;
+  /** 技能业务 ID（skill_ 前缀） */
+  skill_id: string;
+  /** 版本键（epoch 微秒字符串；动态版省略该键） */
+  version?: string;
 }
 
 /**
- * Agent 对象 DTO（创建 / 列表 / 更新 / 详情与版本快照共用同一形状）。
- * <p><b>与版本快照同形</b>：{@code GET /agents/{id}?version=N} 与 {@code GET /agents/{id}/versions}
- * 返回的版本快照字段集与本接口完全一致，差别仅在 {@code version} 的取值口径——
- * Agent 对象取当前生效版本，快照取该快照自身的版本号。</p>
- * <p>归档仅以 {@code archived_at} 时间戳表达（无 archived 布尔位）；
- * {@code multiagent} 本期恒 {@code null}（词汇预留）。</p>
+ * 智能体线格式对象（后端 AgentResponse；Agent 对象与版本快照同形）。
+ * 键名与后端 record 组件名一致：基础字段无下划线，时间字段为 created_at/updated_at/archived_at。
  */
-export interface AgentDto {
+export interface AgentWire {
+  /** 业务 ID（agent_ 前缀） */
   id: string;
+  /** 对象类型（恒 agent） */
   type: string;
+  /** 名称（1-256） */
   name: string;
+  /** 描述（≤2048，未配置为 null） */
   description: string | null;
-  /** 模型引用（按提交形态回显：目录模型 id 字符串或对象形态） */
-  model: ModelRef;
-  /** 系统提示词（版本快照唯一指令载体） */
-  system: string;
-  /** 内联工具配方（未配置为空数组） */
-  tools: AgentToolRecipe[];
-  /** 内联外部 MCP 工具源配方（未配置为空数组） */
-  mcp_servers: McpServerRecipe[];
-  /** 技能绑定配方（未配置为空数组） */
-  skills: SkillBinding[];
-  /** 业务自定义元数据键值对象（未配置为空对象） */
+  /** 模型引用（按提交形态回显；快照缺失时 null） */
+  model: ModelRefWire | null;
+  /** 系统提示词（≤100000，未配置为 null） */
+  system: string | null;
+  /** 工具配方（未配置为空数组） */
+  tools: AgentToolWire[];
+  /** 技能绑定（未配置为空数组） */
+  skills: AgentSkillBindingWire[];
+  /** 业务元数据（未配置为空对象） */
   metadata: Record<string, unknown>;
-  /** 多智能体编排配置（本期恒 null） */
+  /** 多智能体编排（本期恒 null，词汇预留） */
   multiagent: Record<string, unknown> | null;
-  /** 当前版本号（起始 1）；版本快照为快照自身版本号 */
+  /** 版本号（Agent 对象取当前生效版本，快照取自身发布号；起始 1） */
   version: number;
-  /** 归档时间（未归档为 null） */
+  /** 归档时间（null = 未归档；契约无 archived 布尔） */
   archived_at: string | null;
+  /** 创建时间（RFC3339 UTC） */
   created_at: string;
+  /** 更新时间（RFC3339 UTC） */
   updated_at: string;
 }
 
 /**
- * Agent 配置请求（创建 / 发布版本共用）。
- * <p>与后端 `AgentConfigRequest` 一致：结构化字段直接提交 JSON 值（非 JSON 文本），
- * 缺省即清空并固化进新版本快照；{@code agents_md} 已废止（提交即 400），
- * 指令统一由 {@code system} 承载；非空 {@code multiagent} 同样 400（词汇预留），
- * 故请求面不提供该字段。</p>
+ * 模型目录条目 DTO 与拉取函数见同目录 cloud-models.ts（只读参考数据独立成模块）；
+ * 智能体表单模型双模式：默认直选本租户模型配置（listEnabledProfiles，值 = model_profile_id），
+ * 可切目录档位（值 = 档位 id + 可选调优），Raw 模式两形态皆可手工表达。
  */
-export interface AgentConfigPayload {
-  name: string;
-  description?: string | null;
-  system?: string;
-  /** 模型引用（目录模型 id 字符串简写，或 {id, effort?, context_window?} 对象形态；须存在于模型目录） */
-  model: ModelRef;
-  /** 内联工具配方（缺省 = 清空；browser 工具集本期 400） */
-  tools?: AgentToolRecipe[] | null;
-  /** 内联外部 MCP 工具源配方（缺省 = 清空；仅 type=url） */
-  mcp_servers?: McpServerRecipe[] | null;
-  /** 技能绑定配方（缺省 = 清空） */
-  skills?: SkillBinding[] | null;
-  /** 业务自定义元数据键值对象（缺省 = 清空） */
-  metadata?: Record<string, unknown> | null;
+
+/** 列表查询参数（后端 @RequestParam 真实参数名）。 */
+export interface ListAgentsParams {
+  /** 名称模糊关键字 */
+  keyword?: string;
+  /** 状态过滤：active（缺省）/ archived */
+  status?: string;
+  /** 元数据键值包含过滤（JSON 对象文本） */
+  metadata?: string;
+  /** 创建时间下界（RFC3339） */
+  created_after?: string;
+  /** 创建时间上界（RFC3339） */
+  created_before?: string;
+  /** 每页条数（1-100，缺省 20） */
+  limit?: number;
+  /** 向后翻页游标（本页末条 agent_id） */
+  after_id?: string;
+  /** 向前翻页游标（本页首条 agent_id，与 after_id 互斥） */
+  before_id?: string;
 }
 
-/** Agent 更新请求（OCC：必须携带当前最新版本号，不匹配 409）。 */
-export interface UpdateAgentPayload {
+/** 版本历史查询参数（游标为「版本号字符串」）。 */
+export interface ListAgentVersionsParams {
+  /** 每页条数（1-100，缺省 20） */
+  limit?: number;
+  /** 不透明下页游标（取响应 next_page，与 after_id/before_id 互斥） */
+  page?: string;
+  /** 向后翻页游标（版本号字符串） */
+  after_id?: string;
+  /** 向前翻页游标（版本号字符串，与 after_id 互斥） */
+  before_id?: string;
+}
+
+/** 创建与发版共用的配置载荷（后端 AgentConfigRequest 的对外提交形态）。 */
+export interface AgentConfigPayload {
+  /** 名称（1-256，必填） */
+  name: string;
+  /** 描述（≤2048） */
+  description?: string;
+  /** 系统提示词（≤100000，指令唯一载体） */
+  system?: string;
+  /** 模型引用（字符串简写或对象形态，必填） */
+  model: ModelRefWire;
+  /** 工具配方（内置工具集条目 + custom 条目） */
+  tools?: AgentToolWire[];
+  /** 技能绑定（≤20） */
+  skills?: AgentSkillBindingWire[];
+  /** 业务元数据键值对象 */
+  metadata?: Record<string, unknown>;
+}
+
+/** 改定义属性载荷（后端 UpdateAgentRequest；version 必填乐观锁，缺省名称/描述沿用现值）。 */
+export interface UpdateAgentDefinitionPayload {
+  /** 新名称（省略 = 沿用现值） */
   name?: string;
-  description?: string | null;
+  /** 新描述（省略 = 沿用现值） */
+  description?: string;
+  /** 客户端持有的当前版本号（必填；不匹配 409） */
   version: number;
 }
 
-/** Agent 列表游标查询参数（status：active / archived；metadata 为键值包含过滤 JSON 文本）。 */
-export interface ListAgentsOptions {
-  keyword?: string;
-  status?: 'active' | 'archived';
-  metadata?: string;
-  createdAfter?: string;
-  createdBefore?: string;
-  limit?: number;
-  afterId?: string;
-  beforeId?: string;
+/** 游标分页列出智能体（创建时间降序，缺省 status=active）。 */
+export function listAgents(params: ListAgentsParams = {}): Promise<CursorPage<AgentWire>> {
+  return get<CursorPage<AgentWire>>(`${BASE}${buildQuery({ ...params })}`);
 }
 
-const AGENTS_API_BASE = '/api/v1/cloud/agents';
-
-/** 创建 Agent（生成 v1）。 */
-export function createAgent(payload: AgentConfigPayload): Promise<AgentDto> {
-  return fetchJson<AgentDto>(AGENTS_API_BASE, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+/**
+ * 智能体详情。
+ * @param agentId 业务 ID
+ * @param version 目标发布号（省略 = 当前生效版本；传入则返回该版本快照，与 Agent 对象同形）
+ */
+export function getAgent(agentId: string, version?: number): Promise<AgentWire> {
+  const query = buildQuery({ version });
+  return get<AgentWire>(`${BASE}/${encodeURIComponent(agentId)}${query}`);
 }
 
-/** 游标分页查询 Agent 列表（创建时间降序，不提供 total）。 */
-export function listAgents(options?: ListAgentsOptions): Promise<CursorPageResponse<AgentDto>> {
-  const query = new URLSearchParams();
-  if (options?.keyword) {
-    query.set('keyword', options.keyword);
-  }
-  if (options?.status) {
-    query.set('status', options.status);
-  }
-  if (options?.metadata) {
-    query.set('metadata', options.metadata);
-  }
-  if (options?.createdAfter) {
-    query.set('created_after', options.createdAfter);
-  }
-  if (options?.createdBefore) {
-    query.set('created_before', options.createdBefore);
-  }
-  if (options?.limit != null) {
-    query.set('limit', String(options.limit));
-  }
-  if (options?.afterId) {
-    query.set('after_id', options.afterId);
-  }
-  if (options?.beforeId) {
-    query.set('before_id', options.beforeId);
-  }
-  const qs = query.toString();
-  return fetchJson<CursorPageResponse<AgentDto>>(qs ? `${AGENTS_API_BASE}?${qs}` : AGENTS_API_BASE);
+/** 创建智能体（同步产生首版快照并激活，返回 version=1 的完整对象）。 */
+export function createAgent(payload: AgentConfigPayload): Promise<AgentWire> {
+  return post<AgentWire>(BASE, payload);
 }
 
-/** Agent 详情：传入 version 返回对应版本快照，省略返回完整 Agent 对象（配置取当前生效版本）。 */
-export function getAgent(agentId: string, version?: number): Promise<AgentDto> {
-  const qs = version != null ? `?version=${version}` : '';
-  return fetchJson<AgentDto>(`${AGENTS_API_BASE}/${encodeURIComponent(agentId)}${qs}`);
+/** 改定义属性（POST /agents/{id}，携带 version 乐观锁；成功同步生成新版本快照，不匹配 409）。 */
+export function updateAgentDefinition(agentId: string, payload: UpdateAgentDefinitionPayload): Promise<AgentWire> {
+  return post<AgentWire>(`${BASE}/${encodeURIComponent(agentId)}`, payload);
 }
 
-/** 更新 Agent 定义属性（名称/描述；OCC：version 不匹配 409，更新产生新版本快照）。 */
-export function updateAgent(agentId: string, payload: UpdateAgentPayload): Promise<AgentDto> {
-  return fetchJson<AgentDto>(`${AGENTS_API_BASE}/${encodeURIComponent(agentId)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+/** 发布新版本（全量配置提交，版本号由服务端台账递增）。 */
+export function publishVersion(agentId: string, payload: AgentConfigPayload): Promise<AgentWire> {
+  return post<AgentWire>(`${BASE}/${encodeURIComponent(agentId)}/versions`, payload);
 }
 
-/** 发布新版本快照（版本号由服务端按版本台账递增）。 */
-export function publishAgentVersion(agentId: string, payload: AgentConfigPayload): Promise<AgentDto> {
-  return fetchJson<AgentDto>(`${AGENTS_API_BASE}/${encodeURIComponent(agentId)}/versions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-}
-
-/** 游标分页查询版本历史（发布号降序，行内 version 为快照自身版本号）。 */
+/** 游标分页列出版本历史（发布号降序）。 */
 export function listAgentVersions(
   agentId: string,
-  options?: { limit?: number; afterId?: string; beforeId?: string },
-): Promise<CursorPageResponse<AgentDto>> {
-  const query = new URLSearchParams();
-  if (options?.limit != null) {
-    query.set('limit', String(options.limit));
-  }
-  if (options?.afterId) {
-    query.set('after_id', options.afterId);
-  }
-  if (options?.beforeId) {
-    query.set('before_id', options.beforeId);
-  }
-  const qs = query.toString();
-  return fetchJson<CursorPageResponse<AgentDto>>(
-    qs
-      ? `${AGENTS_API_BASE}/${encodeURIComponent(agentId)}/versions?${qs}`
-      : `${AGENTS_API_BASE}/${encodeURIComponent(agentId)}/versions`,
-  );
+  params: ListAgentVersionsParams = {},
+): Promise<CursorPage<AgentWire>> {
+  return get<CursorPage<AgentWire>>(`${BASE}/${encodeURIComponent(agentId)}/versions${buildQuery({ ...params })}`);
 }
 
-/** 归档 Agent（拒绝创建新会话，不可恢复）。 */
-export async function archiveAgent(agentId: string): Promise<void> {
-  await fetchJson<void>(`${AGENTS_API_BASE}/${encodeURIComponent(agentId)}/archive`, { method: 'POST' });
+/** 激活 / 回滚版本（切换当前生效版本；越界 400、台账缺失 404、已归档 409）。 */
+export function activateVersion(agentId: string, versionNumber: number): Promise<AgentWire> {
+  return post<AgentWire>(`${BASE}/${encodeURIComponent(agentId)}/versions/${versionNumber}/activate`);
 }
 
-/** 删除 Agent（级联删除全部版本）。 */
-export async function deleteAgent(agentId: string): Promise<void> {
-  await fetchJson<void>(`${AGENTS_API_BASE}/${encodeURIComponent(agentId)}`, { method: 'DELETE' });
+/** 归档智能体（仅写 archived_at，已发布版本仍可供既有会话装配；不可逆）。 */
+export function archiveAgent(agentId: string): Promise<void> {
+  return post<void>(`${BASE}/${encodeURIComponent(agentId)}/archive`);
+}
+
+/** 删除智能体（逻辑删除定义与全部版本）。 */
+export function deleteAgent(agentId: string): Promise<void> {
+  return del<void>(`${BASE}/${encodeURIComponent(agentId)}`);
 }

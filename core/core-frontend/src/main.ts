@@ -1,31 +1,13 @@
 import { createApp } from 'vue';
-import { createPinia } from 'pinia';
-import TDesign, { MessagePlugin } from 'tdesign-vue-next';
-import TDesignChat from '@tdesign-vue-next/chat';
 import App from './App.vue';
 import router from './app/router';
+import { setupStore } from './app/store';
+import { setupTDesign } from './app/plugins/tdesign';
 import './shared/styles/index.css';
-import 'tdesign-vue-next/es/style/index.css';
 
+/** 应用入口：装配 Pinia、路由与 TDesign 后挂载。 */
 const app = createApp(App);
-
-/** 兜底异常 → 可读消息文本。 */
-function resolveErrorMessage(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason);
-}
-
-// 全局异常兜底：组件渲染 / 生命周期异常与未处理的 Promise 拒绝统一 toast，防静默失败复发
-app.config.errorHandler = (err) => {
-  console.error('[global-error]', err);
-  MessagePlugin.error(`页面运行异常: ${resolveErrorMessage(err)}`);
-};
-window.addEventListener('unhandledrejection', (event) => {
-  console.error('[unhandled-rejection]', event.reason);
-  MessagePlugin.error(`操作失败: ${resolveErrorMessage(event.reason)}`);
-});
-
-app.use(createPinia());
+setupStore(app);
+setupTDesign(app);
 app.use(router);
-app.use(TDesign);
-app.use(TDesignChat);
 app.mount('#app');

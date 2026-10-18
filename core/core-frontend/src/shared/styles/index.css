@@ -1,103 +1,581 @@
+/* ============================================================================
+ * 全局设计系统：主题令牌（淡色系 / 柔和钢蓝 #5686BF）+ 基础重置 + 通用工具类
+ *
+ * 说明：
+ * - 通过覆盖 TDesign 的 CSS 变量实现全局换肤，组件库与业务页面共用同一套令牌；
+ * - 品牌色采用低饱和钢蓝（#5686BF，hsl(213, 45%, 54%)），整体底色走同色相冷调
+ *   浅灰，保证"淡色系为主"的观感；
+ * - 页面不得再硬编码颜色，一律引用 --td-* / --dda-* 令牌。
+ * ========================================================================== */
+
 :root {
-  color-scheme: light;
-  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  background:
-    radial-gradient(circle at top left, rgba(0, 82, 217, 0.08), transparent 28%),
-    linear-gradient(180deg, #f4f8ff 0%, #f8fafc 100%);
-  color: #0f172a;
+  /* ---------- 品牌色阶（柔和钢蓝，基准 #5686BF，固定色相 213°/饱和度 45% 阶梯） ---------- */
+  --td-brand-color: #5686bf;
+  --td-brand-color-1: #f6f9fc;
+  --td-brand-color-2: #ecf1f8;
+  --td-brand-color-3: #dbe5f1;
+  --td-brand-color-4: #c0d1e7;
+  --td-brand-color-5: #a2bcdc;
+  --td-brand-color-6: #85a7d1;
+  --td-brand-color-7: #5686bf;
+  --td-brand-color-8: #3f6ea6;
+  --td-brand-color-9: #2e507a;
+  --td-brand-color-10: #1f3651;
+
+  --td-brand-color-light: #f0f4f9;
+  --td-brand-color-light-hover: #ecf1f8;
+  --td-brand-color-focus: rgba(var(--td-brand-rgb), 0.18);
+  --td-brand-color-disabled: #c9d8eb;
+  --td-brand-color-hover: var(--td-brand-color-6);
+  --td-brand-color-active: var(--td-brand-color-8);
+
+  /* ---------- 品牌色 RGB 分量（供 rgba(var(--td-brand-rgb), a) 组合透明度复用） ---------- */
+  --td-brand-rgb: 86, 134, 191;
+  --td-brand-rgb-4: 192, 209, 231;
+  --td-brand-rgb-5: 162, 188, 220;
+
+  /* ---------- 语义色（柔和化） ---------- */
+  --td-success-color: #2aa775;
+  --td-success-color-1: #e9f8f1;
+  --td-warning-color: #e08628;
+  --td-warning-color-1: #fdf3e6;
+  --td-error-color: #e0524c;
+  --td-error-color-1: #fdeeed;
+
+  /* ---------- 背景与容器（中性面同色相 213° 冷调，与品牌钢蓝一致） ---------- */
+  --td-bg-color-page: #f6f8fb;
+  --td-bg-color-container: #ffffff;
+  --td-bg-color-container-hover: #f5f7f9;
+  --td-bg-color-container-active: #ecf1f7;
+  --td-bg-color-secondarycontainer: #f7f9fb;
+  --td-bg-color-secondarycontainer-hover: #eff3f7;
+  --td-bg-color-secondarycontainer-active: #e5ecf4;
+  --td-bg-color-component: #eef2f6;
+  --td-bg-color-component-hover: #e8edf4;
+
+  /* ---------- 文本 ---------- */
+  --td-text-color-primary: #1b222b;
+  --td-text-color-secondary: #5c6672;
+  --td-text-color-placeholder: #9da6b0;
+  --td-text-color-disabled: #c1c9d2;
+  --td-text-color-primary-1: #1b222b;
+
+  /* ---------- 描边 ---------- */
+  --td-component-border: #eaeff4;
+  --td-component-stroke: #eaeff4;
+  --td-border-level-1-color: #f0f2f5;
+  --td-border-level-2-color: #e4e9ef;
+
+  /* ---------- 圆角 ---------- */
+  --td-radius-small: 6px;
+  --td-radius-default: 8px;
+  --td-radius-medium: 10px;
+  --td-radius-large: 14px;
+  --td-radius-extraLarge: 18px;
+  --td-radius-round: 999px;
+
+  /* ---------- 阴影（低对比、柔和；RGB 分量令牌便于业务侧叠加透明度） ---------- */
+  --dda-shadow-rgb: 23, 35, 50;
+  --td-shadow-1: 0 1px 2px rgba(var(--dda-shadow-rgb), 0.04), 0 2px 8px rgba(var(--dda-shadow-rgb), 0.04);
+  --td-shadow-2: 0 2px 6px rgba(var(--dda-shadow-rgb), 0.05), 0 10px 28px rgba(var(--dda-shadow-rgb), 0.07);
+  --td-shadow-3: 0 8px 20px rgba(var(--dda-shadow-rgb), 0.08), 0 18px 52px rgba(var(--dda-shadow-rgb), 0.1);
+
+  /* ---------- 业务自定义令牌 ---------- */
+  --dda-sidebar-width: 244px;
+  --dda-card-border: #eaeff4;
+  --dda-card-shadow: 0 1px 2px rgba(var(--dda-shadow-rgb), 0.03), 0 6px 18px rgba(var(--dda-shadow-rgb), 0.045);
+  --dda-card-shadow-hover: 0 6px 16px rgba(var(--td-brand-rgb), 0.1), 0 14px 36px rgba(var(--dda-shadow-rgb), 0.08);
+  --dda-surface-tint: #f7f9fb;
+
+  /* ---------- 角色标签色（对话/事件行：用户/智能体/工具/系统事件） ---------- */
+  --dda-chip-user-fg: #b3377c;
+  --dda-chip-user-bg: #fdeef5;
+  --dda-chip-agent-fg: #1f8f66;
+  --dda-chip-agent-bg: #e8f7f0;
+  --dda-chip-tool-fg: #8a5a12;
+  --dda-chip-tool-bg: #fdf3e3;
+  --dda-chip-event-fg: #2f6f8f;
+  --dda-chip-event-bg: #eaf4fa;
+
+  /* ---------- 深色代码块面板（JSON/响应体展示，刻意与页面浅底反差） ---------- */
+  --dda-codeblock-bg: #1e1e1e;
+  --dda-codeblock-fg: #d4d4d4;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', system-ui, -apple-system, Avenir, Helvetica, Arial, sans-serif;
+  background-color: var(--td-bg-color-page);
+  color: var(--td-text-color-primary);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
 }
 
 * {
   box-sizing: border-box;
 }
 
-body {
+/* 键盘可达性：统一可见焦点环 */
+:focus-visible {
+  outline: 2px solid var(--td-brand-color-5);
+  outline-offset: 2px;
+}
+
+/* 尊重系统减弱动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* --------------------------- 页面切换过渡 --------------------------- */
+/* 150ms 淡入淡出（AppShell router-view）；prefers-reduced-motion 由全局规则自动禁用 */
+.dda-page-fade-enter-active,
+.dda-page-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+
+.dda-page-fade-enter-from,
+.dda-page-fade-leave-to {
+  opacity: 0;
+}
+
+/* --------------------------- 页面骨架 --------------------------- */
+.dda-page {
+  padding: 20px 28px 32px;
+}
+
+.dda-page--flow {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* --------------------------- 双栏布局 --------------------------- */
+.dda-split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.dda-split__left {
+  flex: 0 1 400px;
+  min-width: 280px;
+}
+
+.dda-split__right {
+  flex: 1 1 440px;
+  min-width: 0;
+}
+
+/* --------------------------- 卡片网格 --------------------------- */
+.dda-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  gap: 18px;
+}
+
+/* --------------------------- 工具条 --------------------------- */
+.dda-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.dda-toolbar__grow {
+  flex: 1 1 220px;
+  min-width: 180px;
+  max-width: 320px;
+}
+
+/* --------------------------- 通用卡片 --------------------------- */
+.dda-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--dda-card-border);
+  border-radius: var(--td-radius-large);
+  box-shadow: var(--dda-card-shadow);
+  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+}
+
+.dda-card:hover {
+  border-color: var(--td-brand-color-3);
+  box-shadow: var(--dda-card-shadow-hover);
+  transform: translateY(-2px);
+}
+
+/* 卡片操作区：默认隐藏，悬浮/聚焦时显现（触屏与键盘可达场景常显） */
+.dda-card__actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.dda-card:hover .dda-card__actions,
+.dda-card:focus-within .dda-card__actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (hover: none) {
+  .dda-card__actions {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* --------------------------- 分区容器 --------------------------- */
+.dda-section {
+  padding: 18px;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--dda-card-border);
+  border-radius: var(--td-radius-large);
+  box-shadow: var(--dda-card-shadow);
+}
+
+.dda-section + .dda-section {
+  margin-top: 16px;
+}
+
+/* --------------------------- 文本与省略 --------------------------- */
+.dda-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dda-muted {
+  color: var(--td-text-color-secondary);
+}
+
+.dda-faint {
+  color: var(--td-text-color-placeholder);
+}
+
+/* 等宽代码展示 */
+.dda-mono {
+  font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* --------------------------- 键值信息栅格 --------------------------- */
+.dda-kv {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  row-gap: 8px;
+  font-size: 13px;
+}
+
+.dda-kv__k {
+  color: var(--td-text-color-secondary);
+}
+
+.dda-kv__v {
+  color: var(--td-text-color-primary);
+  word-break: break-word;
+}
+
+/* --------------------------- 统计条 --------------------------- */
+.dda-statbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 22px;
+  margin-bottom: 18px;
+  padding: 16px 20px;
+  background: linear-gradient(120deg, var(--td-brand-color-1) 0%, var(--td-bg-color-container) 70%);
+  border: 1px solid var(--dda-card-border);
+  border-radius: var(--td-radius-large);
+}
+
+.dda-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dda-stat__value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--td-text-color-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.dda-stat__label {
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+}
+
+/* ============================================================================
+ * 控制台版式层（对齐 Cloud Agents 控制台）：
+ * 面包屑 / 页标题 / 扁平表格 / 胶囊页签 / 角色标签 / 元信息条
+ * ========================================================================== */
+
+/* --------------------------- 顶栏面包屑 --------------------------- */
+.dda-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 52px;
+  padding: 0 24px;
+  background: var(--td-bg-color-container);
+  border-bottom: 1px solid var(--td-component-border);
+}
+
+.dda-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--td-text-color-secondary);
+}
+
+.dda-breadcrumb__sep {
+  color: var(--td-text-color-placeholder);
+}
+
+.dda-breadcrumb__current {
+  font-weight: 500;
+  color: var(--td-text-color-primary);
+}
+
+/* --------------------------- 页标题区 --------------------------- */
+.dda-title {
   margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--td-text-color-primary);
+}
+
+.dda-subtitle {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--td-text-color-secondary);
+}
+
+/* --------------------------- 扁平表格 --------------------------- */
+.dda-table {
+  background: var(--td-bg-color-container);
+  border-radius: var(--td-radius-medium);
+}
+
+.dda-table .t-table {
   background: transparent;
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
+.dda-table .t-table thead th {
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-secondarycontainer);
 }
 
-#app {
-  min-height: 100vh;
+.dda-table .t-table td {
+  font-size: 13px;
 }
 
-.app-shell {
-  min-height: 100vh;
+.dda-table .t-table tbody tr:hover td {
+  background: var(--td-bg-color-container-hover);
 }
 
-.app-shell__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 24px;
-  padding: 24px 32px;
-  background: rgba(255, 255, 255, 0.76);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+/* 表格内的等宽 ID */
+.dda-id {
+  font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
 }
 
-.app-shell__eyebrow,
-.page-section__eyebrow {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #0052d9;
-}
-
-.app-shell__title {
-  margin: 6px 0 0;
-  font-size: 32px;
-  line-height: 1.2;
-}
-
-.app-shell__nav {
+/* --------------------------- 胶囊页签 --------------------------- */
+.dda-pill-tabs {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
   gap: 8px;
 }
 
-.app-shell__content {
-  padding: 32px;
+.dda-pill-tab {
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-border);
+  border-radius: var(--td-radius-round);
+  transition: all 0.15s ease;
 }
 
-.page-section {
-  display: grid;
-  gap: 20px;
+.dda-pill-tab:hover {
+  color: var(--td-text-color-primary);
+  border-color: var(--td-brand-color-3);
 }
 
-.page-section__header {
-  display: grid;
-  gap: 10px;
+.dda-pill-tab.is-active {
+  font-weight: 500;
+  color: var(--td-text-color-primary);
+  background: var(--td-bg-color-component);
+  border-color: var(--td-bg-color-component);
 }
 
-.page-section__description {
-  margin: 0;
-  max-width: 760px;
-  color: #475569;
+/* --------------------------- 角色标签（对话/事件行） --------------------------- */
+.dda-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 1px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--td-radius-round);
 }
 
-.page-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 16px;
+.dda-chip--user {
+  color: var(--dda-chip-user-fg);
+  background: var(--dda-chip-user-bg);
 }
 
-@media (max-width: 768px) {
-  .app-shell__header {
-    flex-direction: column;
-    align-items: stretch;
-  }
+.dda-chip--agent {
+  color: var(--dda-chip-agent-fg);
+  background: var(--dda-chip-agent-bg);
+}
 
-  .app-shell__content {
-    padding: 20px;
-  }
+.dda-chip--tool {
+  color: var(--dda-chip-tool-fg);
+  background: var(--dda-chip-tool-bg);
+}
+
+.dda-chip--event {
+  font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+  color: var(--dda-chip-event-fg);
+  background: var(--dda-chip-event-bg);
+}
+
+.dda-chip--system {
+  color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-component);
+}
+
+/* --------------------------- 元信息条 --------------------------- */
+.dda-metabar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+}
+
+.dda-metabar__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* --------------------------- 内容面板 --------------------------- */
+.dda-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-border);
+  border-radius: var(--td-radius-large);
+}
+
+.dda-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* --------------------------- 信息提示行 --------------------------- */
+.dda-notice {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--td-text-color-secondary);
+}
+
+/* ============================================================================
+ * 弹窗 / 抽屉版式规则：固定窗口尺寸 + 内部滚动
+ *
+ * 目标：整体高度不超过视口（用视口相对 calc()，不用 100%/auto 这类无约束高度），
+ * header 与 footer 常驻可见，中间内容区内部滚动；保证 1280×720 与 1440×900
+ * 两种常见视口下「关闭 / 提交」等按钮始终可见可达。
+ * ========================================================================== */
+
+/* --------------------------- 弹窗（t-dialog） --------------------------- */
+/*
+ * 普通弹窗（排除组件库自带高度约束的全屏弹窗 .t-dialog__fullscreen）改为纵向 flex：
+ * 顶部定位默认 padding-top: 20vh，弹窗可用高度 = 视口 - 20vh，再留 32px 底部呼吸空间，
+ * 保证弹窗完整落在视口内、footer 常驻可达（弹窗更矮、更贴顶）。
+ * 注意：类名为双下划线 t-dialog__fullscreen（组件库 dialog-card.mjs 生成），
+ * 非 t-dialog--fullscreen，须按真实类名排除以免误伤全屏弹窗。
+ */
+.t-dialog:not(.t-dialog__fullscreen) {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 20vh - 32px);
+}
+
+/* header / footer 常驻可见：不参与高度压缩（flex: none 禁止收缩） */
+.t-dialog:not(.t-dialog__fullscreen) .t-dialog__header,
+.t-dialog:not(.t-dialog__fullscreen) .t-dialog__footer {
+  flex: none;
+}
+
+/*
+ * 内容区：占据剩余高度并在内部滚动。
+ * min-height: 0 解除 flex 子项默认最小高度（auto）限制，内容超出时才能收缩并触发滚动。
+ */
+.t-dialog:not(.t-dialog__fullscreen) .t-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/*
+ * 顶部定位保留组件库默认 padding-top: 20vh（弹窗更贴顶的观感由上面的 max-height
+ * calc(100vh - 20vh - 32px) 保证：底边 = 20vh + (80vh - 32px) = 100vh - 32px，恒在视口内）。
+ */
+
+/* --------------------------- 抽屉（t-drawer） --------------------------- */
+/*
+ * 抽屉内容区（纵向 flex）高度跟随视口：header / footer 常驻可见，
+ * body 内部滚动，避免抽屉内表单区把页面撑高。
+ */
+.t-drawer__content-wrapper {
+  max-height: 100vh;
+}
+
+.t-drawer__header,
+.t-drawer__footer {
+  flex: none;
+}
+
+.t-drawer__body {
+  min-height: 0;
 }
