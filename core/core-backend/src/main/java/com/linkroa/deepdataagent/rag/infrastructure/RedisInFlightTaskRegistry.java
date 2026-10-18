@@ -72,7 +72,7 @@ public class RedisInFlightTaskRegistry implements InFlightTaskRegistry {
      */
     @PostConstruct
     public void logInstanceScope() {
-        log.info("[在飞任务注册表] 实例标识={}，所辖键名=[{}]",
+        log.info("[InFlightTaskRegistry] instance scope: instanceId={}, keys=[{}]",
                 appInstanceProperties.getInstanceId(), String.join(", ", allKeys()));
     }
 

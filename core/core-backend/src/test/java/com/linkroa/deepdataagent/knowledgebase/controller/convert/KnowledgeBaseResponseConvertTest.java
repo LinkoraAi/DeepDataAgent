@@ -36,7 +36,7 @@ class KnowledgeBaseResponseConvertTest {
         // given
         OffsetDateTime now = OffsetDateTime.now();
         KnowledgeBase kb = KnowledgeBase.restore(1L, "kb", "desc", "English", LifecycleStatus.DELETING,
-                null, "{}", "{}", "{}", "{}", "{}", "{}", now, now);
+                null, "{}", "{}", "{}", "{}", "{}", "{}", 1L, now, now);
 
         // when
         KnowledgeBaseResponse response = convert.toResponse(kb);
@@ -207,9 +207,9 @@ class KnowledgeBaseResponseConvertTest {
         // given
         List<KnowledgeBase> kbs = List.of(
                 KnowledgeBase.restore(1L, "kb-1", null, "Chinese", LifecycleStatus.ACTIVE,
-                        null, null, null, null, null, null, null, null, null),
+                        null, null, null, null, null, null, null, 1L, null, null),
                 KnowledgeBase.restore(2L, "kb-2", null, "Chinese", LifecycleStatus.DELETE_FAILED,
-                        "[KB-CLEANUP] step=chunk_cleanup", null, null, null, null, null, null, null, null));
+                        "[KB-CLEANUP] step=chunk_cleanup", null, null, null, null, null, null, 1L, null, null));
 
         // when
         List<KnowledgeBaseResponse> responses = convert.toKnowledgeBaseResponseList(kbs);

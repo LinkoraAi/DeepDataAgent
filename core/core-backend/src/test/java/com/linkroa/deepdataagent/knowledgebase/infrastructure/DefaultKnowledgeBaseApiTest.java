@@ -50,6 +50,9 @@ class DefaultKnowledgeBaseApiTest {
     /** 测试用知识库ID */
     private static final Long KB_ID = 10L;
 
+    /** 测试用归属用户 ID */
+    private static final Long OWNER_ID = 1L;
+
     @Mock
     private KnowledgeBaseRepository knowledgeBaseRepository;
 
@@ -66,7 +69,7 @@ class DefaultKnowledgeBaseApiTest {
     private KnowledgeBase buildKb(LifecycleStatus status, String retrievalStrategy) {
         OffsetDateTime now = OffsetDateTime.now();
         return KnowledgeBase.restore(KB_ID, "产品手册", "描述", "Chinese", status,
-                null, null, null, retrievalStrategy, null, null, null, now, now);
+                null, null, null, retrievalStrategy, null, null, null, 1L, now, now);
     }
 
     /**
@@ -75,7 +78,7 @@ class DefaultKnowledgeBaseApiTest {
     private KnowledgeBase buildKbWithLanguage(String language) {
         OffsetDateTime now = OffsetDateTime.now();
         return KnowledgeBase.restore(KB_ID, "产品手册", "描述", language, LifecycleStatus.ACTIVE,
-                null, null, null, null, null, null, null, now, now);
+                null, null, null, null, null, null, null, 1L, now, now);
     }
 
     /**
@@ -84,7 +87,7 @@ class DefaultKnowledgeBaseApiTest {
     private KnowledgeBase buildKbWithMultiModelConfig(String multiModelConfig) {
         OffsetDateTime now = OffsetDateTime.now();
         return KnowledgeBase.restore(KB_ID, "产品手册", "描述", "Chinese", LifecycleStatus.ACTIVE,
-                null, null, null, null, null, multiModelConfig, null, now, now);
+                null, null, null, null, null, multiModelConfig, null, 1L, now, now);
     }
 
     /**
@@ -93,7 +96,7 @@ class DefaultKnowledgeBaseApiTest {
     private KnowledgeBase buildKbWithEmbeddingConfig(String embeddingConfig) {
         OffsetDateTime now = OffsetDateTime.now();
         return KnowledgeBase.restore(KB_ID, "产品手册", "描述", "Chinese", LifecycleStatus.ACTIVE,
-                null, null, null, null, embeddingConfig, null, null, now, now);
+                null, null, null, null, embeddingConfig, null, null, 1L, now, now);
     }
 
     @Test
@@ -165,6 +168,33 @@ class DefaultKnowledgeBaseApiTest {
         // when // then
         assertFalse(api.isActive(null));
         verify(knowledgeBaseRepository, never()).findById(any());
+    }
+
+    @Test
+    void should_returnTrue_when_isOwnedBy_given_ownedKnowledgeBase() {
+        // given：归属者与查询用户一致
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
+                .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+
+        // when // then
+        assertTrue(api.isOwnedBy(KB_ID, OWNER_ID));
+    }
+
+    @Test
+    void should_returnFalse_when_isOwnedBy_given_foreignOrMissingKnowledgeBase() {
+        // given：仓储按 (id, owner) 查询无命中——不存在与归属不匹配在仓储层同形
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.empty());
+
+        // when // then：两者对外不可区分（消费方据此折叠为同一 404）
+        assertFalse(api.isOwnedBy(KB_ID, OWNER_ID));
+    }
+
+    @Test
+    void should_returnFalseWithoutRepositoryHit_when_isOwnedBy_given_blankIdOrOwner() {
+        // when // then：入参缺失零 DB 交互
+        assertFalse(api.isOwnedBy(null, OWNER_ID));
+        assertFalse(api.isOwnedBy(KB_ID, null));
+        verify(knowledgeBaseRepository, never()).findByIdAndOwner(any(), any());
     }
 
     @Test
@@ -561,7 +591,7 @@ class DefaultKnowledgeBaseApiTest {
     private KnowledgeBase buildKbWithConfigs(String ragEngineConfig, String entityTypeConfig) {
         OffsetDateTime now = OffsetDateTime.now();
         return KnowledgeBase.restore(KB_ID, "产品手册", "描述", "Chinese", LifecycleStatus.ACTIVE,
-                null, ragEngineConfig, null, null, null, null, entityTypeConfig, now, now);
+                null, ragEngineConfig, null, null, null, null, entityTypeConfig, 1L, now, now);
     }
 
     @Test

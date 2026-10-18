@@ -1,5 +1,6 @@
 package com.linkroa.deepdataagent.knowledgebase.application.service;
 
+import com.linkroa.deepdataagent.agent.api.ModelProfileReferenceApi;
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskRegistry;
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskType;
 import com.linkroa.deepdataagent.knowledgebase.api.KbCleanupTaskSubmitter;
@@ -25,6 +26,7 @@ import com.linkroa.deepdataagent.knowledgebase.domain.repository.KnowledgeBaseRe
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.shared.security.AuthContext;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -41,6 +43,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * 知识库应用服务（创建 / 编辑 / 删除 / 查询 / 总览统计 / 分区配置更新）。
@@ -91,6 +94,9 @@ public class KnowledgeBaseApplicationService {
     /** 检索策略 JSONB 序列化器（无状态，进程内共享） */
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /** 模型配置引用字段名（嵌入 / 多模态配置与重排配置的 profileId 键） */
+    private static final String FIELD_MODEL_PROFILE_ID = "modelProfileId";
+
     /** 知识库仓储（本域自有表读写与行锁读取） */
     private final KnowledgeBaseRepository knowledgeBaseRepository;
 
@@ -109,6 +115,9 @@ public class KnowledgeBaseApplicationService {
     /** 在飞任务注册表（rag BC 实现）：任务投递前登记在飞凭据、状态收敛后移除成员，供本实例启动恢复收敛悬挂任务 */
     private final InFlightTaskRegistry inFlightTaskRegistry;
 
+    /** 模型配置归属查询契约（跨 BC，agent BC 提供）：写入期校验所引用的模型配置归属当前用户 */
+    private final ModelProfileReferenceApi modelProfileReferenceApi;
+
     /**
      * 构造知识库应用服务。
      *
@@ -118,19 +127,22 @@ public class KnowledgeBaseApplicationService {
      * @param transactionTemplate     编程式事务模板（写操作的精确事务边界）
      * @param kbCleanupTaskSubmitter  整库清退任务提交端口（跨 BC 契约，实现位于 rag BC）
      * @param inFlightTaskRegistry    在飞任务注册表（跨 BC 契约，实现位于 rag BC）
+     * @param modelProfileReferenceApi 模型配置归属查询契约（跨 BC 契约，实现位于 agent BC）
      */
     public KnowledgeBaseApplicationService(KnowledgeBaseRepository knowledgeBaseRepository,
                                            DocumentRepository documentRepository,
                                            ChunkRepository chunkRepository,
                                            TransactionTemplate transactionTemplate,
                                            KbCleanupTaskSubmitter kbCleanupTaskSubmitter,
-                                           InFlightTaskRegistry inFlightTaskRegistry) {
+                                           InFlightTaskRegistry inFlightTaskRegistry,
+                                           ModelProfileReferenceApi modelProfileReferenceApi) {
         this.knowledgeBaseRepository = knowledgeBaseRepository;
         this.documentRepository = documentRepository;
         this.chunkRepository = chunkRepository;
         this.transactionTemplate = transactionTemplate;
         this.kbCleanupTaskSubmitter = kbCleanupTaskSubmitter;
         this.inFlightTaskRegistry = inFlightTaskRegistry;
+        this.modelProfileReferenceApi = modelProfileReferenceApi;
     }
 
     /**
@@ -139,21 +151,30 @@ public class KnowledgeBaseApplicationService {
      * {@link KnowledgeBaseValidator#validateLanguage} 强校验（值域外拒绝、不静默回落），
      * 校验在事务开启前完成；未指定时聚合层显式落 {@code Chinese}，不依赖列库默认值。
      * {@code rag_engine_config} JSONB 的 language 键已弃用，不再校验。</p>
+     * <p><b>归属与引用闸门</b>：归属者 = 当前认证用户（{@code AuthContext.requireUserId()}），
+     * 名称判重在归属者内进行；所引用的嵌入 / 大模型 / 重排模型配置 MUST 归属当前用户，
+     * 否则 404 折叠且不落库（写入期单闸门，design D6）。</p>
      *
      * @param command 创建命令
      * @return 落库后的知识库聚合根
      * @throws DeepDataAgentException    名称为空或超长、语言入参值域外（400）
-     * @throws ResourceConflictException 名称重复（409）
+     * @throws ResourceConflictException 同一归属者内名称重复（409）
+     * @throws ResourceNotFoundException 引用的模型配置不属于当前用户（404）
      */
     public KnowledgeBase create(CreateKnowledgeBaseCommand command) {
-        KnowledgeBaseValidator.validateNameUnique(command.name(), knowledgeBaseRepository.findByName(command.name()));
+        // 归属即当前认证用户：名称判重与模型引用校验均在该归属者范围内进行
+        Long ownerId = AuthContext.requireUserId();
+        KnowledgeBaseValidator.validateNameUnique(command.name(),
+                knowledgeBaseRepository.findByNameAndOwner(command.name(), ownerId));
         RagEngineConfigValidator.validate(command.ragEngineConfig());
         KnowledgeBaseValidator.validateLanguage(command.language());
+        validateModelReferences(command.embeddingConfig(), command.multiModelConfig(),
+                command.retrievalStrategy(), ownerId);
         KnowledgeBase created = KnowledgeBase.create(
                 command.name(), command.description(), command.language(), command.ragEngineConfig(),
                 command.dedupPolicy(),
                 command.retrievalStrategy(), command.embeddingConfig(), command.multiModelConfig(),
-                command.entityTypeConfig());
+                command.entityTypeConfig(), ownerId);
         return transactionTemplate.execute(status -> knowledgeBaseRepository.save(created));
     }
 
@@ -167,20 +188,25 @@ public class KnowledgeBaseApplicationService {
      *
      * @param command 更新命令
      * @return 更新后的知识库聚合根
-     * @throws ResourceNotFoundException 知识库不存在（404）
+     * @throws ResourceNotFoundException 知识库不存在或非当前用户归属（404，两情形不可区分）
      * @throws DeepDataAgentException    知识库处于删除流程或语言入参值域外（400）
-     * @throws ResourceConflictException 新名称被其他知识库占用（409）
+     * @throws ResourceConflictException 新名称在归属者内被其他知识库占用（409）
      */
     public KnowledgeBase update(UpdateKnowledgeBaseCommand command) {
         RagEngineConfigValidator.validate(command.ragEngineConfig());
         KnowledgeBaseValidator.validateLanguage(command.language());
         return transactionTemplate.execute(status -> {
-            KnowledgeBase current = requireActiveForUpdate(command.id());
+            KnowledgeBase current = requireOwnedActiveForUpdate(command.id());
             String name = StringUtils.defaultIfBlank(command.name(), current.name());
             if (!StringUtils.equals(name, current.name())) {
-                KnowledgeBaseValidator.validateNameUnique(name, knowledgeBaseRepository.findByName(name)
-                        .filter(occupied -> !Objects.equals(occupied.id(), current.id())));
+                // 判重范围 = 归属者内（uk_kb_name 已收敛为 (owner_id, name)）
+                KnowledgeBaseValidator.validateNameUnique(name,
+                        knowledgeBaseRepository.findByNameAndOwner(name, current.ownerId())
+                                .filter(occupied -> !Objects.equals(occupied.id(), current.id())));
             }
+            // 模型引用归属校验（写入期单闸门）：仅校验本次实际会落库的分量（嵌入模型更新期锁定不改写）
+            validateModelReferences(null, command.multiModelConfig(), command.retrievalStrategy(),
+                    current.ownerId());
             String description = StringUtils.defaultIfBlank(command.description(), current.description());
             if (StringUtils.isNotBlank(command.embeddingConfig())
                     && !StringUtils.equals(command.embeddingConfig(), current.embeddingConfig())) {
@@ -239,7 +265,7 @@ public class KnowledgeBaseApplicationService {
      * @throws ResourceNotFoundException 知识库不存在（404）
      */
     public KnowledgeBase get(Long id) {
-        return knowledgeBaseRepository.findById(id)
+        return knowledgeBaseRepository.findByIdAndOwner(id, AuthContext.requireUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("知识库不存在"));
     }
 
@@ -257,33 +283,37 @@ public class KnowledgeBaseApplicationService {
     public List<KnowledgeBase> list(ListKnowledgeBaseQuery query) {
         KnowledgeBaseSortField sortField = KnowledgeBaseValidator.parseSortField(query.sortBy());
         boolean ascending = KnowledgeBaseValidator.parseAscendingSortOrder(query.sortOrder());
+        // 归属过滤：列表仅含当前认证用户的资源
         return knowledgeBaseRepository.findByCondition(query.keyword(), null,
-                sortField, ascending, query.page(), query.size());
+                sortField, ascending, query.page(), query.size(), AuthContext.requireUserId());
     }
 
     /**
-     * 统计知识库列表命中总数（口径与 {@link #list} 一致：三态全集，含删除中与删除失败库）。
+     * 统计知识库列表命中总数（口径与 {@link #list} 一致：三态全集 + 当前用户归属）。
      *
      * @param keyword 名称/描述关键字，可为空
      * @return 命中记录数
      */
     public long count(String keyword) {
-        return knowledgeBaseRepository.countByCondition(keyword, null);
+        return knowledgeBaseRepository.countByCondition(keyword, null, AuthContext.requireUserId());
     }
 
     /**
-     * 知识库总览统计：可用库数、文档总数、切片总数。
-     * <p>统计口径允许最终一致，实现为三条 count 查询；文档与切片按全库统计，
-     * 知识库ID传 {@code null} 表示不加库维度过滤。</p>
+     * 知识库总览统计：可用库数、文档总数、切片总数（口径均收敛于当前认证用户归属）。
+     * <p>统计口径允许最终一致，实现为三条 count 查询；文档与切片经
+     * {@code knowledge_base.owner_id} 父链联表收敛，不同用户看到的计数互相独立，
+     * MUST NOT 泄漏跨用户规模信息。</p>
      *
      * @return 统计结果，键为 {@link #STATS_KEY_TOTAL_KNOWLEDGE_BASES}、
      *         {@link #STATS_KEY_TOTAL_DOCUMENTS}、{@link #STATS_KEY_TOTAL_CHUNKS}
      */
     public Map<String, Long> stats() {
+        Long ownerId = AuthContext.requireUserId();
         Map<String, Long> stats = new LinkedHashMap<>(3);
-        stats.put(STATS_KEY_TOTAL_KNOWLEDGE_BASES, knowledgeBaseRepository.countByStatus(LifecycleStatus.ACTIVE));
-        stats.put(STATS_KEY_TOTAL_DOCUMENTS, documentRepository.countByKbId(null, null, null));
-        stats.put(STATS_KEY_TOTAL_CHUNKS, chunkRepository.countByKbId(null, null, null, null));
+        stats.put(STATS_KEY_TOTAL_KNOWLEDGE_BASES,
+                knowledgeBaseRepository.countByStatus(LifecycleStatus.ACTIVE, ownerId));
+        stats.put(STATS_KEY_TOTAL_DOCUMENTS, documentRepository.countByOwner(ownerId));
+        stats.put(STATS_KEY_TOTAL_CHUNKS, chunkRepository.countByOwner(ownerId));
         return stats;
     }
 
@@ -301,7 +331,9 @@ public class KnowledgeBaseApplicationService {
     public KnowledgeBase updateRetrievalConfig(UpdateRetrievalConfigCommand command) {
         String normalizedStrategy = RetrievalConfigValidator.validateAndNormalize(command.retrievalStrategy());
         return transactionTemplate.execute(status -> {
-            KnowledgeBase current = requireActiveForUpdate(command.kbId());
+            KnowledgeBase current = requireOwnedActiveForUpdate(command.kbId());
+            // 重排模型引用归属校验（写入期单闸门）：enabled=true 时其 profileId 必须归属当前用户
+            validateModelReferences(null, null, normalizedStrategy, current.ownerId());
             KnowledgeBase updated = current.withUpdatedConfig(
                     current.ragEngineConfig(), current.dedupPolicy(), normalizedStrategy,
                     current.embeddingConfig(), current.multiModelConfig(), current.entityTypeConfig());
@@ -391,7 +423,7 @@ public class KnowledgeBaseApplicationService {
     public KnowledgeBase updateEntityTypeConfig(UpdateEntityTypeConfigCommand command) {
         EntityTypeConfigValidator.validate(command.entityTypeConfig());
         return transactionTemplate.execute(status -> {
-            KnowledgeBase current = requireActiveForUpdate(command.kbId());
+            KnowledgeBase current = requireOwnedActiveForUpdate(command.kbId());
             KnowledgeBase updated = current.withUpdatedConfig(
                     current.ragEngineConfig(), current.dedupPolicy(), current.retrievalStrategy(),
                     current.embeddingConfig(), current.multiModelConfig(), command.entityTypeConfig());
@@ -470,7 +502,10 @@ public class KnowledgeBaseApplicationService {
      * <p>事务内仅含本域表的行锁读取与条件 UPDATE，无任何远程调用（数据库事务规范）。</p>
      */
     private KnowledgeBase acceptDelete(Long kbId) {
+        // 归属前置：非本人库与不存在的库一律 404（不泄露存在性），且 MUST 先于任何状态变更
+        Long ownerId = AuthContext.requireUserId();
         KnowledgeBase current = knowledgeBaseRepository.findByIdForUpdate(kbId)
+                .filter(kb -> kb.isOwnedBy(ownerId))
                 .orElseThrow(() -> new ResourceNotFoundException("知识库不存在"));
         // 枚举已穷举三态，无需 default 分支
         return switch (current.lifecycleStatus()) {
@@ -543,6 +578,8 @@ public class KnowledgeBaseApplicationService {
 
     /**
      * 加行锁读取知识库并校验处于可操作状态。
+     * <p><b>内部路径专用</b>：不施加归属过滤，仅供无请求者身份的内部 / 保留能力使用；
+     * 请求面 MUST 使用 {@link #requireOwnedActiveForUpdate(Long)}。</p>
      */
     private KnowledgeBase requireActiveForUpdate(Long id) {
         KnowledgeBase current = knowledgeBaseRepository.findByIdForUpdate(id)
@@ -552,12 +589,104 @@ public class KnowledgeBaseApplicationService {
     }
 
     /**
-     * 复制知识库并覆盖名称与描述（record 不可变语义，其余字段含更新时间原样保留）。
+     * 加行锁读取知识库，校验归属当前认证用户且处于可操作状态（请求面写操作统一入口）。
+     * <p>非归属与不存在统一以 404 折叠（不泄露存在性）；归属校验 MUST 先于任何状态变更。</p>
+     *
+     * @param id 知识库主键
+     * @return 归属当前用户且处于 ACTIVE 的知识库
+     * @throws ResourceNotFoundException 知识库不存在或非当前用户归属（404，两情形不可区分）
+     * @throws DeepDataAgentException    知识库处于删除流程（400）
+     */
+    private KnowledgeBase requireOwnedActiveForUpdate(Long id) {
+        Long ownerId = AuthContext.requireUserId();
+        KnowledgeBase current = knowledgeBaseRepository.findByIdForUpdate(id)
+                .filter(kb -> kb.isOwnedBy(ownerId))
+                .orElseThrow(() -> new ResourceNotFoundException("知识库不存在"));
+        KnowledgeBaseValidator.validateNotDeleting(current);
+        return current;
+    }
+
+    /**
+     * 复制知识库并覆盖名称与描述（record 不可变语义，其余字段含归属与更新时间原样保留）。
      */
     private KnowledgeBase withIdentity(KnowledgeBase base, String name, String description) {
         return KnowledgeBase.restore(base.id(), name, description, base.language(), base.lifecycleStatus(),
                 base.errorMessage(), base.ragEngineConfig(), base.dedupPolicy(), base.retrievalStrategy(),
-                base.embeddingConfig(), base.multiModelConfig(), base.entityTypeConfig(),
+                base.embeddingConfig(), base.multiModelConfig(), base.entityTypeConfig(), base.ownerId(),
                 base.createdAt(), base.updatedAt());
+    }
+
+    /**
+     * 校验知识库配置引用的模型配置归属（写入期单闸门，design D6）。
+     * <p>覆盖三类引用载体：嵌入模型配置（{@code embedding_config.modelProfileId}）、
+     * 知识库级大模型配置（{@code multi_model_config.modelProfileId}）、
+     * 检索策略中的重排模型（{@code retrieval_strategy.rerankConfig.modelProfileId}）。
+     * 任一引用不归属当前用户即 404 折叠（不泄露存在性），且 MUST NOT 落库——运行期
+     * （摄入 / 检索线程）无身份上下文，本闸门是唯一防线，MUST NOT 依赖运行期补校验兜底。</p>
+     *
+     * @param embeddingConfig   嵌入模型配置 JSON，可为空（空即不校验）
+     * @param multiModelConfig  知识库级大模型配置 JSON，可为空（空即不校验）
+     * @param retrievalStrategy 检索策略 JSON，可为空（空即不校验）
+     * @param ownerId           当前认证用户 ID
+     * @throws ResourceNotFoundException 引用的模型配置不属于当前用户（404）
+     */
+    private void validateModelReferences(String embeddingConfig, String multiModelConfig,
+                                         String retrievalStrategy, Long ownerId) {
+        requireModelOwned(extractModelProfileId(embeddingConfig), ownerId);
+        requireModelOwned(extractModelProfileId(multiModelConfig), ownerId);
+        requireModelOwned(extractRerankModelProfileId(retrievalStrategy), ownerId);
+    }
+
+    /**
+     * 单个模型引用归属判定：空白引用（未配置）放行；非空白且不归属当前用户即 404 折叠。
+     */
+    private void requireModelOwned(String profileId, Long ownerId) {
+        if (StringUtils.isBlank(profileId)) {
+            return;
+        }
+        if (!modelProfileReferenceApi.existsOwned(profileId, ownerId)) {
+            throw new ResourceNotFoundException("模型配置不存在");
+        }
+    }
+
+    /**
+     * 从扁平模型配置 JSON 中提取 {@code modelProfileId}；JSON 非法或键缺失 / 非文本 / 空白一律回 null。
+     */
+    private String extractModelProfileId(String configJson) {
+        return parseJson(configJson)
+                .map(node -> node.path(FIELD_MODEL_PROFILE_ID))
+                .filter(JsonNode::isTextual)
+                .map(JsonNode::asText)
+                .filter(StringUtils::isNotBlank)
+                .orElse(null);
+    }
+
+    /**
+     * 从检索策略 JSON 的 {@code rerankConfig.modelProfileId} 提取重排模型引用；
+     * JSON 非法或键缺失 / 非文本 / 空白一律回 null（重排未启用时该键通常为空）。
+     */
+    private String extractRerankModelProfileId(String retrievalStrategyJson) {
+        return parseJson(retrievalStrategyJson)
+                .map(node -> node.path(FIELD_RERANK_CONFIG))
+                .map(node -> node.path(FIELD_MODEL_PROFILE_ID))
+                .filter(JsonNode::isTextual)
+                .map(JsonNode::asText)
+                .filter(StringUtils::isNotBlank)
+                .orElse(null);
+    }
+
+    /**
+     * 容错解析 JSON 文本：空白或非法 JSON 返回空（模型引用校验为非关键路径，
+     * 结构合法性已由各自的配置校验器把关，此处任何解析失败按「无引用」放行，不重复拦截）。
+     */
+    private Optional<JsonNode> parseJson(String json) {
+        if (StringUtils.isBlank(json)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(OBJECT_MAPPER.readTree(json));
+        } catch (JacksonException e) {
+            return Optional.empty();
+        }
     }
 }

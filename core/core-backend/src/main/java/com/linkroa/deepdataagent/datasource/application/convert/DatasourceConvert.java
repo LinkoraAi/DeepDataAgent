@@ -18,7 +18,14 @@ public interface DatasourceConvert {
 
     DatasourceConvert INSTANCE = Mappers.getMapper(DatasourceConvert.class);
 
-    default DatasourceConnection toDatasourceConnection(CreateDatasourceCommand command) {
+    /**
+     * 创建命令 → 领域模型（归属者由调用方从请求身份解析后显式传入，MUST NOT 由命令携带）。
+     *
+     * @param command 创建命令
+     * @param ownerId 归属用户 ID（必填，创建即定）
+     * @return 待落库的数据源连接领域模型
+     */
+    default DatasourceConnection toDatasourceConnection(CreateDatasourceCommand command, Long ownerId) {
         JdbcConnectionConfig jdbcConfig = null;
 
         if (command.type() == DatasourceType.JDBC && command.jdbcConfig() != null) {
@@ -37,7 +44,8 @@ public interface DatasourceConvert {
                 command.type(),
                 command.subType(),
                 command.description(),
-                jdbcConfig
+                jdbcConfig,
+                ownerId
         );
     }
 
@@ -65,6 +73,8 @@ public interface DatasourceConvert {
                 existing.status(),
                 jdbcConfig,
                 StringUtils.defaultIfBlank(command.description(), existing.description()),
+                // 归属不可变：更新链路原样携带既有归属者
+                existing.ownerId(),
                 existing.createdAt(),
                 existing.updatedAt(),
                 existing.createdBy(),

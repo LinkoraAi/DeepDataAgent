@@ -12,6 +12,9 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith(MockitoExtension.class)
 class DatasourceConnectionDomainServiceTest {
 
+    /** 测试用归属用户 ID（满足领域不变量 ownerId 非空）。 */
+    private static final Long OWNER_ID = 1L;
+
     private final DatasourceConnectionDomainService domainService = new DatasourceConnectionDomainService();
 
     @Test
@@ -84,7 +87,7 @@ class DatasourceConnectionDomainServiceTest {
         assertThrows(IllegalArgumentException.class, () -> new DatasourceConnection(
                 1L, "test", DatasourceType.JDBC, null, DatasourceStatus.ENABLED,
                 new JdbcConnectionConfig("host", 3306, "db", "user", "pass", null),
-                null, null, null, null, null
+                null, OWNER_ID, null, null, null, null
         ));
     }
 
@@ -92,7 +95,7 @@ class DatasourceConnectionDomainServiceTest {
     void should_throwException_when_jdbcConfigIsNull_given_nullJdbcConfig() {
         assertThrows(IllegalArgumentException.class, () -> new DatasourceConnection(
                 1L, "test", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
-                null, null, null, null, null, null
+                null, null, OWNER_ID, null, null, null, null
         ));
     }
 
@@ -124,12 +127,12 @@ class DatasourceConnectionDomainServiceTest {
     private DatasourceConnection createConnection(DatasourceStatus status) {
         return new DatasourceConnection(1L, "test", DatasourceType.JDBC, JdbcType.MYSQL, status,
                 new JdbcConnectionConfig("localhost", 3306, "testdb", "root", "pass", null),
-                null, null, null, null, null);
+                null, OWNER_ID, null, null, null, null);
     }
 
     private DatasourceConnection createJdbcConnection(String host, int port, String database, String username, String password) {
         return new DatasourceConnection(1L, "test", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
                 new JdbcConnectionConfig(host, port, database, username, password, null),
-                null, null, null, null, null);
+                null, OWNER_ID, null, null, null, null);
     }
 }

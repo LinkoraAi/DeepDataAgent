@@ -50,9 +50,38 @@ public class JdbcDatasourceConnectionRepository implements DatasourceConnectionR
     }
 
     @Override
+    public Optional<DatasourceConnection> findByIdAndOwner(Long id, Long ownerId) {
+        // 归属判定：主键不存在与归属不匹配同为 empty（不泄露存在性）
+        if (id == null || ownerId == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(DatasourcePersistenceConvert.INSTANCE.toDomain(
+                mapper.selectByIdAndOwner(id, ownerId), encryptionUtil
+        ));
+    }
+
+    @Override
+    public boolean existsOwned(Long id, Long ownerId) {
+        if (id == null || ownerId == null) {
+            return false;
+        }
+        return mapper.selectByIdAndOwner(id, ownerId) != null;
+    }
+
+    @Override
     public Optional<DatasourceConnection> findByName(String name) {
         return Optional.ofNullable(DatasourcePersistenceConvert.INSTANCE.toDomain(
                 mapper.selectByName(name), encryptionUtil
+        ));
+    }
+
+    @Override
+    public Optional<DatasourceConnection> findByNameAndOwner(String name, Long ownerId) {
+        if (ownerId == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(DatasourcePersistenceConvert.INSTANCE.toDomain(
+                mapper.selectByNameAndOwner(name, ownerId), encryptionUtil
         ));
     }
 
@@ -65,24 +94,27 @@ public class JdbcDatasourceConnectionRepository implements DatasourceConnectionR
     }
 
     @Override
-    public List<DatasourceConnection> findByCondition(String keyword, DatasourceType type, DatasourceStatus status, int page, int size) {
+    public List<DatasourceConnection> findByCondition(String keyword, DatasourceType type, DatasourceStatus status,
+                                                      int page, int size, Long ownerId) {
         return mapper.selectByCondition(
                         keyword,
                         type != null ? type.name() : null,
                         status != null ? status.name() : null,
                         (long) Math.max(0, page - 1) * size,
-                        size)
+                        size,
+                        ownerId)
                 .stream()
                 .map(e -> DatasourcePersistenceConvert.INSTANCE.toDomain(e, encryptionUtil))
                 .toList();
     }
 
     @Override
-    public long countByCondition(String keyword, DatasourceType type, DatasourceStatus status) {
+    public long countByCondition(String keyword, DatasourceType type, DatasourceStatus status, Long ownerId) {
         return mapper.countByCondition(
                 keyword,
                 type != null ? type.name() : null,
-                status != null ? status.name() : null);
+                status != null ? status.name() : null,
+                ownerId);
     }
 
     @Override

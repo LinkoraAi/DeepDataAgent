@@ -147,6 +147,15 @@ public class DefaultKnowledgeBaseApi implements KnowledgeBaseApi {
     }
 
     @Override
+    public boolean isOwnedBy(Long kbId, Long ownerId) {
+        // 不存在（含已收口）与归属不匹配统一为 false：三者对外不可区分
+        if (ObjectUtils.isEmpty(kbId) || ObjectUtils.isEmpty(ownerId)) {
+            return false;
+        }
+        return knowledgeBaseRepository.findByIdAndOwner(kbId, ownerId).isPresent();
+    }
+
+    @Override
     public RetrievalStrategyConfig findRetrievalStrategyByKbId(Long kbId) {
         if (ObjectUtils.isEmpty(kbId)) {
             return null;

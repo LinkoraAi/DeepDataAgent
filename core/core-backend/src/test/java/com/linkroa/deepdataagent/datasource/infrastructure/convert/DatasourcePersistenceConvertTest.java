@@ -24,6 +24,9 @@ class DatasourcePersistenceConvertTest {
     private static final OffsetDateTime FIXED_TIME = OffsetDateTime.of(2024, 6, 15, 10, 30, 0, 0, ZoneOffset.ofHours(8));
     private static final String TEST_ENCRYPTION_KEY = "test-encryption-key-for-unit-test";
 
+    /** 测试用归属用户 ID（领域对象 ownerId 不变量要求非空）。 */
+    private static final Long OWNER_ID = 1L;
+
     @BeforeEach
     void setUp() {
         EncryptionProperties props = new EncryptionProperties();
@@ -308,7 +311,7 @@ class DatasourcePersistenceConvertTest {
     void should_mapAllFields_when_toEntity_given_validDatasourceConnection() {
         JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("localhost", 3306, "mydb", "root", "pass123", null);
         DatasourceConnection connection = new DatasourceConnection(1L, "testDs", DatasourceType.JDBC, JdbcType.MYSQL,
-                DatasourceStatus.ENABLED, jdbcConfig, "desc", FIXED_TIME, FIXED_TIME, "admin", "admin2");
+                DatasourceStatus.ENABLED, jdbcConfig, "desc", OWNER_ID, FIXED_TIME, FIXED_TIME, "admin", "admin2");
 
         DatasourceConnectionEntity entity = persistenceMapper.toEntity(connection, encryptionUtil);
 
@@ -323,6 +326,7 @@ class DatasourcePersistenceConvertTest {
         assertTrue(encryptionUtil.isEncrypted(encryptedPassword));
         assertEquals("pass123", encryptionUtil.decrypt(encryptedPassword));
         assertEquals("desc", entity.getDescription());
+        assertEquals(OWNER_ID, entity.getOwnerId());
         assertEquals(FIXED_TIME, entity.getCreatedAt());
         assertEquals("admin", entity.getCreatedBy());
     }
@@ -346,6 +350,7 @@ class DatasourcePersistenceConvertTest {
         entity.setStatus("ENABLED");
         entity.setJdbcConnectionConfig(jdbcJson);
         entity.setDescription("desc");
+        entity.setOwnerId(OWNER_ID);
         entity.setCreatedAt(FIXED_TIME);
         entity.setUpdatedAt(FIXED_TIME);
         entity.setCreatedBy("admin");
@@ -365,6 +370,7 @@ class DatasourcePersistenceConvertTest {
         assertEquals("mydb", connection.jdbcConnectionConfig().database());
         assertEquals("root", connection.jdbcConnectionConfig().username());
         assertEquals("desc", connection.description());
+        assertEquals(OWNER_ID, connection.ownerId());
         assertEquals(FIXED_TIME, connection.createdAt());
         assertEquals("admin", connection.createdBy());
     }
@@ -391,6 +397,7 @@ class DatasourcePersistenceConvertTest {
         entity.setSubType("MYSQL");
         entity.setStatus("");
         entity.setJdbcConnectionConfig(jdbcJson);
+        entity.setOwnerId(OWNER_ID);
 
         DatasourceConnection connection = persistenceMapper.toDomain(entity, encryptionUtil);
 
@@ -401,7 +408,7 @@ class DatasourcePersistenceConvertTest {
     void should_roundTrip_when_toEntityAndToDomain_given_jdbcDatasourceConnection() {
         JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("localhost", 5432, "testdb", "admin", "secret", null);
         DatasourceConnection original = new DatasourceConnection(1L, "myDs", DatasourceType.JDBC, JdbcType.MYSQL,
-                DatasourceStatus.ENABLED, jdbcConfig, "my description", FIXED_TIME, FIXED_TIME, "creator", "updater");
+                DatasourceStatus.ENABLED, jdbcConfig, "my description", OWNER_ID, FIXED_TIME, FIXED_TIME, "creator", "updater");
 
         DatasourceConnectionEntity entity = persistenceMapper.toEntity(original, encryptionUtil);
         DatasourceConnection restored = persistenceMapper.toDomain(entity, encryptionUtil);
@@ -417,13 +424,14 @@ class DatasourcePersistenceConvertTest {
         assertEquals(original.jdbcConnectionConfig().username(), restored.jdbcConnectionConfig().username());
         assertEquals("secret", restored.jdbcConnectionConfig().password());
         assertEquals(original.description(), restored.description());
+        assertEquals(original.ownerId(), restored.ownerId());
     }
 
     @Test
     void should_encryptJdbcPassword_when_toEntity_given_jdbcConnection() {
         JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("host", 3306, "db", "user", "plainPassword", null);
         DatasourceConnection connection = new DatasourceConnection(1L, "testDs", DatasourceType.JDBC, JdbcType.MYSQL,
-                DatasourceStatus.ENABLED, jdbcConfig, null, null, null, null, null);
+                DatasourceStatus.ENABLED, jdbcConfig, null, OWNER_ID, null, null, null, null);
 
         DatasourceConnectionEntity entity = persistenceMapper.toEntity(connection, encryptionUtil);
 
@@ -451,6 +459,7 @@ class DatasourcePersistenceConvertTest {
         entity.setSubType("MYSQL");
         entity.setStatus("ENABLED");
         entity.setJdbcConnectionConfig(jdbcJson);
+        entity.setOwnerId(OWNER_ID);
 
         DatasourceConnection connection = persistenceMapper.toDomain(entity, encryptionUtil);
 
@@ -460,7 +469,7 @@ class DatasourcePersistenceConvertTest {
     @Test
     void should_handleNullJdbcConfig_when_toEntity_given_nullJdbcConfig() {
         DatasourceConnection connection = new DatasourceConnection(1L, "apiDs", DatasourceType.API, null,
-                DatasourceStatus.ENABLED, null, null, null, null, null, null);
+                DatasourceStatus.ENABLED, null, null, OWNER_ID, null, null, null, null);
 
         DatasourceConnectionEntity entity = persistenceMapper.toEntity(connection, encryptionUtil);
 
@@ -476,6 +485,7 @@ class DatasourcePersistenceConvertTest {
         entity.setSubType(null);
         entity.setStatus("ENABLED");
         entity.setJdbcConnectionConfig(null);
+        entity.setOwnerId(OWNER_ID);
 
         DatasourceConnection connection = persistenceMapper.toDomain(entity, encryptionUtil);
 
@@ -486,7 +496,7 @@ class DatasourcePersistenceConvertTest {
     void should_handleNullEncryptionUtil_when_toEntity_given_nullEncryptionUtilForJdbc() {
         JdbcConnectionConfig jdbcConfig = new JdbcConnectionConfig("host", 3306, "db", "user", "plain", null);
         DatasourceConnection connection = new DatasourceConnection(1L, "testDs", DatasourceType.JDBC, JdbcType.MYSQL,
-                DatasourceStatus.ENABLED, jdbcConfig, null, null, null, null, null);
+                DatasourceStatus.ENABLED, jdbcConfig, null, OWNER_ID, null, null, null, null);
 
         DatasourceConnectionEntity entity = persistenceMapper.toEntity(connection, null);
 
@@ -511,6 +521,7 @@ class DatasourcePersistenceConvertTest {
         entity.setSubType("MYSQL");
         entity.setStatus("ENABLED");
         entity.setJdbcConnectionConfig(jdbcJson);
+        entity.setOwnerId(OWNER_ID);
 
         DatasourceConnection connection = persistenceMapper.toDomain(entity, null);
 

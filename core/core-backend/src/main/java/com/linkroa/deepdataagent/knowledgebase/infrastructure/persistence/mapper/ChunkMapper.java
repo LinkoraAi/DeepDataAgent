@@ -10,6 +10,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 import java.util.Collection;
 import java.util.List;
@@ -172,6 +173,38 @@ public interface ChunkMapper extends BaseMapper<ChunkEntity> {
                 .eq(ChunkEntity::getKbId, kbId));
         return ObjectUtils.isEmpty(count) ? 0L : count;
     }
+
+    /**
+     * 按归属者统计切片总数（stats 口径收敛）。
+     * <p>归属经父链传递：chunk 不存 owner，联 {@code knowledge_base.owner_id} 收敛。</p>
+     *
+     * @param ownerId 归属用户 ID（调用方保证非空）
+     * @return 该用户全部知识库下的切片总数
+     */
+    @Select("""
+            SELECT COUNT(*)
+            FROM chunk c
+            JOIN knowledge_base kb ON kb.id = c.kb_id
+            WHERE kb.owner_id = #{ownerId}
+            """)
+    long countByOwner(@Param("ownerId") Long ownerId);
+
+    /**
+     * 沿父链解析切片的归属者（chunk → document → knowledge_base）。
+     * <p>请求面按切片标识寻址的归属判定入口；切片不存在或父链断裂返回 null，
+     * 由调用方按 404 处理（不泄露存在性）。</p>
+     *
+     * @param chunkId 切片主键
+     * @return 所属知识库的归属用户 ID；无命中返回 null
+     */
+    @Select("""
+            SELECT kb.owner_id
+            FROM chunk c
+            JOIN document d ON d.id = c.document_id
+            JOIN knowledge_base kb ON kb.id = d.kb_id
+            WHERE c.id = #{chunkId}
+            """)
+    Long selectOwnerIdByChunkId(@Param("chunkId") Long chunkId);
 
     /**
      * 物理删除文档内全部切片（无 @TableLogic，delete(wrapper) 即 DELETE FROM）。

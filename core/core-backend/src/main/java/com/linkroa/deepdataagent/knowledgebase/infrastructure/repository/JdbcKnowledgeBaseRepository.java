@@ -57,27 +57,50 @@ public class JdbcKnowledgeBaseRepository implements KnowledgeBaseRepository {
     }
 
     @Override
+    public Optional<KnowledgeBase> findByIdAndOwner(Long id, Long ownerId) {
+        // 归属判定：主键不存在与归属不匹配同为 empty（不泄露存在性）
+        if (ObjectUtils.isEmpty(id) || ObjectUtils.isEmpty(ownerId)) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(KnowledgeBasePersistenceConvert.INSTANCE.toDomain(
+                mapper.selectByIdAndOwner(id, ownerId)));
+    }
+
+    @Override
+    public boolean existsOwned(Long id, Long ownerId) {
+        if (ObjectUtils.isEmpty(id) || ObjectUtils.isEmpty(ownerId)) {
+            return false;
+        }
+        return mapper.selectByIdAndOwner(id, ownerId) != null;
+    }
+
+    @Override
     public Optional<KnowledgeBase> findByIdForUpdate(Long id) {
         return Optional.ofNullable(KnowledgeBasePersistenceConvert.INSTANCE.toDomain(mapper.selectByIdForUpdate(id)));
     }
 
     @Override
-    public Optional<KnowledgeBase> findByName(String name) {
-        return Optional.ofNullable(KnowledgeBasePersistenceConvert.INSTANCE.toDomain(mapper.selectByName(name)));
+    public Optional<KnowledgeBase> findByNameAndOwner(String name, Long ownerId) {
+        if (ObjectUtils.isEmpty(ownerId)) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(KnowledgeBasePersistenceConvert.INSTANCE.toDomain(
+                mapper.selectByNameAndOwner(name, ownerId)));
     }
 
     @Override
     public List<KnowledgeBase> findByCondition(String keyword, LifecycleStatus status, KnowledgeBaseSortField sortField,
-                                               boolean ascending, int page, int size) {
-        return mapper.selectByCondition(keyword, statusName(status), sortField, ascending, offset(page, size), size)
+                                               boolean ascending, int page, int size, Long ownerId) {
+        return mapper.selectByCondition(keyword, statusName(status), sortField, ascending,
+                        offset(page, size), size, ownerId)
                 .stream()
                 .map(KnowledgeBasePersistenceConvert.INSTANCE::toDomain)
                 .toList();
     }
 
     @Override
-    public long countByCondition(String keyword, LifecycleStatus status) {
-        return mapper.countByCondition(keyword, statusName(status));
+    public long countByCondition(String keyword, LifecycleStatus status, Long ownerId) {
+        return mapper.countByCondition(keyword, statusName(status), ownerId);
     }
 
     @Override
@@ -87,8 +110,8 @@ public class JdbcKnowledgeBaseRepository implements KnowledgeBaseRepository {
     }
 
     @Override
-    public long countByStatus(LifecycleStatus status) {
-        return mapper.countByStatus(statusName(status));
+    public long countByStatus(LifecycleStatus status, Long ownerId) {
+        return mapper.countByStatus(statusName(status), ownerId);
     }
 
     @Override

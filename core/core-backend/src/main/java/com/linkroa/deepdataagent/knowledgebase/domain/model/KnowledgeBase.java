@@ -15,9 +15,11 @@ import java.time.ZoneId;
  * 配置以 JSONB 字符串形式持久化，领域模型内以值对象承载；
  * 语言以 {@code knowledge_base.language} 列为唯一真相源，
  * 不再经由 {@code rag_engine_config} JSONB 的 language 键流转。</p>
+ * <p><b>归属（owner）</b>：知识库有且仅有一个归属者，创建时写入，此后所有状态迁移
+ * （配置更新、语言更新、删除链推进）均原样携带，MUST NOT 被改写；本聚合不提供归属转移能力。</p>
  *
  * @param id                 主键
- * @param name               知识库名称（全局唯一，≤128 字符）
+ * @param name               知识库名称（owner 内唯一，≤128 字符）
  * @param description        描述
  * @param language           知识库语言（唯一真相源 = {@code knowledge_base.language} 列；
  *                           值域为 {@link KbLanguage} 十一语言全名、大小写不敏感，创建缺省显式落
@@ -31,6 +33,7 @@ import java.time.ZoneId;
  * @param embeddingConfig    嵌入模型配置 JSON
  * @param multiModelConfig   多模态模型配置 JSON
  * @param entityTypeConfig   实体类型自定义配置 JSON
+ * @param ownerId            归属用户 ID（创建即定、不可变；知识库及其文档切片仅归属者可见可操作）
  * @param createdAt          创建时间
  * @param updatedAt          更新时间
  */
@@ -47,6 +50,7 @@ public record KnowledgeBase(
         String embeddingConfig,
         String multiModelConfig,
         String entityTypeConfig,
+        Long ownerId,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {
@@ -69,49 +73,57 @@ public record KnowledgeBase(
         if (lifecycleStatus == null) {
             lifecycleStatus = LifecycleStatus.ACTIVE;
         }
+        if (ownerId == null) {
+            throw new IllegalArgumentException("知识库归属用户不能为空");
+        }
     }
 
     /**
-     * 创建新知识库。
+     * 创建新知识库（归属者由调用方从请求身份解析后传入）。
      * <p>语言入参空白 / 缺省时显式落 {@code Chinese}；非空白按原文保留（值域校验在应用层完成，
      * 读取侧统一按 {@link KbLanguage} 归一）。</p>
+     *
+     * @param ownerId 归属用户 ID（必填，创建即定）
      */
     public static KnowledgeBase create(String name, String description, String language,
                                        String ragEngineConfig, String dedupPolicy,
                                        String retrievalStrategy, String embeddingConfig,
-                                       String multiModelConfig, String entityTypeConfig) {
+                                       String multiModelConfig, String entityTypeConfig,
+                                       Long ownerId) {
         OffsetDateTime now = OffsetDateTime.now(ZoneId.of("Asia/Shanghai"));
         String effectiveLanguage = StringUtils.isBlank(language) ? DEFAULT_LANGUAGE : language;
         return new KnowledgeBase(null, name, description, effectiveLanguage, LifecycleStatus.ACTIVE, null,
                 ragEngineConfig, dedupPolicy, retrievalStrategy,
-                embeddingConfig, multiModelConfig, entityTypeConfig, now, now);
+                embeddingConfig, multiModelConfig, entityTypeConfig, ownerId, now, now);
     }
 
     /**
      * 从数据库恢复（language 与 errorMessage 均为列值原样还原，不做归一改写）。
      *
      * @param errorMessage 删除失败留痕（{@code error_message} 列原值），非 DELETE_FAILED 态通常为空白
+     * @param ownerId      归属用户 ID（{@code owner_id} 列原值）
      */
     public static KnowledgeBase restore(Long id, String name, String description, String language,
                                         LifecycleStatus lifecycleStatus, String errorMessage,
                                         String ragEngineConfig, String dedupPolicy,
                                         String retrievalStrategy, String embeddingConfig,
                                         String multiModelConfig, String entityTypeConfig,
+                                        Long ownerId,
                                         OffsetDateTime createdAt, OffsetDateTime updatedAt) {
         return new KnowledgeBase(id, name, description, language, lifecycleStatus, errorMessage,
                 ragEngineConfig, dedupPolicy, retrievalStrategy,
-                embeddingConfig, multiModelConfig, entityTypeConfig, createdAt, updatedAt);
+                embeddingConfig, multiModelConfig, entityTypeConfig, ownerId, createdAt, updatedAt);
     }
 
     /**
-     * 更新配置（返回新实例，不可变语义；语言与名称等非配置分量原样保留）。
+     * 更新配置（返回新实例，不可变语义；语言、名称与归属等非配置分量原样保留）。
      */
     public KnowledgeBase withUpdatedConfig(String ragEngineConfig, String dedupPolicy,
                                            String retrievalStrategy, String embeddingConfig,
                                            String multiModelConfig, String entityTypeConfig) {
         return new KnowledgeBase(id, name, description, language, lifecycleStatus, errorMessage,
                 ragEngineConfig, dedupPolicy, retrievalStrategy,
-                embeddingConfig, multiModelConfig, entityTypeConfig,
+                embeddingConfig, multiModelConfig, entityTypeConfig, ownerId,
                 createdAt, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")));
     }
 
@@ -125,7 +137,7 @@ public record KnowledgeBase(
     public KnowledgeBase withLanguage(String language) {
         return new KnowledgeBase(id, name, description, language, lifecycleStatus, errorMessage,
                 ragEngineConfig, dedupPolicy, retrievalStrategy,
-                embeddingConfig, multiModelConfig, entityTypeConfig,
+                embeddingConfig, multiModelConfig, entityTypeConfig, ownerId,
                 createdAt, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")));
     }
 
@@ -142,7 +154,7 @@ public record KnowledgeBase(
         }
         return new KnowledgeBase(id, name, description, language, LifecycleStatus.DELETING, null,
                 ragEngineConfig, dedupPolicy, retrievalStrategy,
-                embeddingConfig, multiModelConfig, entityTypeConfig,
+                embeddingConfig, multiModelConfig, entityTypeConfig, ownerId,
                 createdAt, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")));
     }
 
@@ -162,7 +174,7 @@ public record KnowledgeBase(
         }
         return new KnowledgeBase(id, name, description, language, LifecycleStatus.DELETE_FAILED, reason,
                 ragEngineConfig, dedupPolicy, retrievalStrategy,
-                embeddingConfig, multiModelConfig, entityTypeConfig,
+                embeddingConfig, multiModelConfig, entityTypeConfig, ownerId,
                 createdAt, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")));
     }
 
@@ -180,7 +192,7 @@ public record KnowledgeBase(
         }
         return new KnowledgeBase(id, name, description, language, LifecycleStatus.DELETING, null,
                 ragEngineConfig, dedupPolicy, retrievalStrategy,
-                embeddingConfig, multiModelConfig, entityTypeConfig,
+                embeddingConfig, multiModelConfig, entityTypeConfig, ownerId,
                 createdAt, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")));
     }
 
@@ -189,5 +201,15 @@ public record KnowledgeBase(
      */
     public boolean isActive() {
         return lifecycleStatus == LifecycleStatus.ACTIVE;
+    }
+
+    /**
+     * 判断本知识库是否归属指定用户。
+     *
+     * @param candidateOwnerId 待判定的用户 ID，可为空
+     * @return true 表示归属者一致（空入参一律返回 false）
+     */
+    public boolean isOwnedBy(Long candidateOwnerId) {
+        return candidateOwnerId != null && candidateOwnerId.equals(ownerId);
     }
 }

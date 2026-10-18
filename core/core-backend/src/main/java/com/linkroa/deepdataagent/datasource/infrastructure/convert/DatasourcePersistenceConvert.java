@@ -60,6 +60,7 @@ public interface DatasourcePersistenceConvert {
         entity.setStatus(connection.status() != null ? connection.status().name() : null);
         entity.setJdbcConnectionConfig(toJson(encryptJdbcConfig(connection.jdbcConnectionConfig(), encryptionUtil)));
         entity.setDescription(connection.description());
+        entity.setOwnerId(connection.ownerId());
         entity.setCreatedAt(connection.createdAt());
         entity.setUpdatedAt(connection.updatedAt());
         entity.setCreatedBy(connection.createdBy());
@@ -81,6 +82,7 @@ public interface DatasourcePersistenceConvert {
                         : DatasourceStatus.ENABLED,
                 decryptJdbcConfig(fromJson(entity.getJdbcConnectionConfig(), JdbcConnectionConfig.class), encryptionUtil),
                 entity.getDescription(),
+                entity.getOwnerId(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt(),
                 entity.getCreatedBy(),

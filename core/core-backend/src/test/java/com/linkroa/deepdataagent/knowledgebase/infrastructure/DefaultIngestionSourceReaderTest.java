@@ -98,7 +98,7 @@ class DefaultIngestionSourceReaderTest {
     private static KnowledgeBase knowledgeBaseOf(String language, String ragEngineConfig, String embeddingConfig,
                                                  String multiModelConfig, String entityTypeConfig) {
         return KnowledgeBase.restore(KB_ID, "产品手册", "描述", language, LifecycleStatus.ACTIVE,
-                null, ragEngineConfig, null, null, embeddingConfig, multiModelConfig, entityTypeConfig, NOW, NOW);
+                null, ragEngineConfig, null, null, embeddingConfig, multiModelConfig, entityTypeConfig, 1L, NOW, NOW);
     }
 
     /**
@@ -151,7 +151,7 @@ class DefaultIngestionSourceReaderTest {
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(documentOf(null, null)));
         when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(
                 KnowledgeBase.restore(KB_ID, "产品手册", "描述", "Chinese", LifecycleStatus.DELETING,
-                        null, FULL_ENGINE_JSON, null, null, null, null, null, NOW, NOW)));
+                        null, FULL_ENGINE_JSON, null, null, null, null, null, 1L, NOW, NOW)));
 
         // when
         ResourceConflictException exception = assertThrows(ResourceConflictException.class,
@@ -168,7 +168,7 @@ class DefaultIngestionSourceReaderTest {
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(documentOf(null, null)));
         when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(
                 KnowledgeBase.restore(KB_ID, "产品手册", "描述", "Chinese", LifecycleStatus.DELETE_FAILED,
-                        "[KB-CLEANUP] step=chunk_cleanup", FULL_ENGINE_JSON, null, null, null, null, null,
+                        "[KB-CLEANUP] step=chunk_cleanup", FULL_ENGINE_JSON, null, null, null, null, null, 1L,
                         NOW, NOW)));
 
         // when

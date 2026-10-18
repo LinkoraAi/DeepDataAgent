@@ -35,14 +35,31 @@ public interface KnowledgeBaseMapper extends BaseMapper<KnowledgeBaseEntity> {
             LifecycleStatus.DELETE_FAILED.name());
 
     /**
-     * 按名称查询知识库（uk_kb_name 普通唯一索引，全表唯一；已删除库行物理不存在，天然不参与判重）。
+     * 按名称与归属者查询知识库（uk_kb_name(owner_id, name)：owner 内唯一，跨用户允许同名；
+     * 已删除库行物理不存在，天然不参与判重）。
      *
-     * @param name 知识库名称
+     * @param name    知识库名称
+     * @param ownerId 归属用户 ID（判重必须在同一归属者内进行）
      * @return 命中的实体；无命中返回 null
      */
-    default KnowledgeBaseEntity selectByName(String name) {
+    default KnowledgeBaseEntity selectByNameAndOwner(String name, Long ownerId) {
         return selectOne(Wrappers.<KnowledgeBaseEntity>lambdaQuery()
                 .eq(KnowledgeBaseEntity::getName, name)
+                .eq(KnowledgeBaseEntity::getOwnerId, ownerId)
+                .last("LIMIT 1"));
+    }
+
+    /**
+     * 按主键与归属者查询单条（请求面按标识寻址的归属判定入口，MUST NOT 用于后台链路）。
+     *
+     * @param id      主键
+     * @param ownerId 归属用户 ID
+     * @return 命中的实体；主键不存在或归属不匹配均返回 null（两情形对外不可区分）
+     */
+    default KnowledgeBaseEntity selectByIdAndOwner(Long id, Long ownerId) {
+        return selectOne(Wrappers.<KnowledgeBaseEntity>lambdaQuery()
+                .eq(KnowledgeBaseEntity::getId, id)
+                .eq(KnowledgeBaseEntity::getOwnerId, ownerId)
                 .last("LIMIT 1"));
     }
 
@@ -56,12 +73,13 @@ public interface KnowledgeBaseMapper extends BaseMapper<KnowledgeBaseEntity> {
      * @param ascending 是否升序
      * @param offset    偏移量
      * @param size      每页条数
+     * @param ownerId   归属用户 ID，非空时仅返回该用户资源
      * @return 知识库实体列表
      */
     default List<KnowledgeBaseEntity> selectByCondition(String keyword, String status,
                                                         KnowledgeBaseSortField sortField, boolean ascending,
-                                                        long offset, int size) {
-        LambdaQueryWrapper<KnowledgeBaseEntity> wrapper = buildCondition(keyword, status);
+                                                        long offset, int size, Long ownerId) {
+        LambdaQueryWrapper<KnowledgeBaseEntity> wrapper = buildCondition(keyword, status, ownerId);
         applySort(wrapper, ObjectUtils.isEmpty(sortField) ? KnowledgeBaseSortField.CREATED_AT : sortField, ascending);
         return selectList(wrapper
                 .orderByDesc(KnowledgeBaseEntity::getId)
@@ -108,10 +126,11 @@ public interface KnowledgeBaseMapper extends BaseMapper<KnowledgeBaseEntity> {
      *
      * @param keyword 搜索关键字（可空）
      * @param status  生命周期状态（可空）
+     * @param ownerId 归属用户 ID，非空时仅统计该用户资源
      * @return 命中记录数
      */
-    default long countByCondition(String keyword, String status) {
-        Long count = selectCount(buildCondition(keyword, status));
+    default long countByCondition(String keyword, String status, Long ownerId) {
+        Long count = selectCount(buildCondition(keyword, status, ownerId));
         return ObjectUtils.isEmpty(count) ? 0L : count;
     }
 
@@ -130,12 +149,14 @@ public interface KnowledgeBaseMapper extends BaseMapper<KnowledgeBaseEntity> {
     /**
      * 按生命周期状态统计库数量（stats 口径：调用方传 ACTIVE 即「可用库数」）。
      *
-     * @param status 生命周期状态；为空时统计全部存量记录
+     * @param status  生命周期状态；为空时统计全部存量记录
+     * @param ownerId 归属用户 ID，非空时仅统计该用户资源
      * @return 命中记录数
      */
-    default long countByStatus(String status) {
+    default long countByStatus(String status, Long ownerId) {
         Long count = selectCount(Wrappers.<KnowledgeBaseEntity>lambdaQuery()
-                .eq(StringUtils.isNotBlank(status), KnowledgeBaseEntity::getLifecycleStatus, status));
+                .eq(StringUtils.isNotBlank(status), KnowledgeBaseEntity::getLifecycleStatus, status)
+                .eq(ObjectUtils.isNotEmpty(ownerId), KnowledgeBaseEntity::getOwnerId, ownerId));
         return ObjectUtils.isEmpty(count) ? 0L : count;
     }
 
@@ -203,10 +224,12 @@ public interface KnowledgeBaseMapper extends BaseMapper<KnowledgeBaseEntity> {
                                           @Param("toStatus") String toStatus,
                                           @Param("errorMessage") String errorMessage);
 
-    private LambdaQueryWrapper<KnowledgeBaseEntity> buildCondition(String keyword, String status) {
+    private LambdaQueryWrapper<KnowledgeBaseEntity> buildCondition(String keyword, String status, Long ownerId) {
         return Wrappers.<KnowledgeBaseEntity>lambdaQuery()
                 // 列表可见性：三态全集显式可见，防未来扩展新状态的意外可见
                 .in(KnowledgeBaseEntity::getLifecycleStatus, VISIBLE_LIFECYCLE_STATUSES)
+                // 归属隔离：请求面恒传当前用户；后台链路传 null 即不加过滤（隔离收口在应用层，见 design D1）
+                .eq(ObjectUtils.isNotEmpty(ownerId), KnowledgeBaseEntity::getOwnerId, ownerId)
                 .and(StringUtils.isNotBlank(keyword), w -> w
                         .like(KnowledgeBaseEntity::getName, keyword)
                         .or()

@@ -53,6 +53,14 @@ public class JdbcApiSchemaRepository implements ApiSchemaRepository {
     }
 
     @Override
+    public Optional<Long> findOwnerIdByApiSchemaId(Long schemaId) {
+        if (schemaId == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(mapper.selectOwnerIdByApiSchemaId(schemaId));
+    }
+
+    @Override
     public List<ApiSchema> findByConnectionId(Long connectionId) {
         return mapper.selectByConnectionId(connectionId)
                 .stream()

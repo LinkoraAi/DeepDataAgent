@@ -155,7 +155,7 @@ public class IngestionTaskQueue {
         for (int i = 0; i < threads; i++) {
             executor.execute(this::consumeLoop);
         }
-        log.info("摄入任务队列已启动，消费者数量（在飞摄入并发上限）={}", threads);
+        log.info("[IngestionTaskQueue] consumer threads started: count={} (max in-flight ingestion)", threads);
     }
 
     /**

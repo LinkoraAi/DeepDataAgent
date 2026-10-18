@@ -100,6 +100,9 @@ class DatasourceControllerTest {
     /** 序列化器（与运行时统一使用 Jackson 3）。 */
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
+    /** 测试用归属用户 ID（领域对象构造时的归属者）。 */
+    private static final Long OWNER_ID = 1L;
+
     @Mock
     private DatasourceApplicationService applicationService;
 
@@ -602,7 +605,7 @@ class DatasourceControllerTest {
     private DatasourceConnection jdbcConnection(Long id, String name) {
         JdbcConnectionConfig config = new JdbcConnectionConfig("localhost", 3306, "db", "root", "secret", null);
         return new DatasourceConnection(id, name, DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
-                config, "desc", OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
+                config, "desc", OWNER_ID, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), "tester", "tester");
     }
 

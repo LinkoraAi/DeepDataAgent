@@ -42,6 +42,19 @@ public interface KnowledgeBaseApi {
     boolean isActive(Long kbId);
 
     /**
+     * 判定知识库是否归属指定用户（读侧只读投影，供检索面归属边界消费）。
+     * <p>知识库不存在、已收口（行物理缺失）与归属不匹配统一返回 {@code false}——
+     * 三者 MUST NOT 被区分（消费方据此折叠为同一 404 形态，不泄露存在性）。</p>
+     * <p><b>调用方责任</b>：请求面消费方 MUST 在进入任何召回、精排或模型调用之前完成本判定
+     * （防时延 / 用量侧信道）；后台链路（摄入 / 清退）无请求者身份，MUST NOT 依赖本方法做隔离。</p>
+     *
+     * @param kbId    知识库主键，可为空（空返回 false）
+     * @param ownerId 归属用户 ID，可为空（空返回 false）
+     * @return true 表示知识库存在且归属与 {@code ownerId} 一致
+     */
+    boolean isOwnedBy(Long kbId, Long ownerId);
+
+    /**
      * 按知识库ID读取检索策略配置（读侧只读，供检索编排消费）。
      * <p>策略以 JSON 字符串落库于 {@code knowledge_base.retrieval_strategy}，本方法负责
      * JSON → 领域值对象 {@link RetrievalStrategyConfig} 的解析（策略类型已归一化为枚举名）。

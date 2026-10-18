@@ -18,6 +18,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class PostgresqlConnectionStrategyTest {
 
+    /** 测试用归属用户 ID（领域对象构造时的归属者）。 */
+    private static final Long OWNER_ID = 1L;
+
     private final PostgresqlConnectionStrategy strategy = new PostgresqlConnectionStrategy();
 
     @Test
@@ -143,7 +146,7 @@ class PostgresqlConnectionStrategyTest {
         JdbcConnectionConfig config = new JdbcConnectionConfig("localhost", 5432, "testdb", "root", "pass", schema);
         return new DatasourceConnection(
                 null, "test-pg", DatasourceType.JDBC, JdbcType.POSTGRESQL, DatasourceStatus.ENABLED,
-                config, null, null, null, null, null
+                config, null, OWNER_ID, null, null, null, null
         );
     }
 }

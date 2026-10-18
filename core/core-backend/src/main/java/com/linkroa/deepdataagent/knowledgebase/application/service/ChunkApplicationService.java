@@ -29,6 +29,7 @@ import com.linkroa.deepdataagent.knowledgebase.domain.repository.KnowledgeBaseRe
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.shared.security.AuthContext;
 import com.linkroa.deepdataagent.shared.util.BatchSplitter;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -205,8 +206,7 @@ public class ChunkApplicationService {
      * @throws DeepDataAgentException    内容形态非法或知识库处于删除流程（400）
      */
     public Chunk create(CreateChunkCommand command) {
-        KnowledgeBase knowledgeBase = knowledgeBaseRepository.findById(command.kbId())
-                .orElseThrow(() -> new ResourceNotFoundException("知识库不存在"));
+        KnowledgeBase knowledgeBase = requireOwnedKnowledgeBase(command.kbId());
         KnowledgeBaseValidator.validateNotDeleting(knowledgeBase);
         Document document = documentRepository.findById(command.documentId())
                 .orElseThrow(() -> new ResourceNotFoundException("文档不存在"));
@@ -245,9 +245,8 @@ public class ChunkApplicationService {
      * @throws DeepDataAgentException    切片内容为空（400）
      */
     public Chunk update(UpdateChunkCommand command) {
-        // 事务外预读：取得库 / 文档身份（本阶段零写入）
-        Chunk current = chunkRepository.findById(command.id())
-                .orElseThrow(() -> new ResourceNotFoundException("切片不存在"));
+        // 事务外预读：取切片并沿父链校验归属（零写入）
+        Chunk current = requireOwnedChunk(command.id());
         if (StringUtils.isBlank(command.chunkContent())) {
             throw new DeepDataAgentException("切片内容不能为空");
         }
@@ -373,8 +372,8 @@ public class ChunkApplicationService {
         for (Long documentId : chunkIdsByDocument.keySet()) {
             Document document = documentRepository.findById(documentId)
                     .orElseThrow(() -> new ResourceNotFoundException("文档不存在"));
-            KnowledgeBase knowledgeBase = knowledgeBaseRepository.findById(document.kbId())
-                    .orElseThrow(() -> new ResourceNotFoundException("知识库不存在"));
+            // 归属前置：沿 chunk → document → knowledge_base 父链校验，非本人库 404 折叠
+            KnowledgeBase knowledgeBase = requireOwnedKnowledgeBase(document.kbId());
             KnowledgeBaseValidator.validateNotDeleting(knowledgeBase);
             DocumentValidator.validateChunkOperationAllowed(document);
         }
@@ -430,8 +429,7 @@ public class ChunkApplicationService {
      * @throws ResourceNotFoundException 切片不存在（404）
      */
     public Chunk get(Long id) {
-        return chunkRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("切片不存在"));
+        return requireOwnedChunk(id);
     }
 
     /**
@@ -446,10 +444,9 @@ public class ChunkApplicationService {
      * @throws DeepDataAgentException    所属知识库不可用（400）
      */
     public ChunkMediaResult openMedia(Long id) {
-        Chunk chunk = chunkRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("切片不存在"));
-        KnowledgeBase knowledgeBase = knowledgeBaseRepository.findById(chunk.kbId())
-                .orElseThrow(() -> new DeepDataAgentException(ERROR_KB_UNAVAILABLE));
+        // 归属前置：切片（含父链知识库）非当前用户归属一律 404，不触碰对象存储
+        Chunk chunk = requireOwnedChunk(id);
+        KnowledgeBase knowledgeBase = requireOwnedKnowledgeBase(chunk.kbId());
         if (!knowledgeBase.isActive()) {
             throw new DeepDataAgentException(ERROR_KB_UNAVAILABLE);
         }
@@ -461,6 +458,53 @@ public class ChunkApplicationService {
                 .orElseThrow(() -> new ResourceNotFoundException("切片媒体图片对象不存在"));
         return new ChunkMediaResult(resolveMediaContentType(mediaReference.objectKey()),
                 opened.size(), opened.content());
+    }
+
+    /**
+     * 归属前置：读取知识库并校验归属当前认证用户（请求面统一入口）。
+     * <p>不存在与非本人归属统一以 404 折叠（不泄露存在性）。</p>
+     *
+     * @param kbId 知识库主键
+     * @return 归属当前用户的知识库
+     * @throws ResourceNotFoundException 知识库不存在或非当前用户归属（404，两情形不可区分）
+     */
+    private KnowledgeBase requireOwnedKnowledgeBase(Long kbId) {
+        return knowledgeBaseRepository.findByIdAndOwner(kbId, AuthContext.requireUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("知识库不存在"));
+    }
+
+    /**
+     * 归属前置：沿父链（chunk → document → knowledge_base）校验切片归属当前认证用户。
+     * <p>切片不存在、父链断裂与非本人归属统一以 404 折叠。</p>
+     *
+     * @param chunkId 切片主键
+     * @return 归属当前用户的切片
+     * @throws ResourceNotFoundException 切片不存在或非当前用户归属（404，两情形不可区分）
+     */
+    private Chunk requireOwnedChunk(Long chunkId) {
+        Long currentOwnerId = AuthContext.requireUserId();
+        Long kbOwnerId = chunkRepository.findOwnerIdByChunkId(chunkId)
+                .orElseThrow(() -> new ResourceNotFoundException("切片不存在"));
+        if (!currentOwnerId.equals(kbOwnerId)) {
+            throw new ResourceNotFoundException("切片不存在");
+        }
+        return chunkRepository.findById(chunkId)
+                .orElseThrow(() -> new ResourceNotFoundException("切片不存在"));
+    }
+
+    /**
+     * 归属前置：沿父链（document → knowledge_base）校验文档归属当前认证用户。
+     *
+     * @param documentId 文档主键
+     * @throws ResourceNotFoundException 文档不存在或非当前用户归属（404，两情形不可区分）
+     */
+    private void requireOwnedDocument(Long documentId) {
+        Long currentOwnerId = AuthContext.requireUserId();
+        Long kbOwnerId = documentRepository.findOwnerIdByDocumentId(documentId)
+                .orElseThrow(() -> new ResourceNotFoundException("文档不存在"));
+        if (!currentOwnerId.equals(kbOwnerId)) {
+            throw new ResourceNotFoundException("文档不存在");
+        }
     }
 
     /**
@@ -485,32 +529,38 @@ public class ChunkApplicationService {
      * @return 切片列表，按文档与序号升序
      */
     public List<Chunk> list(ListChunkQuery query) {
+        // 归属前置：列表按知识库维度收敛于当前用户，非本人库直接 404
+        requireOwnedKnowledgeBase(query.kbId());
         return chunkRepository.findByKbId(query.kbId(), query.documentId(), query.sequence(),
                 query.keyword(), query.page(), query.size());
     }
 
     /**
-     * 统计知识库内切片列表命中总数。
+     * 统计知识库内切片列表命中总数（归属前置，非本人知识库 404）。
      *
      * @param kbId       知识库ID
      * @param documentId 文档ID，可为空
      * @param sequence   切片序号，可为空
      * @param keyword    切片内容关键字，可为空
      * @return 命中记录数
+     * @throws ResourceNotFoundException 知识库不存在或非当前用户归属（404）
      */
     public long count(Long kbId, Long documentId, Integer sequence, String keyword) {
+        requireOwnedKnowledgeBase(kbId);
         return chunkRepository.countByKbId(kbId, documentId, sequence, keyword);
     }
 
     /**
-     * 分页查询指定文档下的切片列表。
+     * 分页查询指定文档下的切片列表（归属经 document → knowledge_base 父链校验）。
      *
      * @param documentId 文档ID
      * @param page       页码，从 1 开始
      * @param size       每页条数
      * @return 切片列表，按序号升序
+     * @throws ResourceNotFoundException 文档不存在或非当前用户归属（404，两情形不可区分）
      */
     public List<Chunk> listByDocument(Long documentId, int page, int size) {
+        requireOwnedDocument(documentId);
         int safePage = page < DEFAULT_LIST_PAGE ? DEFAULT_LIST_PAGE : page;
         int safeSize = size < 1 ? DEFAULT_LIST_SIZE : size;
         return chunkRepository.findByDocumentId(documentId, safePage, safeSize);

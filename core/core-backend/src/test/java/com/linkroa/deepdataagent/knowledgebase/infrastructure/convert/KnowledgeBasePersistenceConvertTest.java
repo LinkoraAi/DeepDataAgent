@@ -46,7 +46,7 @@ class KnowledgeBasePersistenceConvertTest {
                 "[KB-CLEANUP] step=graph_cleanup",
                 "{\"engineType\":\"DOCUMENT_ENGINE\"}", "{\"matchRule\":\"BY_NAME\"}",
                 "{\"strategyType\":\"MIX\"}", "{\"modelProfileId\":8}", "{\"modelProfileId\":9}",
-                "{\"entityTypes\":[]}", CREATED_AT, UPDATED_AT);
+                "{\"entityTypes\":[]}", 1L, CREATED_AT, UPDATED_AT);
 
         // when
         KnowledgeBaseEntity entity = mapper.toEntity(kb);
@@ -90,6 +90,7 @@ class KnowledgeBasePersistenceConvertTest {
         entity.setId(2L);
         entity.setName("空状态库");
         entity.setLifecycleStatus("  ");
+        entity.setOwnerId(1L);
 
         // when
         KnowledgeBase restored = mapper.toDomain(entity);

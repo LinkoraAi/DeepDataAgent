@@ -15,6 +15,12 @@ import com.linkroa.deepdataagent.rag.application.contract.RetrievalResult;
  *
  * <p>依赖方向：消费方依赖本契约、由 rag BC 提供实现，与 {@code IngestionTaskSubmitter} 等
  * knowledgebase 定义端口相反（本契约由 rag 定义并发布），不引入 rag → 消费方的反向编译依赖。</p>
+ *
+ * <p><b>消费方身份规矩（接线前置条件，MUST）</b>：知识库已按归属者隔离，本契约的调用
+ * MUST 携带可判定的调用方身份（或在调用前由调用方完成「该身份有权检索该知识库」的授权证明）；
+ * 系统 MUST NOT 支持不带任何调用方身份的裸 {@code kbId} 检索透传。
+ * 违反本规矩将形成混淆代理（confused deputy）——例如以用户 B 身份的会话借智能体配置
+ * 检索用户 A 的知识库；消费方（runtime / agent）接入时 MUST 以本规矩作为验收条件。</p>
  */
 public interface RetrievalApi {
 

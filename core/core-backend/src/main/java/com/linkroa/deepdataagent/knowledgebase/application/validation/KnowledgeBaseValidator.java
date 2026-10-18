@@ -32,12 +32,14 @@ public final class KnowledgeBaseValidator {
     }
 
     /**
-     * 校验知识库名称合法性与全局唯一性。
+     * 校验知识库名称合法性与<b>归属者内</b>唯一性。
+     * <p>唯一性口径已收敛为 owner 内（{@code uk_kb_name(owner_id, name)}）：判重的查询范围
+     * 由调用方按当前用户收敛（跨用户允许同名），本方法只负责「同一归属者内不得重复」的判定。</p>
      *
      * @param name   待校验的知识库名称
-     * @param exists 同名知识库查询结果（创建时应为空；更新时由调用方排除自身后再传入）
+     * @param exists 同一归属者内的同名查询结果（创建时应为空；更新时由调用方排除自身后再传入）
      * @throws DeepDataAgentException    名称为空或超长（400）
-     * @throws ResourceConflictException 名称已被占用（409）
+     * @throws ResourceConflictException 名称在同一归属者内已被占用（409）
      */
     public static void validateNameUnique(String name, Optional<KnowledgeBase> exists) {
         if (StringUtils.isBlank(name)) {

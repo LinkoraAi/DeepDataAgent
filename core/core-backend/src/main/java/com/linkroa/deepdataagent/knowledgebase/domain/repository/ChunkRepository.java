@@ -76,6 +76,24 @@ public interface ChunkRepository {
     long countByKbIdOnly(Long kbId);
 
     /**
+     * 按归属者统计切片总数（请求面 stats 口径，归属经 chunk → document → knowledge_base 父链收敛）。
+     *
+     * @param ownerId 归属用户 ID，可为空（空即返回 0）
+     * @return 该用户全部知识库下的切片总数
+     */
+    long countByOwner(Long ownerId);
+
+    /**
+     * 沿父链解析切片的归属者（chunk → document → knowledge_base）。
+     * <p>请求面按切片标识寻址的归属判定入口；切片不存在或父链断裂返回 {@link Optional#empty()}，
+     * 与「非本人归属」对外不可区分（不泄露存在性）。MUST NOT 用于后台链路。</p>
+     *
+     * @param chunkId 切片主键，可为空
+     * @return 所属知识库的归属用户 ID；无命中返回空
+     */
+    Optional<Long> findOwnerIdByChunkId(Long chunkId);
+
+    /**
      * 分批取知识库内存活切片的 ID（id 升序，清退调度用）。
      * <p>物理删体系下已删切片行不存在，故每轮从头取 LIMIT 即可：上一批删除后自然轮到下一批，
      * 中断后重跑幂等、无需游标。</p>

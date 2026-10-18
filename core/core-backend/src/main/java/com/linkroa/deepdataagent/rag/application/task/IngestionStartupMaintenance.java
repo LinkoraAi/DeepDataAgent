@@ -61,14 +61,15 @@ public class IngestionStartupMaintenance {
             int converged = inFlightTaskConverger.convergeAllOfType(
                     InFlightTaskType.DOC_INGESTION, STARTUP_ERROR_MESSAGE);
             if (converged > 0) {
-                log.info("[摄入启动恢复] 完成，本实例崩溃残留的 {} 篇在飞文档已置 FAILED（需用户手动重新解析）",
-                        converged);
+                log.info("[IngestionStartupMaintenance] recovered: {} crash-residue in-flight documents from this "
+                        + "instance set to FAILED (manual re-parse required)", converged);
             } else {
-                log.info("[摄入启动恢复] 完成，无本实例崩溃残留（在飞注册表无未完成文档）");
+                log.info("[IngestionStartupMaintenance] recovered: no crash residue for this instance "
+                        + "(no unfinished document in the in-flight registry)");
             }
         } catch (Exception e) {
-            log.error("[摄入启动恢复] 失败，不阻断应用启动（残留凭据保留在注册表，"
-                    + "可由下次启动重试或用户重新解析处置）", e);
+            log.error("[IngestionStartupMaintenance] recovery failed, application startup not blocked "
+                    + "(residual credentials kept in the registry, handled by next startup retry or user re-parse)", e);
         }
     }
 }

@@ -23,14 +23,14 @@ class KnowledgeBaseTest {
 
     private static KnowledgeBase kbOf(LifecycleStatus status) {
         return KnowledgeBase.restore(10L, "产品手册", "描述", "Chinese", status,
-                null, null, null, null, null, null, null, PAST, PAST);
+                null, null, null, null, null, null, null, 1L, PAST, PAST);
     }
 
     @Test
     void should_beActiveWithNullId_when_create_given_validInput() {
         // when
         KnowledgeBase kb = KnowledgeBase.create("产品手册", "描述", "Chinese",
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, 1L);
 
         // then：新建默认 ACTIVE，主键待回填
         assertNull(kb.id());
@@ -43,7 +43,7 @@ class KnowledgeBaseTest {
     void should_defaultLanguageToChinese_when_create_given_nullLanguage() {
         // when：语言入参为 null（创建请求未携带）
         KnowledgeBase kb = KnowledgeBase.create("产品手册", "描述", null,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, 1L);
 
         // then：显式落 Chinese 缺省值
         assertEquals("Chinese", kb.language());
@@ -53,7 +53,7 @@ class KnowledgeBaseTest {
     void should_defaultLanguageToChinese_when_create_given_blankLanguage() {
         // when：语言入参为纯空白
         KnowledgeBase kb = KnowledgeBase.create("产品手册", "描述", "   ",
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, 1L);
 
         // then：空白视同缺省，落 Chinese
         assertEquals("Chinese", kb.language());
@@ -63,7 +63,7 @@ class KnowledgeBaseTest {
     void should_keepRawLanguage_when_create_given_validLanguage() {
         // when：显式携带合法语言全名
         KnowledgeBase kb = KnowledgeBase.create("产品手册", "描述", "English",
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, 1L);
 
         // then：原文透传落列（写入侧不做归一）
         assertEquals("English", kb.language());
@@ -73,7 +73,7 @@ class KnowledgeBaseTest {
     void should_throwIllegalArgument_when_create_given_blankName() {
         // when // then
         assertThrows(IllegalArgumentException.class, () -> KnowledgeBase.create("   ", "描述", "Chinese",
-                null, null, null, null, null, null));
+                null, null, null, null, null, null, 1L));
     }
 
     @Test
@@ -83,7 +83,7 @@ class KnowledgeBaseTest {
 
         // when // then
         assertThrows(IllegalArgumentException.class, () -> KnowledgeBase.create(tooLong, "描述", "Chinese",
-                null, null, null, null, null, null));
+                null, null, null, null, null, null, 1L));
     }
 
     @Test
@@ -93,7 +93,7 @@ class KnowledgeBaseTest {
 
         // when
         KnowledgeBase kb = KnowledgeBase.create(boundary, "描述", "Chinese",
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, 1L);
 
         // then
         assertEquals(boundary, kb.name());
@@ -103,7 +103,7 @@ class KnowledgeBaseTest {
     void should_passThroughLanguageWithoutNormalize_when_restore_given_storedLanguage() {
         // when：仓储恢复路径原样携带列值（含大小写历史样本），不做任何归一
         KnowledgeBase kb = KnowledgeBase.restore(10L, "产品手册", "描述", "ENGLISH",
-                LifecycleStatus.ACTIVE, null, null, null, null, null, null, null, PAST, PAST);
+                LifecycleStatus.ACTIVE, null, null, null, null, null, null, null, 1L, PAST, PAST);
 
         // then
         assertEquals("ENGLISH", kb.language());
@@ -113,7 +113,7 @@ class KnowledgeBaseTest {
     void should_fallbackStatusToActive_when_new_given_nullLifecycleStatus() {
         // when：仓储恢复路径可能携带 null 状态
         KnowledgeBase kb = KnowledgeBase.restore(10L, "产品手册", "描述", "Chinese", null,
-                null, null, null, null, null, null, null, PAST, PAST);
+                null, null, null, null, null, null, null, 1L, PAST, PAST);
 
         // then：紧凑构造器兜底为 ACTIVE
         assertEquals(LifecycleStatus.ACTIVE, kb.lifecycleStatus());
@@ -211,7 +211,7 @@ class KnowledgeBaseTest {
         // given：携带失败留痕的 DELETE_FAILED 库
         KnowledgeBase failed = KnowledgeBase.restore(10L, "产品手册", "描述", "Chinese",
                 LifecycleStatus.DELETE_FAILED, "[KB-CLEANUP] step=graph_cleanup",
-                null, null, null, null, null, null, PAST, PAST);
+                null, null, null, null, null, null, 1L, PAST, PAST);
 
         // when
         KnowledgeBase redeleting = failed.clearFailureOnRedelete();

@@ -21,6 +21,7 @@ public record DatasourceConnection(
         DatasourceStatus status,
         JdbcConnectionConfig jdbcConnectionConfig,
         String description,
+        Long ownerId,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         String createdBy,
@@ -36,6 +37,7 @@ public record DatasourceConnection(
      * @param status 数据源状态
      * @param jdbcConnectionConfig JDBC连接配置（JDBC类型必填）
      * @param description 描述
+     * @param ownerId 归属用户ID（创建即定、不可变；数据源及其元数据仅归属者可见可操作）
      * @param createdAt 创建时间
      * @param updatedAt 更新时间
      * @param createdBy 创建人
@@ -78,8 +80,13 @@ public record DatasourceConnection(
         if (ObjectUtils.isNotEmpty(description) && description.length() > 500) {
             throw new IllegalArgumentException("描述不能超过500个字符");
         }
+
+        // 归属校验：数据源必须挂靠唯一归属者（创建即定、不可变）
+        if (ObjectUtils.isEmpty(ownerId)) {
+            throw new IllegalArgumentException("数据源归属用户不能为空");
+        }
     }
-    
+
     /**
      * 创建新的数据源连接实体
      *
@@ -88,6 +95,7 @@ public record DatasourceConnection(
      * @param subType JDBC子类型（API类型可为null）
      * @param description 描述
      * @param jdbcConfig JDBC连接配置（JDBC类型必填）
+     * @param ownerId 归属用户ID（必填，创建即定）
      * @return 数据源连接实体
      */
     public static DatasourceConnection create(
@@ -95,7 +103,8 @@ public record DatasourceConnection(
             DatasourceType type,
             JdbcType subType,
             String description,
-            JdbcConnectionConfig jdbcConfig
+            JdbcConnectionConfig jdbcConfig,
+            Long ownerId
     ) {
         return new DatasourceConnection(
                 null,
@@ -105,6 +114,7 @@ public record DatasourceConnection(
                 DatasourceStatus.ENABLED,
                 jdbcConfig,
                 description,
+                ownerId,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 null,
@@ -122,6 +132,7 @@ public record DatasourceConnection(
      * @param status 状态
      * @param jdbcConfig JDBC连接配置
      * @param description 描述
+     * @param ownerId 归属用户ID
      * @param createdAt 创建时间
      * @param updatedAt 更新时间
      * @param createdBy 创建人
@@ -136,6 +147,7 @@ public record DatasourceConnection(
             DatasourceStatus status,
             JdbcConnectionConfig jdbcConfig,
             String description,
+            Long ownerId,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
             String createdBy,
@@ -149,11 +161,22 @@ public record DatasourceConnection(
                 status,
                 jdbcConfig,
                 description,
+                ownerId,
                 createdAt,
                 updatedAt,
                 createdBy,
                 updatedBy
         );
+    }
+
+    /**
+     * 判断本数据源是否归属指定用户。
+     *
+     * @param candidateOwnerId 待判定的用户 ID，可为空
+     * @return true 表示归属者一致（空入参一律返回 false）
+     */
+    public boolean isOwnedBy(Long candidateOwnerId) {
+        return candidateOwnerId != null && candidateOwnerId.equals(ownerId);
     }
 
 }

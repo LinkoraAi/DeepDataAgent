@@ -27,6 +27,8 @@ import com.linkroa.deepdataagent.rag.domain.service.RecallService;
 import com.linkroa.deepdataagent.rag.domain.service.Reranker;
 import com.linkroa.deepdataagent.rag.domain.service.RetrievalConstants;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
+import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.shared.security.AuthContext;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -260,6 +262,11 @@ public class RetrievalApplicationService {
     private RetrievalResult doSearch(RetrievalQuery q, RetrievalOutputMode mode) {
         if (ObjectUtils.isEmpty(q)) {
             throw new IllegalArgumentException("检索请求不能为空");
+        }
+        // 归属边界（MUST 先于任何召回 / 精排 / 模型调用，防时延与用量侧信道）：
+        // 非本人归属与不存在折叠为同一 404 形态，不泄露存在性
+        if (!knowledgeBaseApi.isOwnedBy(q.kbId(), AuthContext.requireUserId())) {
+            throw new ResourceNotFoundException("知识库不存在");
         }
         if (!knowledgeBaseApi.isActive(q.kbId())) {
             throw new DeepDataAgentException("知识库不存在或不可用，拒绝检索: kbId=" + q.kbId());
@@ -498,6 +505,9 @@ public class RetrievalApplicationService {
 
     /**
      * 批量回取切片并按主键索引；回取失败按空索引返回（明细降级，不中断主返回）。
+     * <p><b>跨库隔离</b>：回取以 {@code kbId} 等值过滤收口（见
+     * {@link com.linkroa.deepdataagent.knowledgebase.api.KnowledgeBaseApi#findChunksByKbIdAndChunkIds}），
+     * 入参混入其他知识库的切片标识一律按未命中处理，MUST NOT 返回其内容或存在性信息。</p>
      *
      * @param kbId     知识库主键
      * @param chunkIds 切片主键集合（非空）
@@ -508,6 +518,7 @@ public class RetrievalApplicationService {
             return Map.of();
         }
         try {
+            // kbId 等值过滤已在契约提供方内收口：跨库切片标识不命中
             List<Chunk> found = knowledgeBaseApi.findChunksByKbIdAndChunkIds(kbId, chunkIds);
             if (CollectionUtils.isEmpty(found)) {
                 return Map.of();

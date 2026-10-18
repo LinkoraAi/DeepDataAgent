@@ -27,9 +27,36 @@ public interface KnowledgeBaseRepository {
 
     Optional<KnowledgeBase> findById(Long id);
 
+    /**
+     * 按主键与归属者查询（请求面按标识寻址的归属判定入口）。
+     * <p>主键不存在与归属不匹配均返回 {@link Optional#empty()}，两情形对外不可区分（不泄露存在性）。
+     * MUST NOT 用于后台链路（摄入 / 清退无身份上下文）。</p>
+     *
+     * @param id      知识库主键，可为空
+     * @param ownerId 归属用户 ID，可为空（空即无命中）
+     * @return 命中且归属一致的知识库；否则为空
+     */
+    Optional<KnowledgeBase> findByIdAndOwner(Long id, Long ownerId);
+
+    /**
+     * 判定知识库是否存在且归属指定用户（轻量投影，不加载聚合）。
+     *
+     * @param id      知识库主键，可为空
+     * @param ownerId 归属用户 ID，可为空（空即返回 false）
+     * @return true 表示存在且归属一致
+     */
+    boolean existsOwned(Long id, Long ownerId);
+
     Optional<KnowledgeBase> findByIdForUpdate(Long id);
 
-    Optional<KnowledgeBase> findByName(String name);
+    /**
+     * 按名称与归属者查询（owner 内重名判定的唯一入口）。
+     *
+     * @param name    知识库名称
+     * @param ownerId 归属用户 ID
+     * @return 命中且归属一致的知识库；否则为空
+     */
+    Optional<KnowledgeBase> findByNameAndOwner(String name, Long ownerId);
 
     /**
      * 条件分页查询（排序白名单字段 + 方向，恒以 ID 倒序兜底保证分页稳定）。
@@ -40,19 +67,33 @@ public interface KnowledgeBaseRepository {
      * @param ascending 是否升序
      * @param page      页码，从 1 开始
      * @param size      每页条数
+     * @param ownerId   归属用户 ID，非空时仅返回该用户资源；后台链路传 null 不加过滤
      * @return 知识库列表
      */
     List<KnowledgeBase> findByCondition(String keyword, LifecycleStatus status,
-                                        KnowledgeBaseSortField sortField, boolean ascending, int page, int size);
+                                        KnowledgeBaseSortField sortField, boolean ascending, int page, int size,
+                                        Long ownerId);
 
-    long countByCondition(String keyword, LifecycleStatus status);
+    /**
+     * 条件统计总数。
+     *
+     * @param keyword 搜索关键字，可为空
+     * @param status  生命周期状态，可为空
+     * @param ownerId 归属用户 ID，非空时仅统计该用户资源；后台链路传 null 不加过滤
+     * @return 命中记录数
+     */
+    long countByCondition(String keyword, LifecycleStatus status, Long ownerId);
 
     void deleteById(Long id);
 
     /**
-     * 统计各状态的库数量。
+     * 统计各状态的库数量（请求面统计口径按归属收敛）。
+     *
+     * @param status  目标生命周期状态，可为空
+     * @param ownerId 归属用户 ID，非空时仅统计该用户资源；后台链路传 null 不加过滤
+     * @return 命中记录数
      */
-    long countByStatus(LifecycleStatus status);
+    long countByStatus(LifecycleStatus status, Long ownerId);
 
     /**
      * 按生命周期状态列举全部知识库 ID（id 升序，读侧只读投影，保留能力）。

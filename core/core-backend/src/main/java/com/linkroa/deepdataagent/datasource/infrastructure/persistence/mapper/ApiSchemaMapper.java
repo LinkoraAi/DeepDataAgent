@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.ApiSchemaEntity;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 
@@ -17,6 +19,21 @@ import java.util.List;
  */
 @Mapper
 public interface ApiSchemaMapper extends BaseMapper<ApiSchemaEntity> {
+
+    /**
+     * 沿父链解析 API 数据表所属数据源的归属者（api_schema → datasource_connection）。
+     * <p>请求面按 API schema 标识寻址的归属判定入口；记录不存在或父链断裂返回 null，由调用方按 404 处理。</p>
+     *
+     * @param schemaId API schema 主键
+     * @return 所属数据源的归属用户 ID；无命中返回 null
+     */
+    @Select("""
+            SELECT c.owner_id
+            FROM api_schema a
+            JOIN datasource_connection c ON c.id = a.connection_id
+            WHERE a.id = #{schemaId}
+            """)
+    Long selectOwnerIdByApiSchemaId(@Param("schemaId") Long schemaId);
 
     default ApiSchemaEntity selectByConnectionIdAndName(Long connectionId, String name) {
         return selectOne(Wrappers.<ApiSchemaEntity>lambdaQuery()

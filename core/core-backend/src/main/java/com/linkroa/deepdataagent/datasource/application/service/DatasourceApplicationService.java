@@ -21,6 +21,7 @@ import com.linkroa.deepdataagent.datasource.infrastructure.client.ApiPaginationH
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.shared.security.AuthContext;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -93,13 +94,15 @@ public class DatasourceApplicationService {
     }
 
     public DatasourceConnection createDatasource(CreateDatasourceCommand command) {
-        if (connectionRepository.findByName(command.name()).isPresent()) {
+        // 归属即当前认证用户：名称判重与后续落库均在该归属者范围内进行
+        Long ownerId = AuthContext.requireUserId();
+        if (connectionRepository.findByNameAndOwner(command.name(), ownerId).isPresent()) {
             throw new ResourceConflictException("数据源名称已被使用");
         }
         if (command.type() == DatasourceType.JDBC && command.jdbcConfig() != null) {
             DatasourceValidator.validatePostgresqlSchema(command.subType(), command.jdbcConfig().schema());
         }
-        DatasourceConnection connection = DatasourceConvert.INSTANCE.toDatasourceConnection(command);
+        DatasourceConnection connection = DatasourceConvert.INSTANCE.toDatasourceConnection(command, ownerId);
         DatasourceConnection saved = transactionTemplate.execute(status -> {
             DatasourceConnection persisted = connectionRepository.save(connection);
             if (persisted.type() == DatasourceType.API && ObjectUtils.isNotEmpty(command.apiSchemas())) {
@@ -119,10 +122,10 @@ public class DatasourceApplicationService {
     }
 
     public DatasourceConnection updateDatasource(UpdateDatasourceCommand command) {
-        DatasourceConnection existing = connectionRepository.findById(command.id())
-                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
+        DatasourceConnection existing = requireOwnedConnection(command.id());
         if (command.name() != null && !command.name().equals(existing.name())) {
-            connectionRepository.findByName(command.name())
+            // 判重范围 = 归属者内（uk_name 已收敛为 (owner_id, name)）
+            connectionRepository.findByNameAndOwner(command.name(), existing.ownerId())
                     .filter(c -> !c.id().equals(existing.id()))
                     .ifPresent(c -> { throw new ResourceConflictException("数据源名称已被使用"); });
         }
@@ -139,8 +142,7 @@ public class DatasourceApplicationService {
     }
 
     public void enableDatasource(Long id) {
-        DatasourceConnection connection = connectionRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
+        DatasourceConnection connection = requireOwnedConnection(id);
         domainService.validateCanEnable(connection);
         DatasourceConnectionStrategy strategy = strategyFactory.getStrategy(connection.type(), connection.subType());
         DatasourceConnectionStrategy.ConnectionTestResult result = strategy.testConnection(connection);
@@ -151,15 +153,13 @@ public class DatasourceApplicationService {
     }
 
     public void disableDatasource(Long id) {
-        DatasourceConnection connection = connectionRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
+        DatasourceConnection connection = requireOwnedConnection(id);
         domainService.validateCanDisable(connection);
         transactionTemplate.executeWithoutResult(status -> connectionRepository.updateStatus(id, DatasourceStatus.DISABLED));
     }
 
     public void deleteDatasource(Long id) {
-        DatasourceConnection connection = connectionRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
+        DatasourceConnection connection = requireOwnedConnection(id);
         domainService.validateCanDelete(connection);
         transactionTemplate.executeWithoutResult(status -> {
             if (connection.type() == DatasourceType.API) {
@@ -173,8 +173,8 @@ public class DatasourceApplicationService {
 
     public DatasourceConnectionStrategy.ConnectionTestResult testConnection(TestConnectionCommand command) {
         if (command.id() != null) {
-            DatasourceConnection connection = connectionRepository.findById(command.id())
-                    .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
+            // 按标识测试已存连接：归属前置，非本人归属 404 且 MUST NOT 建立任何远端连接
+            DatasourceConnection connection = requireOwnedConnection(command.id());
             DatasourceConnectionStrategy strategy = strategyFactory.getStrategy(connection.type(), connection.subType());
             return strategy.testConnection(connection);
         }
@@ -191,23 +191,23 @@ public class DatasourceApplicationService {
     }
 
     public PaginatedResult<DatasourceConnection> listDatasources(ListDatasourceQuery query) {
+        // 归属过滤：列表仅含当前认证用户的数据源
+        Long ownerId = AuthContext.requireUserId();
         List<DatasourceConnection> connections = connectionRepository.findByCondition(
-                query.keyword(), query.type(), query.status(), query.page(), query.size()
+                query.keyword(), query.type(), query.status(), query.page(), query.size(), ownerId
         );
-        long total = connectionRepository.countByCondition(query.keyword(), query.type(), query.status());
+        long total = connectionRepository.countByCondition(query.keyword(), query.type(), query.status(), ownerId);
         return new PaginatedResult<>(connections, total, query.page(), query.size());
     }
 
     public DatasourceConnection getDatasource(Long id) {
-        return connectionRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
+        return requireOwnedConnection(id);
     }
 
     // ==================== Metadata Operations ====================
 
     public void syncMetadata(Long connectionId) {
-        DatasourceConnection connection = connectionRepository.findById(connectionId)
-                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
+        DatasourceConnection connection = requireOwnedConnection(connectionId);
         domainService.validateCanSync(connection);
         // 同步为可重入增量对账（schema/表/列逐条 upsert 与软删各自落库）：不包整体事务，
         // 远程元数据抽取不占用本地数据库连接；中途失败时已对账部分保留，下次同步补齐
@@ -222,8 +222,7 @@ public class DatasourceApplicationService {
     }
 
     public PaginatedResult<TableInfo> listTables(TableListQuery query) {
-        DatasourceConnection connection = connectionRepository.findById(query.connectionId())
-                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
+        DatasourceConnection connection = requireOwnedConnection(query.connectionId());
 
         List<DatabaseSchema> schemas = databaseSchemaRepository.findByConnectionId(connection.id());
         if (schemas.isEmpty()) {
@@ -239,22 +238,26 @@ public class DatasourceApplicationService {
     }
 
     public List<ColumnInfo> listColumns(Long tableId) {
+        // 归属前置：沿表标识父链解析所属数据源归属，非本人归属 404 折叠
+        requireOwnedConnectionByTableId(tableId);
         return columnInfoRepository.findByTableId(tableId);
     }
 
     public void updateTableComment(Long tableId, String comment) {
+        requireOwnedConnectionByTableId(tableId);
         domainService.validateComment(comment);
         tableInfoRepository.updateTableCustomComment(tableId, comment);
     }
 
     public void updateColumnComment(Long columnId, String comment) {
+        requireOwnedConnectionByColumnId(columnId);
         domainService.validateComment(comment);
         columnInfoRepository.updateColumnCustomComment(columnId, comment);
     }
 
     public List<Map<String, Object>> previewTableData(Long connectionId, String tableName, int limit) {
-        DatasourceConnection connection = connectionRepository.findById(connectionId)
-            .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
+        // 归属前置：非本人归属 404，MUST NOT 建立到目标库/API 的任何连接
+        DatasourceConnection connection = requireOwnedConnection(connectionId);
 
         if (connection.status() != DatasourceStatus.ENABLED) {
             throw new ResourceConflictException("数据源已禁用，请先启用数据源");
@@ -375,8 +378,7 @@ public class DatasourceApplicationService {
     // ==================== API Schema Operations ====================
 
     public ApiSchema createApiSchema(Long connectionId, ApiSchemaCommand schemaCommand) {
-        DatasourceConnection connection = connectionRepository.findById(connectionId)
-                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
+        DatasourceConnection connection = requireOwnedConnection(connectionId);
         if (connection.type() != DatasourceType.API) {
             throw new ResourceConflictException("仅支持API类型数据源");
         }
@@ -453,6 +455,8 @@ public class DatasourceApplicationService {
      * 字段列表：非空即全量重建。</p>
      */
     public ApiSchema updateApiSchema(Long schemaId, ApiSchemaCommand command) {
+        // 归属前置：沿 api_schema → datasource_connection 父链解析归属，非本人 404 折叠
+        requireOwnedConnectionByApiSchemaId(schemaId);
         ApiSchema existing = apiSchemaRepository.findById(schemaId)
                 .orElseThrow(() -> new ResourceNotFoundException("API表不存在"));
 
@@ -526,6 +530,7 @@ public class DatasourceApplicationService {
     }
 
     public void deleteApiSchema(Long schemaId) {
+        requireOwnedConnectionByApiSchemaId(schemaId);
         apiSchemaRepository.findById(schemaId)
                 .orElseThrow(() -> new ResourceNotFoundException("API表不存在"));
         transactionTemplate.executeWithoutResult(status -> {
@@ -546,6 +551,7 @@ public class DatasourceApplicationService {
      * 读取 API 表详情（schema + 字段列表组合读模型；API 面收敛后不再包装协议 Response）。
      */
     public ApiSchemaDetail getApiSchemaDetail(Long schemaId) {
+        requireOwnedConnectionByApiSchemaId(schemaId);
         ApiSchema schema = apiSchemaRepository.findById(schemaId)
                 .orElseThrow(() -> new ResourceNotFoundException("API表不存在"));
         List<ApiField> fields = apiFieldRepository.findByApiSchemaId(schemaId);
@@ -553,10 +559,12 @@ public class DatasourceApplicationService {
     }
 
     public List<ApiSchema> listApiSchemas(Long connectionId) {
+        requireOwnedConnection(connectionId);
         return apiSchemaRepository.findByConnectionId(connectionId);
     }
 
     public List<ApiField> listApiFields(Long schemaId) {
+        requireOwnedConnectionByApiSchemaId(schemaId);
         return apiFieldRepository.findByApiSchemaId(schemaId);
     }
 
@@ -606,6 +614,61 @@ public class DatasourceApplicationService {
 
     // ==================== Helper Methods ====================
 
+    /**
+     * 归属前置：读取数据源并校验归属当前认证用户（请求面统一入口）。
+     * <p>不存在与非本人归属统一以 404 折叠（不泄露存在性）。</p>
+     *
+     * @param id 数据源主键
+     * @return 归属当前用户的数据源
+     * @throws ResourceNotFoundException 数据源不存在或非当前用户归属（404，两情形不可区分）
+     */
+    private DatasourceConnection requireOwnedConnection(Long id) {
+        return connectionRepository.findByIdAndOwner(id, AuthContext.requireUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
+    }
+
+    /**
+     * 归属前置：沿父链（table_info → database_schema → datasource_connection）
+     * 校验表所属数据源归属当前认证用户。
+     *
+     * @param tableId 表主键
+     * @throws ResourceNotFoundException 表不存在或非当前用户归属（404，两情形不可区分）
+     */
+    private void requireOwnedConnectionByTableId(Long tableId) {
+        requireSameOwner(tableInfoRepository.findOwnerIdByTableId(tableId), "表不存在");
+    }
+
+    /**
+     * 归属前置：沿父链（column_info → table_info → database_schema → datasource_connection）
+     * 校验列所属数据源归属当前认证用户。
+     *
+     * @param columnId 列主键
+     * @throws ResourceNotFoundException 列不存在或非当前用户归属（404，两情形不可区分）
+     */
+    private void requireOwnedConnectionByColumnId(Long columnId) {
+        requireSameOwner(columnInfoRepository.findOwnerIdByColumnId(columnId), "列不存在");
+    }
+
+    /**
+     * 归属前置：沿父链（api_schema → datasource_connection）校验 API 数据表归属当前认证用户。
+     *
+     * @param schemaId API schema 主键
+     * @throws ResourceNotFoundException 记录不存在或非当前用户归属（404，两情形不可区分）
+     */
+    private void requireOwnedConnectionByApiSchemaId(Long schemaId) {
+        requireSameOwner(apiSchemaRepository.findOwnerIdByApiSchemaId(schemaId), "API表不存在");
+    }
+
+    /**
+     * 父链归属判定收口：解析结果为空（父链断裂）或与当前用户不一致均以 404 折叠。
+     */
+    private void requireSameOwner(java.util.Optional<Long> resolvedOwnerId, String notFoundMessage) {
+        Long currentOwnerId = AuthContext.requireUserId();
+        if (resolvedOwnerId.isEmpty() || !currentOwnerId.equals(resolvedOwnerId.get())) {
+            throw new ResourceNotFoundException(notFoundMessage);
+        }
+    }
+
     private DatasourceConnection buildTempConnection(TestConnectionCommand command) {
         DatasourceType type = DatasourceType.valueOf(command.type());
         JdbcType subType = type == DatasourceType.JDBC && command.subType() != null ? JdbcType.valueOf(command.subType()) : null;
@@ -616,7 +679,9 @@ public class DatasourceApplicationService {
                     command.database(), command.username(), command.password(), command.schema()
             );
         }
-        return DatasourceConnection.create("temporary_test_connection", type, subType, null, jdbcConfig);
+        // 临时连接仅用于即时连通性测试、MUST NOT 落库；归属取当前请求者仅满足领域不变量
+        return DatasourceConnection.create("temporary_test_connection", type, subType, null, jdbcConfig,
+                AuthContext.requireUserId());
     }
 
     private ApiSchema buildTempApiSchema(TestConnectionCommand command) {
@@ -649,8 +714,8 @@ public class DatasourceApplicationService {
 
     private ApiSchema buildApiSchemaForParse(ParseApiResponseCommand command) {
         if (command.connectionId() != null) {
-            DatasourceConnection savedConnection = connectionRepository.findById(command.connectionId())
-                    .orElseThrow(() -> new ResourceNotFoundException("数据源不存在"));
+            // 归属前置：按已存连接解析时校验归属，非本人归属 404 折叠
+            DatasourceConnection savedConnection = requireOwnedConnection(command.connectionId());
             if (savedConnection.type() != DatasourceType.API) {
                 throw new ResourceConflictException("仅支持API数据源");
             }

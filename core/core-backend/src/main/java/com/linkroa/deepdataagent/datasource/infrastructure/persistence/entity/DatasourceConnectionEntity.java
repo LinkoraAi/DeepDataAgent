@@ -20,4 +20,11 @@ public class DatasourceConnectionEntity extends BaseEntity {
     @TableField(typeHandler = PostgresJsonbTypeHandler.class)
     private String jdbcConnectionConfig;
     private String description;
+
+    /**
+     * 归属用户 ID（{@code datasource_connection.owner_id} 列）：创建即定、一经写入不可变。
+     * <p>列表过滤与按标识寻址的归属校验均以本列为唯一依据。</p>
+     */
+    @TableField("owner_id")
+    private Long ownerId;
 }

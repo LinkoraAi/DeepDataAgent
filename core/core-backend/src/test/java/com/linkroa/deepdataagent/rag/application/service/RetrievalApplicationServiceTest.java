@@ -31,6 +31,10 @@ import com.linkroa.deepdataagent.rag.domain.service.QueryUnderstandingService;
 import com.linkroa.deepdataagent.rag.domain.service.RecallService;
 import com.linkroa.deepdataagent.rag.domain.service.Reranker;
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
+import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.shared.security.AuthContext;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -57,6 +61,7 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -101,6 +106,9 @@ class RetrievalApplicationServiceTest {
 
     /** 测试知识库ID */
     private static final Long KB_ID = 7L;
+
+    /** 测试用归属用户 ID（与 AuthContext 写入一致） */
+    private static final Long OWNER_ID = 1L;
 
     /** 用户原始问题（短于关键词失败终止阈值） */
     private static final String QUERY = "订单发货超时的处理规则是什么";
@@ -193,6 +201,22 @@ class RetrievalApplicationServiceTest {
 
     @InjectMocks
     private RetrievalApplicationService retrievalApplicationService;
+
+    /**
+     * 归属上下文前置：写入当前用户并对「归属校验通过」做宽松打桩。
+     * <p>宽松（lenient）以兼容空请求等在校验前即抛出的用例；非归属场景由需要该断言的用例覆盖。</p>
+     */
+    @BeforeEach
+    void setUpOwnerContext() {
+        AuthContext.setUserId(OWNER_ID);
+        lenient().when(knowledgeBaseApi.isOwnedBy(KB_ID, OWNER_ID)).thenReturn(true);
+    }
+
+    /** 清理线程内归属上下文，避免用例间身份残留。 */
+    @AfterEach
+    void clearOwnerContext() {
+        AuthContext.clear();
+    }
 
     /**
      * 构造 MIX 策略快照（含默认 RRF 融合配置）。
@@ -884,6 +908,53 @@ class RetrievalApplicationServiceTest {
         // when & then
         assertThrows(DeepDataAgentException.class, () -> retrievalApplicationService.search(request()));
         verify(knowledgeBaseApi, never()).findRetrievalStrategyByKbId(any());
+        verifyNoInteractions(queryUnderstandingService, recallService, fusionService,
+                reranker, contextBuilder, answerGenerator);
+    }
+
+    /**
+     * 归属边界：非本人归属的知识库按「不存在」折叠为 404，且 MUST 先于活跃态探测与任何召回 / 模型调用
+     * （防存在性枚举、时延与用量侧信道）。
+     */
+    @Test
+    void should_rejectAsNotFoundBeforeActiveProbe_when_search_given_foreignKnowledgeBase() {
+        // given：归属校验不通过
+        when(knowledgeBaseApi.isOwnedBy(KB_ID, OWNER_ID)).thenReturn(false);
+
+        // when & then：以 404 折叠拒绝，且未触及活跃态探测与任何下游阶段
+        ResourceNotFoundException exception = assertThrows(ResourceNotFoundException.class,
+                () -> retrievalApplicationService.search(request()));
+        assertTrue(exception.getMessage().contains("知识库不存在"));
+        verify(knowledgeBaseApi, never()).isActive(any());
+        verify(knowledgeBaseApi, never()).findRetrievalStrategyByKbId(any());
+        verifyNoInteractions(queryUnderstandingService, recallService, fusionService,
+                reranker, contextBuilder, answerGenerator, queryImageTranscriber);
+    }
+
+    /** 归属边界：答案形态入口同口径拒绝非本人归属，且不产出答案。 */
+    @Test
+    void should_rejectAsNotFoundBeforeActiveProbe_when_generateAnswer_given_foreignKnowledgeBase() {
+        // given
+        when(knowledgeBaseApi.isOwnedBy(KB_ID, OWNER_ID)).thenReturn(false);
+
+        // when & then
+        assertThrows(ResourceNotFoundException.class,
+                () -> retrievalApplicationService.generateAnswer(request()));
+        verify(knowledgeBaseApi, never()).isActive(any());
+        verifyNoInteractions(queryUnderstandingService, recallService, fusionService,
+                reranker, contextBuilder, answerGenerator);
+    }
+
+    /** 归属边界：切片形态入口同口径拒绝非本人归属，且不返回任何切片。 */
+    @Test
+    void should_rejectAsNotFoundBeforeActiveProbe_when_retrieveChunks_given_foreignKnowledgeBase() {
+        // given
+        when(knowledgeBaseApi.isOwnedBy(KB_ID, OWNER_ID)).thenReturn(false);
+
+        // when & then
+        assertThrows(ResourceNotFoundException.class,
+                () -> retrievalApplicationService.retrieveChunks(request()));
+        verify(knowledgeBaseApi, never()).isActive(any());
         verifyNoInteractions(queryUnderstandingService, recallService, fusionService,
                 reranker, contextBuilder, answerGenerator);
     }

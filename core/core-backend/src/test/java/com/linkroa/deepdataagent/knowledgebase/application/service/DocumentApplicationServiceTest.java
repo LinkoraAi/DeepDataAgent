@@ -30,6 +30,8 @@ import com.linkroa.deepdataagent.knowledgebase.domain.repository.KnowledgeBaseRe
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.shared.security.AuthContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -93,6 +95,12 @@ class DocumentApplicationServiceTest {
     /** 测试用知识库ID */
     private static final Long KB_ID = 10L;
 
+    /** 当前认证用户 ID（请求面归属语义：所访问的知识库 / 文档属该用户） */
+    private static final Long OWNER_ID = 1L;
+
+    /** 他人归属用户 ID（横向越权矩阵用：当前用户 ≠ 资源归属者） */
+    private static final Long OTHER_OWNER_ID = 2L;
+
     /** 测试用文档ID（覆盖换版场景下作为被清退的旧文档ID） */
     private static final Long DOC_ID = 100L;
 
@@ -148,6 +156,7 @@ class DocumentApplicationServiceTest {
 
     @BeforeEach
     void setUp() {
+        AuthContext.setUserId(OWNER_ID);
         ReflectionTestUtils.setField(service, "maxFileSize", DataSize.ofMegabytes(100));
         ReflectionTestUtils.setField(service, "deleteCleanupBatchSize", 500);
         ReflectionTestUtils.setField(service, "cancelWaitTimeoutSeconds", 30L);
@@ -168,6 +177,19 @@ class DocumentApplicationServiceTest {
         // 解析任务提交契约默认成功入队：
         // 拒收 / 抛异常的回滚分支由专项用例覆写本桩
         lenient().when(ingestionTaskSubmitter.submit(any())).thenReturn(true);
+        // 归属语义默认桩：知识库归属当前用户、文档父链归属当前用户（请求面归属闸门通过）；
+        // 需要 404 / 非本人归属的用例覆写为 empty
+        lenient().when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
+                .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        lenient().when(knowledgeBaseRepository.existsOwned(eq(KB_ID), eq(OWNER_ID))).thenReturn(true);
+        lenient().when(documentRepository.findOwnerIdByDocumentId(DOC_ID)).thenReturn(Optional.of(OWNER_ID));
+        lenient().when(documentRepository.findById(DOC_ID))
+                .thenReturn(Optional.of(buildDocument(DocumentStatus.PROCESSED, 3)));
+    }
+
+    @AfterEach
+    void tearDown() {
+        AuthContext.clear();
     }
 
     private KnowledgeBase buildKb(LifecycleStatus status) {
@@ -181,7 +203,7 @@ class DocumentApplicationServiceTest {
     private KnowledgeBase buildKb(LifecycleStatus status, String ragEngineConfig, String dedupPolicy) {
         OffsetDateTime now = OffsetDateTime.now();
         return KnowledgeBase.restore(KB_ID, "产品手册", "描述", "Chinese", status,
-                null, ragEngineConfig, dedupPolicy, null, null, null, null, now, now);
+                null, ragEngineConfig, dedupPolicy, null, null, null, null, OWNER_ID, now, now);
     }
 
     private Document buildDocument(DocumentStatus status, int chunkCount) {
@@ -243,7 +265,8 @@ class DocumentApplicationServiceTest {
      * @param knowledgeBase 知识库聚合根
      */
     private void stubUploadPremises(KnowledgeBase knowledgeBase) {
-        lenient().when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(knowledgeBase));
+        lenient().when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
+                .thenReturn(Optional.of(knowledgeBase));
         lenient().when(knowledgeBaseRepository.findByIdForUpdate(KB_ID)).thenReturn(Optional.of(knowledgeBase));
         lenient().when(documentDedupService.sha256Hex(any())).thenReturn(SERVER_HASH);
     }
@@ -371,7 +394,7 @@ class DocumentApplicationServiceTest {
         // given：重新解析事务把文档重置回 PENDING（已入队语义）
         when(documentRepository.findByIdForUpdate(DOC_ID))
                 .thenReturn(Optional.of(buildDocument(DocumentStatus.PROCESSED, 8)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -387,7 +410,7 @@ class DocumentApplicationServiceTest {
     @Test
     void should_throwNotFoundWithoutStoring_when_upload_given_knowledgeBaseNotExist() {
         // given
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.empty());
 
         // when // then
         assertThrows(ResourceNotFoundException.class, () -> service.upload(uploadCommand("PDF")));
@@ -398,7 +421,7 @@ class DocumentApplicationServiceTest {
     @Test
     void should_throwBadRequest_when_upload_given_deletingKnowledgeBase() {
         // given
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.DELETING)));
 
         // when // then
@@ -892,7 +915,7 @@ class DocumentApplicationServiceTest {
         // given
         when(documentRepository.findByIdForUpdate(DOC_ID))
                 .thenReturn(Optional.of(buildDocument(DocumentStatus.PROCESSED, 8)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -909,7 +932,7 @@ class DocumentApplicationServiceTest {
         // given
         when(documentRepository.findByIdForUpdate(DOC_ID))
                 .thenReturn(Optional.of(buildDocument(DocumentStatus.FAILED, 0, null, "解析失败：向量模型超时")));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -926,7 +949,7 @@ class DocumentApplicationServiceTest {
         // given
         when(documentRepository.findByIdForUpdate(DOC_ID))
                 .thenReturn(Optional.of(buildDocument(DocumentStatus.PROCESSED, 8, "{\"chunkMode\":\"SPLIT\"}")));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE, KB_ENGINE_CONFIG)));
         when(documentRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -944,7 +967,7 @@ class DocumentApplicationServiceTest {
         // given
         when(documentRepository.findByIdForUpdate(DOC_ID))
                 .thenReturn(Optional.of(buildDocument(DocumentStatus.FAILED, 0, "{\"chunkMode\":\"SPLIT\"}")));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE, KB_ENGINE_CONFIG)));
         when(documentRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -962,7 +985,7 @@ class DocumentApplicationServiceTest {
         // given
         when(documentRepository.findByIdForUpdate(DOC_ID))
                 .thenReturn(Optional.of(buildDocument(DocumentStatus.PROCESSED, 5, "{\"chunkMode\":\"SPLIT\"}")));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE, "{\"parseEngine\":\"pandoc\"}")));
         when(documentRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -980,7 +1003,7 @@ class DocumentApplicationServiceTest {
         // given
         when(documentRepository.findByIdForUpdate(DOC_ID))
                 .thenReturn(Optional.of(buildDocument(DocumentStatus.PROCESSED, 5)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE, "{illegal-json")));
 
         // when // then
@@ -993,7 +1016,7 @@ class DocumentApplicationServiceTest {
         // given
         when(documentRepository.findByIdForUpdate(DOC_ID))
                 .thenReturn(Optional.of(buildDocument(DocumentStatus.FAILED, 0)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.DELETING)));
 
         // when // then
@@ -1083,7 +1106,7 @@ class DocumentApplicationServiceTest {
         // given：未携带覆盖值，回退的库级快照里重叠比例 45 越界
         when(documentRepository.findByIdForUpdate(DOC_ID))
                 .thenReturn(Optional.of(buildDocument(DocumentStatus.PROCESSED, 5)));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE,
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE,
                 "{\"engineType\":\"DOCUMENT_ENGINE\",\"chunkStrategy\":{\"chunkMode\":\"GENERAL\","
                         + "\"modeConfig\":{\"params\":{\"overlapped_percent\":45}}}}")));
 
@@ -1097,7 +1120,7 @@ class DocumentApplicationServiceTest {
         // given：覆盖值含历史废弃键（存量配置编辑后重新解析）
         when(documentRepository.findByIdForUpdate(DOC_ID))
                 .thenReturn(Optional.of(buildDocument(DocumentStatus.PROCESSED, 8, "{\"chunkMode\":\"SPLIT\"}")));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE, KB_ENGINE_CONFIG)));
         when(documentRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
         String override = "{\"chunkMode\":\"GENERAL\",\"modeConfig\":{\"params\":"
@@ -1405,13 +1428,13 @@ class DocumentApplicationServiceTest {
     void should_throwBadRequest_when_precheck_given_bothAxesBlank() {
         // when // then
         assertThrows(DeepDataAgentException.class, () -> service.precheck(KB_ID, " ", null));
-        verify(knowledgeBaseRepository, never()).findById(any());
+        verify(knowledgeBaseRepository, never()).findByIdAndOwner(any(), any());
     }
 
     @Test
     void should_throwNotFound_when_precheck_given_knowledgeBaseNotExist() {
         // given
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.empty());
 
         // when // then
         assertThrows(ResourceNotFoundException.class, () -> service.precheck(KB_ID, "手册.pdf", null));
@@ -1420,7 +1443,7 @@ class DocumentApplicationServiceTest {
     @Test
     void should_throwBadRequest_when_precheck_given_deletingKnowledgeBase() {
         // given
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.DELETING)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.DELETING)));
 
         // when // then
         assertThrows(DeepDataAgentException.class, () -> service.precheck(KB_ID, "手册.pdf", null));
@@ -1432,7 +1455,7 @@ class DocumentApplicationServiceTest {
         // given
         KnowledgeBase kb = buildKb(LifecycleStatus.ACTIVE, null,
                 "{\"matchRule\":\"BY_NAME\",\"conflictAction\":\"REJECT\"}");
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(kb));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(kb));
         DedupPolicyConfig policy = new DedupPolicyConfig(DedupMatchRule.BY_NAME, DedupConflictAction.REJECT);
         when(documentDedupService.resolvePolicy(kb)).thenReturn(policy);
         DedupHit hit = new DedupHit(buildDocumentWithId(DOC_ID), List.of("fileName"));
@@ -1451,7 +1474,7 @@ class DocumentApplicationServiceTest {
         // given：大写十六进制为同一算法（SHA-256）的表示法差异，归一化为小写后再进入判重比对
         KnowledgeBase kb = buildKb(LifecycleStatus.ACTIVE, null,
                 "{\"matchRule\":\"BY_CONTENT\",\"conflictAction\":\"REJECT\"}");
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(kb));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(kb));
         DedupPolicyConfig policy = new DedupPolicyConfig(DedupMatchRule.BY_CONTENT, DedupConflictAction.REJECT);
         when(documentDedupService.resolvePolicy(kb)).thenReturn(policy);
         String upperHash = SERVER_HASH.toUpperCase();
@@ -1509,7 +1532,7 @@ class DocumentApplicationServiceTest {
         // given
         String s3File = "{\"objectKey\":\"rag/10/source/手册.pdf\"}";
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocumentWithS3File(s3File)));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(kbAssetStoragePort.open("rag/10/source/手册.pdf")).thenReturn(Optional.of(
                 new KbAssetStoragePort.OpenedObject(new ByteArrayInputStream(new byte[] {1, 2, 3}), 3L)));
 
@@ -1531,7 +1554,7 @@ class DocumentApplicationServiceTest {
         // given：MD 文档按类型映射为 text/markdown（旧「元数据 contentType 优先 / 空白回落」已随迁移消失）
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(
                 buildDocumentWithS3FileAndType(FileType.MD, "手册.md", "{\"objectKey\":\"rag/10/source/手册.md\"}")));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(kbAssetStoragePort.open("rag/10/source/手册.md")).thenReturn(Optional.of(
                 new KbAssetStoragePort.OpenedObject(new ByteArrayInputStream(new byte[] {1}), 5L)));
 
@@ -1558,7 +1581,7 @@ class DocumentApplicationServiceTest {
         // given：存储引用合法但对象存储中对象不存在（open 返回 empty）
         String s3File = "{\"objectKey\":\"rag/10/source/手册.pdf\"}";
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocumentWithS3File(s3File)));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(kbAssetStoragePort.open("rag/10/source/手册.pdf")).thenReturn(Optional.empty());
 
         // when
@@ -1570,17 +1593,20 @@ class DocumentApplicationServiceTest {
     }
 
     @Test
-    void should_throwBadRequest_when_openContent_given_knowledgeBaseNotExist() {
-        // given
+    void should_throwNotFound_when_openContent_given_knowledgeBaseNotExist() {
+        // given：父链知识库解析不到（不存在 / 非本人归属）→ 折叠为 404「文档不存在」，
+        // 归属与存在性不可区分，且不触碰对象存储
         String s3File = "{\"objectKey\":\"rag/10/source/手册.pdf\"}";
+        when(documentRepository.findOwnerIdByDocumentId(DOC_ID)).thenReturn(Optional.of(OWNER_ID));
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocumentWithS3File(s3File)));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.empty());
 
         // when
-        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class, () -> service.openContent(DOC_ID));
+        ResourceNotFoundException exception = assertThrows(ResourceNotFoundException.class,
+                () -> service.openContent(DOC_ID));
 
         // then
-        assertTrue(exception.getMessage().contains("知识库不可用"));
+        assertTrue(exception.getMessage().contains("知识库不存在"));
         verify(kbAssetStoragePort, never()).open(anyString());
     }
 
@@ -1589,7 +1615,7 @@ class DocumentApplicationServiceTest {
         // given
         String s3File = "{\"objectKey\":\"rag/10/source/手册.pdf\"}";
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocumentWithS3File(s3File)));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.DELETING)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.DELETING)));
 
         // when
         DeepDataAgentException exception = assertThrows(DeepDataAgentException.class, () -> service.openContent(DOC_ID));
@@ -1603,7 +1629,7 @@ class DocumentApplicationServiceTest {
     void should_throwBadRequest_when_openContent_given_blankS3File() {
         // given
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocumentWithS3File(null)));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
 
         // when
         DeepDataAgentException exception = assertThrows(DeepDataAgentException.class, () -> service.openContent(DOC_ID));
@@ -1617,7 +1643,7 @@ class DocumentApplicationServiceTest {
     void should_throwBadRequest_when_openContent_given_malformedS3FileJson() {
         // given
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocumentWithS3File("{\"objectKey\": \"rag")));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
 
         // when
         DeepDataAgentException exception = assertThrows(DeepDataAgentException.class, () -> service.openContent(DOC_ID));
@@ -1632,7 +1658,7 @@ class DocumentApplicationServiceTest {
         // given：引用 JSON 缺对象键（桶键已随桶概念退役，仅对象键定位）
         when(documentRepository.findById(DOC_ID))
                 .thenReturn(Optional.of(buildDocumentWithS3File("{\"bucket\":\"kb-bucket\"}")));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
 
         // when
         DeepDataAgentException exception = assertThrows(DeepDataAgentException.class, () -> service.openContent(DOC_ID));
@@ -1667,7 +1693,7 @@ class DocumentApplicationServiceTest {
         String s3File = "{\"objectKey\":\"" + objectKey + "\"}";
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(
                 buildDocumentWithS3FileAndType(FileType.DOCX, "手册.docx", s3File)));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         boolean[] closed = {false};
         when(kbAssetStoragePort.open(objectKey)).thenReturn(Optional.of(
                 new KbAssetStoragePort.OpenedObject(trackingStream(closed), 10L)));
@@ -1693,7 +1719,7 @@ class DocumentApplicationServiceTest {
         String objectKey = "rag/10/source/手册.pdf";
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(
                 buildDocumentWithS3FileAndType(FileType.PDF, "手册.pdf", "{\"objectKey\":\"" + objectKey + "\"}")));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
 
         // when
         DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
@@ -1711,7 +1737,7 @@ class DocumentApplicationServiceTest {
         String s3File = "{\"objectKey\":\"rag/10/source/手册.docx\"}";
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(
                 buildDocumentWithS3FileAndType(FileType.DOCX, "手册.docx", s3File)));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.DELETING)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.DELETING)));
 
         // when
         DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
@@ -1729,7 +1755,7 @@ class DocumentApplicationServiceTest {
         String objectKey = "rag/10/source/手册.xlsx";
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(
                 buildDocumentWithS3FileAndType(FileType.XLSX, "手册.xlsx", "{\"objectKey\":\"" + objectKey + "\"}")));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(kbAssetStoragePort.open(objectKey)).thenReturn(Optional.empty());
 
         // when
@@ -1747,7 +1773,7 @@ class DocumentApplicationServiceTest {
         String objectKey = "rag/10/source/加密.pptx";
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(
                 buildDocumentWithS3FileAndType(FileType.PPTX, "加密.pptx", "{\"objectKey\":\"" + objectKey + "\"}")));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(kbAssetStoragePort.open(objectKey)).thenReturn(Optional.of(
                 new KbAssetStoragePort.OpenedObject(new ByteArrayInputStream(new byte[] {1}), 1L)));
         when(documentTextExtractPort.extract(any())).thenThrow(new IllegalStateException("加密文档无法解析"));
@@ -1829,7 +1855,7 @@ class DocumentApplicationServiceTest {
         // given：重新解析正常成功（重解析绝不允许回收源文件——源文件是重解析的生命线）
         when(documentRepository.findByIdForUpdate(DOC_ID))
                 .thenReturn(Optional.of(buildDocument(DocumentStatus.PROCESSED, 8)));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         // when
@@ -2082,5 +2108,124 @@ class DocumentApplicationServiceTest {
         // then
         verify(documentRepository, never()).markFailed(any(), any());
         verify(inFlightTaskRegistry).unregister(InFlightTaskType.DOC_CLEANUP, DOC_ID);
+    }
+
+    // ==================== 归属隔离（横向越权矩阵） ====================
+
+    /** 越权上传：按 kbId 入口归属校验失败即 404，且 MUST 先于对象存储写入与文档登记。 */
+    @Test
+    void should_throwNotFoundAndNotStore_when_upload_given_foreignKnowledgeBase() {
+        // given：当前用户切换为他人，知识库归属查询无命中
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class, () -> service.upload(uploadCommand("PDF")));
+        verifyNoInteractions(kbAssetStoragePort);
+        verify(documentRepository, never()).save(any());
+    }
+
+    /** 越权判重预检：按 kbId 入口 404，且不执行任何判重查询。 */
+    @Test
+    void should_throwNotFoundAndNotDetect_when_precheck_given_foreignKnowledgeBase() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class, () -> service.precheck(KB_ID, "手册.pdf", null));
+        verify(documentDedupService, never()).detect(any(), any(), any(), any());
+    }
+
+    /** 越权列文档：按 kbId 入口 404，且不执行列表查询。 */
+    @Test
+    void should_throwNotFoundAndNotList_when_list_given_foreignKnowledgeBase() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.list(new ListDocumentQuery(KB_ID, "手册", "PROCESSED", 1, 20)));
+        verify(documentRepository, never()).findByKbId(any(), any(), any(), anyInt(), anyInt());
+    }
+
+    /** 越权统计文档：按 kbId 入口 404，且不执行统计查询。 */
+    @Test
+    void should_throwNotFoundAndNotCount_when_count_given_foreignKnowledgeBase() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class, () -> service.count(KB_ID, null, null));
+        verify(documentRepository, never()).countByKbId(any(), any(), any());
+    }
+
+    /**
+     * 越权读取他人文档详情：沿 document → knowledge_base 父链解析出的归属者非当前用户，
+     * 按「文档不存在」折叠为 404（与不存在不可区分，不泄露存在性）。
+     */
+    @Test
+    void should_throwNotFound_when_get_given_documentOwnedByOther() {
+        // given：父链解析出的归属者仍为 OWNER_ID（setUp 已打桩）
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        ResourceNotFoundException exception = assertThrows(ResourceNotFoundException.class, () -> service.get(DOC_ID));
+        assertTrue(exception.getMessage().contains("文档不存在"));
+    }
+
+    /** 越权删除他人文档：404 折叠，且 MUST NOT 投递清退任务、MUST NOT 变更状态。 */
+    @Test
+    void should_throwNotFoundAndNotSubmit_when_delete_given_documentOwnedByOther() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class, () -> service.delete(new DeleteDocumentCommand(DOC_ID)));
+        verify(documentCleanupTaskSubmitter, never()).submit(any(), any());
+        verify(documentRepository, never()).transitStatus(any(), anySet(), any(), any());
+    }
+
+    /** 越权读取他人文档原文：404 折叠，且不触碰对象存储。 */
+    @Test
+    void should_throwNotFoundAndNotOpen_when_openContent_given_documentOwnedByOther() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class, () -> service.openContent(DOC_ID));
+        verifyNoInteractions(kbAssetStoragePort);
+    }
+
+    /** 越权读取他人办公文档文本预览：404 折叠，且不触碰对象存储与文本提取。 */
+    @Test
+    void should_throwNotFoundAndNotPreview_when_openTextPreview_given_documentOwnedByOther() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class, () -> service.openTextPreview(DOC_ID));
+        verifyNoInteractions(kbAssetStoragePort);
+        verifyNoInteractions(documentTextExtractPort);
+    }
+
+    /**
+     * 后台链路不受归属过滤影响：删除清退链在无请求者身份的线程上照常执行并收口，
+     * 证明隔离校验仅收口于请求面（MUST NOT 下沉仓储层）。
+     */
+    @Test
+    void should_completeCleanupWithoutIdentity_when_runCleanupChain_given_noAuthenticatedContext() {
+        // given：显式清空归属上下文，模拟清退虚拟线程
+        AuthContext.clear();
+        when(ingestionCancellationApi.awaitTermination(eq(DOC_ID), any(Duration.class))).thenReturn(true);
+        when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocument(DocumentStatus.DELETING, 3)));
+        when(chunkRepository.findIdsByDocumentId(DOC_ID, 500)).thenReturn(List.of());
+        when(documentRepository.executeDelete(DOC_ID)).thenReturn(true);
+
+        // when：后台入口无身份上下文，MUST NOT 抛未认证异常
+        service.runCleanupChain(DOC_ID);
+
+        // then：链正常收口（源文件与媒体前缀按文档派生回收），且无失败留痕
+        verify(kbAssetStoragePort).cleanupPrefix("rag/" + KB_ID + "/" + DOC_ID + "/images/");
+        verify(documentRepository).executeDelete(DOC_ID);
+        verify(documentRepository, never()).markFailed(any(), any());
     }
 }

@@ -18,6 +18,9 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith(MockitoExtension.class)
 class DatasourceConvertTest {
 
+    /** 测试用归属用户 ID。 */
+    private static final Long OWNER_ID = 1L;
+
     private final DatasourceConvert assembler = DatasourceConvert.INSTANCE;
 
     @Test
@@ -27,7 +30,7 @@ class DatasourceConvertTest {
                 "test-ds", DatasourceType.JDBC, JdbcType.MYSQL, "desc", jdbcConfig, null
         );
 
-        DatasourceConnection result = assembler.toDatasourceConnection(command);
+        DatasourceConnection result = assembler.toDatasourceConnection(command, OWNER_ID);
 
         assertEquals("test-ds", result.name());
         assertEquals(DatasourceType.JDBC, result.type());
@@ -38,6 +41,8 @@ class DatasourceConvertTest {
         assertEquals(3306, result.jdbcConnectionConfig().port());
         assertEquals("testdb", result.jdbcConnectionConfig().database());
         assertEquals("desc", result.description());
+        // 归属由调用方显式传入，MUST NOT 由命令携带
+        assertEquals(OWNER_ID, result.ownerId());
     }
 
     @Test
@@ -47,17 +52,17 @@ class DatasourceConvertTest {
                 "test-ds", DatasourceType.JDBC, JdbcType.MYSQL, null, jdbcConfig, null
         );
 
-        DatasourceConnection result = assembler.toDatasourceConnection(command);
+        DatasourceConnection result = assembler.toDatasourceConnection(command, OWNER_ID);
 
         assertEquals(3306, result.jdbcConnectionConfig().port());
     }
 
     @Test
     void should_handleNullExistingJdbcConnection_when_update_given_existingConnectionWithNullJdbcConfig() {
-        // given: 鐜版湁杩炴帴娌℃湁 jdbcConnectionConfig锛圓PI 绫诲瀷锛夛紝鏇存柊鍛戒护鎻愪緵 JDBC 閰嶇疆
+        // given: 现有连接没有 jdbcConnectionConfig（API 类型），更新命令提供 JDBC 配置
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "api-ds", DatasourceType.API, null, DatasourceStatus.ENABLED,
-                null, "API desc", null, null, null, null
+                null, "API desc", OWNER_ID, null, null, null, null
         );
 
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(
@@ -89,7 +94,7 @@ class DatasourceConvertTest {
                 "api-ds", DatasourceType.API, null, "API desc", null, List.of(apiSchema)
         );
 
-        DatasourceConnection result = assembler.toDatasourceConnection(command);
+        DatasourceConnection result = assembler.toDatasourceConnection(command, OWNER_ID);
 
         assertEquals("api-ds", result.name());
         assertEquals(DatasourceType.API, result.type());
@@ -101,7 +106,7 @@ class DatasourceConvertTest {
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "old-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
                 new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass", null),
-                "old desc", null, null, null, null
+                "old desc", OWNER_ID, null, null, null, null
         );
 
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(
@@ -124,7 +129,7 @@ class DatasourceConvertTest {
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "old-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
                 new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass", null),
-                "old desc", null, null, null, null
+                "old desc", OWNER_ID, null, null, null, null
         );
 
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(
@@ -140,13 +145,31 @@ class DatasourceConvertTest {
     }
 
     @Test
+    void should_keepOwner_when_toDatasourceConnection_given_updateCommand() {
+        // 归属不可变：更新链路 MUST 原样携带既有归属者
+        DatasourceConnection existing = new DatasourceConnection(
+                1L, "old-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
+                new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass", null),
+                "old desc", OWNER_ID, null, null, null, null
+        );
+
+        UpdateDatasourceCommand command = new UpdateDatasourceCommand(
+                1L, "new-name", "new desc", null
+        );
+
+        DatasourceConnection result = assembler.toDatasourceConnection(command, existing);
+
+        assertEquals(OWNER_ID, result.ownerId());
+    }
+
+    @Test
     void should_useProvidedPort_when_portIsNotNull_given_jdbcCreateCommand() {
         JdbcConfigCommand jdbcConfig = new JdbcConfigCommand("localhost", 3307, "testdb", "root", "pass", null);
         CreateDatasourceCommand command = new CreateDatasourceCommand(
                 "test-ds", DatasourceType.JDBC, JdbcType.MYSQL, "desc", jdbcConfig, null
         );
 
-        DatasourceConnection result = assembler.toDatasourceConnection(command);
+        DatasourceConnection result = assembler.toDatasourceConnection(command, OWNER_ID);
 
         assertEquals(3307, result.jdbcConnectionConfig().port());
     }
@@ -156,7 +179,7 @@ class DatasourceConvertTest {
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "old-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
                 new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass", null),
-                "old desc", null, null, null, null
+                "old desc", OWNER_ID, null, null, null, null
         );
 
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(
@@ -175,7 +198,7 @@ class DatasourceConvertTest {
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "old-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
                 new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass", null),
-                "old desc", null, null, null, null
+                "old desc", OWNER_ID, null, null, null, null
         );
 
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(
@@ -193,7 +216,7 @@ class DatasourceConvertTest {
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "old-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
                 new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass", null),
-                "old desc", null, null, null, null
+                "old desc", OWNER_ID, null, null, null, null
         );
 
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(
@@ -210,7 +233,7 @@ class DatasourceConvertTest {
         DatasourceConnection existing = new DatasourceConnection(
                 1L, "old-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
                 new JdbcConnectionConfig("old-host", 3306, "olddb", "root", "oldpass", null),
-                "old desc", null, null, null, null
+                "old desc", OWNER_ID, null, null, null, null
         );
 
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(
@@ -224,14 +247,14 @@ class DatasourceConvertTest {
 
     @Test
     void should_throwException_when_toDatasourceConnection_given_jdbcTypeAndNullJdbcConfig() {
-        // given: JDBC 绫诲瀷浣?jdbcConfig 涓?null锛圖atasourceConnection 鏍￠獙浼氭姏鍑哄紓甯革級
+        // given: JDBC 类型但 jdbcConfig 为 null（DatasourceConnection 校验会抛出异常）
         CreateDatasourceCommand command = new CreateDatasourceCommand(
                 "jdbc-ds", DatasourceType.JDBC, JdbcType.MYSQL, "desc", null, null
         );
 
-        // when & then: 搴旇鎶涘嚭 IllegalArgumentException锛屽洜涓?JDBC 绫诲瀷蹇呴』鎻愪緵杩炴帴閰嶇疆
+        // when & then: 应该抛出 IllegalArgumentException，因为 JDBC 类型必须提供连接配置
         assertThrows(IllegalArgumentException.class, () ->
-                assembler.toDatasourceConnection(command)
+                assembler.toDatasourceConnection(command, OWNER_ID)
         );
     }
 
@@ -242,7 +265,7 @@ class DatasourceConvertTest {
                 "api-ds", DatasourceType.API, null, "API desc", jdbcConfig, null
         );
 
-        DatasourceConnection result = assembler.toDatasourceConnection(command);
+        DatasourceConnection result = assembler.toDatasourceConnection(command, OWNER_ID);
 
         assertEquals("api-ds", result.name());
         assertEquals(DatasourceType.API, result.type());

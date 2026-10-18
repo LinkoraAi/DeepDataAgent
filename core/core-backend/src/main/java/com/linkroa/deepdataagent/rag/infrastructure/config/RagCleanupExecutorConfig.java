@@ -52,7 +52,7 @@ public class RagCleanupExecutorConfig {
      */
     @PostConstruct
     public void logEffectiveSettings() {
-        log.info("RAG 清退执行端配置生效: cleanup[maxConcurrent={}, graceSeconds={}, batchSize={}]",
+        log.info("RAG cleanup executor settings effective: cleanup[maxConcurrent={}, graceSeconds={}, batchSize={}]",
                 cleanupMaxConcurrent, cleanupShutdownGraceSeconds, cleanupBatchSize);
     }
 }

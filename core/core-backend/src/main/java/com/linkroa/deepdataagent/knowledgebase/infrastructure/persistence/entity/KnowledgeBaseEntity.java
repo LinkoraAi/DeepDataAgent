@@ -40,7 +40,7 @@ public class KnowledgeBaseEntity implements KbAuditable {
     @TableField("updated_by")
     private String updatedBy;
 
-    /** 知识库名称（全表唯一：uk_kb_name 普通唯一索引，物理删行即释放名称） */
+    /** 知识库名称（owner 内唯一：uk_kb_name(owner_id, name)，物理删行即释放名称） */
     private String name;
 
     /** 知识库描述 */
@@ -86,4 +86,11 @@ public class KnowledgeBaseEntity implements KbAuditable {
     /** 实体类型自定义配置 JSON（对应 PG jsonb 列） */
     @TableField(typeHandler = PostgresJsonbTypeHandler.class)
     private String entityTypeConfig;
+
+    /**
+     * 归属用户 ID（{@code knowledge_base.owner_id} 列）：创建即定、一经写入不可变。
+     * <p>列表过滤与按标识寻址的归属校验均以本列为唯一依据；后台线程（摄入 / 清退）不加过滤。</p>
+     */
+    @TableField("owner_id")
+    private Long ownerId;
 }

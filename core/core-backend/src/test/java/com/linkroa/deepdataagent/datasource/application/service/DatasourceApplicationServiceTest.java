@@ -18,6 +18,8 @@ import com.linkroa.deepdataagent.datasource.infrastructure.client.ApiPaginationH
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.shared.security.AuthContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,10 +35,17 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class DatasourceApplicationServiceTest {
+
+    /** 测试用归属用户 ID（与 AuthContext 写入一致）。 */
+    private static final Long OWNER_ID = 1L;
+
+    /** 越权测试用另一归属用户 ID（非资源归属者，用于验证横向隔离）。 */
+    private static final Long OTHER_OWNER_ID = 2L;
 
     @Mock private DatasourceConnectionRepository connectionRepository;
     @Mock private DatasourceConnectionStrategyFactory strategyFactory;
@@ -55,6 +64,8 @@ class DatasourceApplicationServiceTest {
 
     @BeforeEach
     void setUp() {
+        // 请求面方法统一依赖已认证用户上下文，先写入当前用户
+        AuthContext.setUserId(OWNER_ID);
         service = new DatasourceApplicationService(
                 connectionRepository, strategyFactory, domainService,
                 transactionTemplate, databaseSchemaRepository, tableInfoRepository,
@@ -63,48 +74,54 @@ class DatasourceApplicationServiceTest {
         );
     }
 
+    @AfterEach
+    void tearDown() {
+        // 清理线程上下文，避免线程池复用导致身份残留
+        AuthContext.clear();
+    }
+
     @Test
     void should_throwException_when_createDatasource_given_duplicateName() {
-        when(connectionRepository.findByName("existing")).thenReturn(Optional.of(createApiConnection(1L)));
+        when(connectionRepository.findByNameAndOwner("existing", OWNER_ID)).thenReturn(Optional.of(createApiConnection(1L)));
         CreateDatasourceCommand command = new CreateDatasourceCommand("existing", DatasourceType.API, null, null, null, null);
         assertThrows(ResourceConflictException.class, () -> service.createDatasource(command));
     }
 
     @Test
     void should_throwException_when_updateDatasource_given_notFound() {
-        when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
+        when(connectionRepository.findByIdAndOwner(999L, OWNER_ID)).thenReturn(Optional.empty());
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(999L, "name", null, null);
         assertThrows(ResourceNotFoundException.class, () -> service.updateDatasource(command));
     }
 
     @Test
     void should_throwException_when_enableDatasource_given_notFound() {
-        when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
+        when(connectionRepository.findByIdAndOwner(999L, OWNER_ID)).thenReturn(Optional.empty());
         assertThrows(ResourceNotFoundException.class, () -> service.enableDatasource(999L));
     }
 
     @Test
     void should_throwException_when_disableDatasource_given_notFound() {
-        when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
+        when(connectionRepository.findByIdAndOwner(999L, OWNER_ID)).thenReturn(Optional.empty());
         assertThrows(ResourceNotFoundException.class, () -> service.disableDatasource(999L));
     }
 
     @Test
     void should_throwException_when_deleteDatasource_given_notFound() {
-        when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
+        when(connectionRepository.findByIdAndOwner(999L, OWNER_ID)).thenReturn(Optional.empty());
         assertThrows(ResourceNotFoundException.class, () -> service.deleteDatasource(999L));
     }
 
     @Test
     void should_throwException_when_getDatasource_given_notFound() {
-        when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
+        when(connectionRepository.findByIdAndOwner(999L, OWNER_ID)).thenReturn(Optional.empty());
         assertThrows(ResourceNotFoundException.class, () -> service.getDatasource(999L));
     }
 
     @Test
     void should_returnConnection_when_getDatasource_given_found() {
         DatasourceConnection connection = createApiConnection(1L);
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         DatasourceConnection result = service.getDatasource(1L);
         assertEquals(1L, result.id());
         assertEquals("api-test", result.name());
@@ -112,7 +129,7 @@ class DatasourceApplicationServiceTest {
 
     @Test
     void should_throwException_when_testConnection_given_notFound() {
-        when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
+        when(connectionRepository.findByIdAndOwner(999L, OWNER_ID)).thenReturn(Optional.empty());
         TestConnectionCommand command = new TestConnectionCommand(999L, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         assertThrows(ResourceNotFoundException.class, () -> service.testConnection(command));
     }
@@ -120,8 +137,8 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_returnPaginatedResult_when_listDatasources_given_validQuery() {
         DatasourceConnection connection = createApiConnection(1L);
-        when(connectionRepository.findByCondition(null, null, null, 1, 20)).thenReturn(List.of(connection));
-        when(connectionRepository.countByCondition(null, null, null)).thenReturn(1L);
+        when(connectionRepository.findByCondition(null, null, null, 1, 20, OWNER_ID)).thenReturn(List.of(connection));
+        when(connectionRepository.countByCondition(null, null, null, OWNER_ID)).thenReturn(1L);
         var query = new com.linkroa.deepdataagent.datasource.application.query.ListDatasourceQuery(null, null, null, 1, 20);
         var result = service.listDatasources(query);
         assertEquals(1, result.data().size());
@@ -131,7 +148,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_throwException_when_enableDatasource_given_testFail() {
         DatasourceConnection connection = createApiConnection(1L);
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanEnable(connection);
         DatasourceConnectionStrategy strategy = mock(DatasourceConnectionStrategy.class);
         when(strategyFactory.getStrategy(DatasourceType.API, null)).thenReturn(strategy);
@@ -143,7 +160,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_disableConnection_when_disableDatasource_given_validId() {
         DatasourceConnection connection = createApiConnection(1L);
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanDisable(connection);
         doAnswer(invocation -> {
             var consumer = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
@@ -157,7 +174,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_cascadeDeleteApi_when_deleteDatasource_given_apiConnection() {
         DatasourceConnection connection = createApiConnection(1L);
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanDelete(connection);
         doAnswer(invocation -> {
             var consumer = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
@@ -173,8 +190,8 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_cascadeDeleteJdbc_when_deleteDatasource_given_jdbcConnection() {
         DatasourceConnection connection = new DatasourceConnection(1L, "jdbc-test", DatasourceType.JDBC, JdbcType.MYSQL,
-                DatasourceStatus.ENABLED, new JdbcConnectionConfig("h", 3306, "db", "u", "p", null), null, null, null, null, null);
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+                DatasourceStatus.ENABLED, new JdbcConnectionConfig("h", 3306, "db", "u", "p", null), null, OWNER_ID, null, null, null, null);
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanDelete(connection);
         doAnswer(invocation -> {
             var consumer = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
@@ -207,8 +224,8 @@ class DatasourceApplicationServiceTest {
     void should_createApiDatasource_when_createDatasource_given_apiCommand() {
         CreateDatasourceCommand command = new CreateDatasourceCommand("new-api", DatasourceType.API, null, null, null, null);
         DatasourceConnection savedConnection = new DatasourceConnection(1L, "new-api", DatasourceType.API, null, DatasourceStatus.ENABLED,
-                null, null, null, null, null, null);
-        when(connectionRepository.findByName("new-api")).thenReturn(Optional.empty());
+                null, null, OWNER_ID, null, null, null, null);
+        when(connectionRepository.findByNameAndOwner("new-api", OWNER_ID)).thenReturn(Optional.empty());
         when(connectionRepository.save(any())).thenReturn(savedConnection);
         doAnswer(invocation -> {
             var callback = invocation.<org.springframework.transaction.support.TransactionCallback<DatasourceConnection>>getArgument(0);
@@ -228,8 +245,8 @@ class DatasourceApplicationServiceTest {
                 new JdbcConfigCommand("localhost", 3306, "db", "u", "p", null), null);
         DatasourceConnection savedConnection = new DatasourceConnection(1L, "new-jdbc", DatasourceType.JDBC, JdbcType.MYSQL,
                 DatasourceStatus.ENABLED, new JdbcConnectionConfig("localhost", 3306, "db", "u", "p", null),
-                null, null, null, null, null);
-        when(connectionRepository.findByName("new-jdbc")).thenReturn(Optional.empty());
+                null, OWNER_ID, null, null, null, null);
+        when(connectionRepository.findByNameAndOwner("new-jdbc", OWNER_ID)).thenReturn(Optional.empty());
         when(connectionRepository.save(any())).thenReturn(savedConnection);
         doAnswer(invocation -> {
             var callback = invocation.<org.springframework.transaction.support.TransactionCallback<DatasourceConnection>>getArgument(0);
@@ -252,8 +269,8 @@ class DatasourceApplicationServiceTest {
                 new JdbcConfigCommand("localhost", 3306, "db", "u", "p", null), null);
         DatasourceConnection savedConnection = new DatasourceConnection(1L, "new-jdbc", DatasourceType.JDBC, JdbcType.MYSQL,
                 DatasourceStatus.ENABLED, new JdbcConnectionConfig("localhost", 3306, "db", "u", "p", null),
-                null, null, null, null, null);
-        when(connectionRepository.findByName("new-jdbc")).thenReturn(Optional.empty());
+                null, OWNER_ID, null, null, null, null);
+        when(connectionRepository.findByNameAndOwner("new-jdbc", OWNER_ID)).thenReturn(Optional.empty());
         when(connectionRepository.save(any())).thenReturn(savedConnection);
         doAnswer(invocation -> {
             var callback = invocation.<org.springframework.transaction.support.TransactionCallback<DatasourceConnection>>getArgument(0);
@@ -273,7 +290,7 @@ class DatasourceApplicationServiceTest {
         CreateDatasourceCommand command = new CreateDatasourceCommand(
                 "pg-ds", DatasourceType.JDBC, JdbcType.POSTGRESQL, null,
                 new JdbcConfigCommand("localhost", 5432, "db", "u", "p", "public,analytics"), null);
-        when(connectionRepository.findByName("pg-ds")).thenReturn(Optional.empty());
+        when(connectionRepository.findByNameAndOwner("pg-ds", OWNER_ID)).thenReturn(Optional.empty());
 
         // when / then
         assertThrows(DeepDataAgentException.class, () -> service.createDatasource(command));
@@ -287,8 +304,8 @@ class DatasourceApplicationServiceTest {
         CreateDatasourceCommand command = new CreateDatasourceCommand(
                 "new-api", DatasourceType.API, null, null, null, List.of(schemaCommand));
         DatasourceConnection savedConnection = new DatasourceConnection(1L, "new-api", DatasourceType.API, null, DatasourceStatus.ENABLED,
-                null, null, null, null, null, null);
-        when(connectionRepository.findByName("new-api")).thenReturn(Optional.empty());
+                null, null, OWNER_ID, null, null, null, null);
+        when(connectionRepository.findByNameAndOwner("new-api", OWNER_ID)).thenReturn(Optional.empty());
         when(connectionRepository.save(any())).thenReturn(savedConnection);
         doAnswer(invocation -> {
             var callback = invocation.<org.springframework.transaction.support.TransactionCallback<DatasourceConnection>>getArgument(0);
@@ -306,8 +323,8 @@ class DatasourceApplicationServiceTest {
     void should_updateConnection_when_updateDatasource_given_validCommand() {
         DatasourceConnection existing = createApiConnection(1L);
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(1L, "updated-name", "updated-desc", null);
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(existing));
-        when(connectionRepository.findByName("updated-name")).thenReturn(Optional.empty());
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(existing));
+        when(connectionRepository.findByNameAndOwner("updated-name", OWNER_ID)).thenReturn(Optional.empty());
         when(connectionRepository.update(any())).thenAnswer(inv -> inv.getArgument(0));
         doAnswer(invocation -> {
             var callback = invocation.<org.springframework.transaction.support.TransactionCallback<DatasourceConnection>>getArgument(0);
@@ -325,8 +342,8 @@ class DatasourceApplicationServiceTest {
         DatasourceConnection existing = createJdbcConnection(1L);
         JdbcConfigCommand jdbcConfig = new JdbcConfigCommand("localhost", 3306, "testdb", "root", "password", null);
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(1L, "updated-name", "updated-desc", jdbcConfig);
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(existing));
-        when(connectionRepository.findByName("updated-name")).thenReturn(Optional.empty());
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(existing));
+        when(connectionRepository.findByNameAndOwner("updated-name", OWNER_ID)).thenReturn(Optional.empty());
         when(connectionRepository.update(any())).thenAnswer(inv -> inv.getArgument(0));
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(strategy.extractSchemas(any())).thenReturn(List.of());
@@ -347,15 +364,15 @@ class DatasourceApplicationServiceTest {
         DatasourceConnection existing = createApiConnection(1L);
         DatasourceConnection other = createApiConnection(2L);
         UpdateDatasourceCommand command = new UpdateDatasourceCommand(1L, "duplicate-name", null, null);
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(existing));
-        when(connectionRepository.findByName("duplicate-name")).thenReturn(Optional.of(other));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(existing));
+        when(connectionRepository.findByNameAndOwner("duplicate-name", OWNER_ID)).thenReturn(Optional.of(other));
         assertThrows(ResourceConflictException.class, () -> service.updateDatasource(command));
     }
 
     @Test
     void should_enableConnection_when_enableDatasource_given_testSuccess() {
         DatasourceConnection connection = createApiConnection(1L);
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanEnable(connection);
         DatasourceConnectionStrategy strategy = mock(DatasourceConnectionStrategy.class);
         when(strategyFactory.getStrategy(DatasourceType.API, null)).thenReturn(strategy);
@@ -375,8 +392,8 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_testJdbcConnection_when_testConnection_given_existingConnection() {
         DatasourceConnection connection = new DatasourceConnection(1L, "jdbc-test", DatasourceType.JDBC, JdbcType.MYSQL,
-                DatasourceStatus.ENABLED, new JdbcConnectionConfig("h", 3306, "db", "u", "p", null), null, null, null, null, null);
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+                DatasourceStatus.ENABLED, new JdbcConnectionConfig("h", 3306, "db", "u", "p", null), null, OWNER_ID, null, null, null, null);
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         DatasourceConnectionStrategy strategy = mock(DatasourceConnectionStrategy.class);
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(strategy.testConnection(connection)).thenReturn(
@@ -408,7 +425,7 @@ class DatasourceApplicationServiceTest {
     void should_syncMetadataWithoutTransaction_when_syncMetadata_given_connectionExists() {
         // given（手动同步为可重入增量对账：不包整体事务，逐条落库）
         DatasourceConnection connection = createJdbcConnection(1L);
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanSync(connection);
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(strategy.extractSchemas(connection)).thenReturn(List.of());
@@ -424,7 +441,7 @@ class DatasourceApplicationServiceTest {
 
     @Test
     void should_throwException_when_syncMetadata_given_connectionNotFound() {
-        when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
+        when(connectionRepository.findByIdAndOwner(999L, OWNER_ID)).thenReturn(Optional.empty());
         assertThrows(ResourceNotFoundException.class, () -> service.syncMetadata(999L));
     }
 
@@ -435,7 +452,7 @@ class DatasourceApplicationServiceTest {
         TableInfo table = new TableInfo(1L, 1L, "users", "User table", null, null, null);
         TableListQuery query = new TableListQuery(1L, null, 1, 10);
 
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         when(databaseSchemaRepository.findByConnectionId(1L)).thenReturn(List.of(schema));
         when(tableInfoRepository.findByDatabaseSchemaIdAndKeyword(1L, null, 1, 10)).thenReturn(List.of(table));
         when(tableInfoRepository.countByDatabaseSchemaIdAndKeyword(1L, null)).thenReturn(1L);
@@ -452,7 +469,7 @@ class DatasourceApplicationServiceTest {
         DatasourceConnection connection = createJdbcConnection(1L);
         TableListQuery query = new TableListQuery(1L, null, 0, 10);
 
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         when(databaseSchemaRepository.findByConnectionId(1L)).thenReturn(List.of());
 
         var result = service.listTables(query);
@@ -464,6 +481,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_returnColumns_when_listColumns_given_validTableId() {
         ColumnInfo column = new ColumnInfo(1L, 1L, "id", "BIGINT", "Primary key", null, null, null);
+        when(tableInfoRepository.findOwnerIdByTableId(1L)).thenReturn(Optional.of(OWNER_ID));
         when(columnInfoRepository.findByTableId(1L)).thenReturn(List.of(column));
 
         var result = service.listColumns(1L);
@@ -474,6 +492,7 @@ class DatasourceApplicationServiceTest {
 
     @Test
     void should_updateTableComment_when_validComment() {
+        when(tableInfoRepository.findOwnerIdByTableId(1L)).thenReturn(Optional.of(OWNER_ID));
         doNothing().when(domainService).validateComment("test comment");
         doNothing().when(tableInfoRepository).updateTableCustomComment(1L, "test comment");
 
@@ -485,6 +504,7 @@ class DatasourceApplicationServiceTest {
 
     @Test
     void should_updateColumnComment_when_validComment() {
+        when(columnInfoRepository.findOwnerIdByColumnId(1L)).thenReturn(Optional.of(OWNER_ID));
         doNothing().when(domainService).validateComment("column comment");
         doNothing().when(columnInfoRepository).updateColumnCustomComment(1L, "column comment");
 
@@ -500,7 +520,7 @@ class DatasourceApplicationServiceTest {
         DatabaseSchema schema = new DatabaseSchema(1L, 1L, "testdb", null, null, null);
         List<Map<String, Object>> expectedData = List.of(Map.of("id", 1, "name", "test"));
 
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(databaseSchemaRepository.findByConnectionId(1L)).thenReturn(List.of(schema));
         when(strategy.previewData(connection, "testdb", "users", 50)).thenReturn(expectedData);
@@ -514,10 +534,10 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_previewTableData_when_apiConnection() {
         DatasourceConnection connection = new DatasourceConnection(1L, "api-test", DatasourceType.API, null,
-                DatasourceStatus.ENABLED, null, null, null, null, null, null);
+                DatasourceStatus.ENABLED, null, null, OWNER_ID, null, null, null, null);
         List<Map<String, Object>> expectedData = List.of(Map.of("id", 1));
 
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         when(strategyFactory.getStrategy(DatasourceType.API, null)).thenReturn(strategy);
         when(strategy.previewData(connection, null, "api_table", 100)).thenReturn(expectedData);
 
@@ -529,7 +549,7 @@ class DatasourceApplicationServiceTest {
 
     @Test
     void should_throwException_when_previewTableData_given_connectionNotFound() {
-        when(connectionRepository.findById(999L)).thenReturn(Optional.empty());
+        when(connectionRepository.findByIdAndOwner(999L, OWNER_ID)).thenReturn(Optional.empty());
         assertThrows(ResourceNotFoundException.class, () -> service.previewTableData(999L, "users", 10));
     }
 
@@ -537,8 +557,8 @@ class DatasourceApplicationServiceTest {
     void should_throwException_when_previewTableData_given_disabledConnection() {
         DatasourceConnection connection = new DatasourceConnection(1L, "test", DatasourceType.JDBC, JdbcType.MYSQL,
                 DatasourceStatus.DISABLED, new JdbcConnectionConfig("localhost", 3306, "db", "u", "p", null),
-                null, null, null, null, null);
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+                null, OWNER_ID, null, null, null, null);
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         assertThrows(ResourceConflictException.class, () -> service.previewTableData(1L, "users", 10));
     }
 
@@ -561,7 +581,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_doNothing_when_deleteRelatedMetadata_given_apiConnection() {
         DatasourceConnection connection = new DatasourceConnection(1L, "api-test", DatasourceType.API, null,
-                DatasourceStatus.ENABLED, null, null, null, null, null, null);
+                DatasourceStatus.ENABLED, null, null, OWNER_ID, null, null, null, null);
 
         service.deleteRelatedMetadata(connection);
 
@@ -585,6 +605,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_listApiSchemas_when_given_validConnectionId() {
         ApiSchema schema = new ApiSchema(1L, 1L, "test-api", "http://example.com", HttpMethod.GET, null, null, null, null, null);
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(createApiConnection(1L)));
         when(apiSchemaRepository.findByConnectionId(1L)).thenReturn(List.of(schema));
 
         var result = service.listApiSchemas(1L);
@@ -596,6 +617,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_listApiFields_when_given_validSchemaId() {
         ApiField field = new ApiField(1L, 1L, "field1", "Field1", "$.field1", "STRING", "desc", null, null);
+        when(apiSchemaRepository.findOwnerIdByApiSchemaId(1L)).thenReturn(Optional.of(OWNER_ID));
         when(apiFieldRepository.findByApiSchemaId(1L)).thenReturn(List.of(field));
 
         var result = service.listApiFields(1L);
@@ -606,13 +628,13 @@ class DatasourceApplicationServiceTest {
 
     private DatasourceConnection createApiConnection(Long id) {
         return new DatasourceConnection(id, "api-test", DatasourceType.API, null, DatasourceStatus.ENABLED,
-                null, null, null, null, null, null);
+                null, null, OWNER_ID, null, null, null, null);
     }
 
     private DatasourceConnection createJdbcConnection(Long id) {
         JdbcConnectionConfig config = new JdbcConnectionConfig("localhost", 3306, "testdb", "root", "password", null);
         return new DatasourceConnection(id, "jdbc-test", DatasourceType.JDBC, JdbcType.MYSQL,
-                DatasourceStatus.ENABLED, config, null, null, null, null, null);
+                DatasourceStatus.ENABLED, config, null, OWNER_ID, null, null, null, null);
     }
 
     @Test
@@ -705,7 +727,7 @@ class DatasourceApplicationServiceTest {
 
     @Test
     void should_throwException_when_createApiSchema_given_nonApiConnection() {
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(createJdbcConnection(1L)));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(createJdbcConnection(1L)));
         var schemaCommand = new ApiSchemaCommand(
                 "test", HttpMethod.GET, "http://example.com", null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null);
@@ -714,7 +736,7 @@ class DatasourceApplicationServiceTest {
 
     @Test
     void should_throwException_when_createApiSchema_given_connectionNotFound() {
-        when(connectionRepository.findById(1L)).thenReturn(Optional.empty());
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.empty());
         var schemaCommand = new ApiSchemaCommand(
                 "test", HttpMethod.GET, "http://example.com", null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null);
@@ -723,6 +745,7 @@ class DatasourceApplicationServiceTest {
 
     @Test
     void should_deleteApiSchema_when_given_validSchemaId() {
+        when(apiSchemaRepository.findOwnerIdByApiSchemaId(1L)).thenReturn(Optional.of(OWNER_ID));
         when(apiSchemaRepository.findById(1L)).thenReturn(Optional.of(mock(ApiSchema.class)));
         doAnswer(invocation -> {
             var consumer = invocation.<java.util.function.Consumer<org.springframework.transaction.TransactionStatus>>getArgument(0);
@@ -738,6 +761,7 @@ class DatasourceApplicationServiceTest {
 
     @Test
     void should_throwException_when_deleteApiSchema_given_notFound() {
+        when(apiSchemaRepository.findOwnerIdByApiSchemaId(1L)).thenReturn(Optional.of(OWNER_ID));
         when(apiSchemaRepository.findById(1L)).thenReturn(Optional.empty());
         assertThrows(ResourceNotFoundException.class, () -> service.deleteApiSchema(1L));
     }
@@ -749,6 +773,7 @@ class DatasourceApplicationServiceTest {
         ApiSchema schema = new ApiSchema(1L, 1L, "test-api", "http://example.com", HttpMethod.GET,
                 config, OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
         ApiField field = new ApiField(1L, 1L, "id", "ID", "$.id", "number", "desc", OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), OffsetDateTime.now(ZoneId.of("Asia/Shanghai")));
+        when(apiSchemaRepository.findOwnerIdByApiSchemaId(1L)).thenReturn(Optional.of(OWNER_ID));
         when(apiSchemaRepository.findById(1L)).thenReturn(Optional.of(schema));
         when(apiFieldRepository.findByApiSchemaId(1L)).thenReturn(List.of(field));
 
@@ -761,6 +786,7 @@ class DatasourceApplicationServiceTest {
 
     @Test
     void should_throwException_when_getApiSchemaDetail_given_notFound() {
+        when(apiSchemaRepository.findOwnerIdByApiSchemaId(1L)).thenReturn(Optional.of(OWNER_ID));
         when(apiSchemaRepository.findById(1L)).thenReturn(Optional.empty());
         assertThrows(ResourceNotFoundException.class, () -> service.getApiSchemaDetail(1L));
     }
@@ -772,7 +798,7 @@ class DatasourceApplicationServiceTest {
         TableInfo remoteTable = new TableInfo(null, null, "users", "User table", null, null, null);
         ColumnInfo remoteColumn = new ColumnInfo(null, null, "id", "BIGINT", "Primary key", null, null, null);
 
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanSync(connection);
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(strategy.extractSchemas(connection)).thenReturn(List.of(remoteSchema));
@@ -803,7 +829,7 @@ class DatasourceApplicationServiceTest {
         DatabaseSchema remoteSchema = new DatabaseSchema(null, 1L, "testdb", null, null, null);
         TableInfo remoteTable = new TableInfo(null, null, "users", "User table", null, null, null);
 
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         doNothing().when(domainService).validateCanSync(connection);
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(strategy.extractSchemas(connection)).thenReturn(List.of(remoteSchema));
@@ -825,7 +851,7 @@ class DatasourceApplicationServiceTest {
     @Test
     void should_previewTableDataWithNoSchema_when_jdbcConnectionAndNoSchemas() {
         DatasourceConnection connection = createJdbcConnection(1L);
-        when(connectionRepository.findById(1L)).thenReturn(Optional.of(connection));
+        when(connectionRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(connection));
         when(strategyFactory.getStrategy(DatasourceType.JDBC, JdbcType.MYSQL)).thenReturn(strategy);
         when(databaseSchemaRepository.findByConnectionId(1L)).thenReturn(List.of());
         when(strategy.previewData(connection, null, "users", 50)).thenReturn(List.of());
@@ -844,5 +870,212 @@ class DatasourceApplicationServiceTest {
 
         verify(apiFieldRepository).deleteByApiSchemaId(1L);
         verify(apiSchemaRepository).deleteByConnectionId(1L);
+    }
+
+    // ==================== 越权（横向隔离）测试 ====================
+
+    @Test
+    void should_throwResourceNotFound_when_getDatasource_given_otherOwner() {
+        // given 资源归属 OWNER_ID，当前请求者为 OTHER_OWNER_ID，归属查询对当前用户无命中
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(connectionRepository.findByIdAndOwner(1L, OTHER_OWNER_ID)).thenReturn(Optional.empty());
+
+        // when / then 按标识寻址的归属不匹配以 404 折叠（与"不存在"不可区分）
+        assertThrows(ResourceNotFoundException.class, () -> service.getDatasource(1L));
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipUpdate_when_updateDatasource_given_otherOwner() {
+        // given 越权者持有的 id 与目标资源相同，但归属不符
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(connectionRepository.findByIdAndOwner(1L, OTHER_OWNER_ID)).thenReturn(Optional.empty());
+        UpdateDatasourceCommand command = new UpdateDatasourceCommand(1L, "name", null, null);
+
+        // when / then 归属前置拦截，404 且零写入
+        assertThrows(ResourceNotFoundException.class, () -> service.updateDatasource(command));
+        verify(connectionRepository, never()).update(any());
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipDelete_when_deleteDatasource_given_otherOwner() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(connectionRepository.findByIdAndOwner(1L, OTHER_OWNER_ID)).thenReturn(Optional.empty());
+
+        // when / then 越权删除被前置拦截，404 且不发生删除
+        assertThrows(ResourceNotFoundException.class, () -> service.deleteDatasource(1L));
+        verify(connectionRepository, never()).deleteById(any());
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipStatusChange_when_enableDatasource_given_otherOwner() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(connectionRepository.findByIdAndOwner(1L, OTHER_OWNER_ID)).thenReturn(Optional.empty());
+
+        // when / then 越权启用被前置拦截，404 且不改状态
+        assertThrows(ResourceNotFoundException.class, () -> service.enableDatasource(1L));
+        verify(connectionRepository, never()).updateStatus(any(), any());
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipStatusChange_when_disableDatasource_given_otherOwner() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(connectionRepository.findByIdAndOwner(1L, OTHER_OWNER_ID)).thenReturn(Optional.empty());
+
+        // when / then 越权禁用被前置拦截，404 且不改状态
+        assertThrows(ResourceNotFoundException.class, () -> service.disableDatasource(1L));
+        verify(connectionRepository, never()).updateStatus(any(), any());
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipSync_when_syncMetadata_given_otherOwner() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(connectionRepository.findByIdAndOwner(1L, OTHER_OWNER_ID)).thenReturn(Optional.empty());
+
+        // when / then 越权同步被前置拦截，404 且不下行到策略（不触发远程抽取）
+        assertThrows(ResourceNotFoundException.class, () -> service.syncMetadata(1L));
+        verify(strategyFactory, never()).getStrategy(any(), any());
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipStrategy_when_testConnection_given_otherOwnerAndId() {
+        // given 命令携带已存连接 id 场景
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(connectionRepository.findByIdAndOwner(1L, OTHER_OWNER_ID)).thenReturn(Optional.empty());
+        TestConnectionCommand command = new TestConnectionCommand(1L, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+
+        // when / then 越权测试被前置拦截，404 且 MUST NOT 建立任何远端连接
+        assertThrows(ResourceNotFoundException.class, () -> service.testConnection(command));
+        verify(strategyFactory, never()).getStrategy(any(), any());
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipRemoteConnection_when_previewTableData_given_otherOwner() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(connectionRepository.findByIdAndOwner(1L, OTHER_OWNER_ID)).thenReturn(Optional.empty());
+
+        // when / then 越权预览 MUST NOT 建立到目标库/API 的任何连接
+        assertThrows(ResourceNotFoundException.class, () -> service.previewTableData(1L, "users", 10));
+        verify(strategyFactory, never()).getStrategy(any(), any());
+        verify(strategy, never()).previewData(any(), any(), any(), anyInt());
+    }
+
+    @Test
+    void should_throwResourceNotFound_when_listTables_given_otherOwner() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(connectionRepository.findByIdAndOwner(1L, OTHER_OWNER_ID)).thenReturn(Optional.empty());
+        TableListQuery query = new TableListQuery(1L, null, 1, 10);
+
+        // when / then 越权读取表清单被前置拦截，404
+        assertThrows(ResourceNotFoundException.class, () -> service.listTables(query));
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipSave_when_createApiSchema_given_otherOwner() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(connectionRepository.findByIdAndOwner(1L, OTHER_OWNER_ID)).thenReturn(Optional.empty());
+        var schemaCommand = new ApiSchemaCommand(
+                "test", HttpMethod.GET, "http://example.com", null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+
+        // when / then 越权创建被前置拦截，404 且零写入（不开事务、不落库）
+        assertThrows(ResourceNotFoundException.class, () -> service.createApiSchema(1L, schemaCommand));
+        verify(apiSchemaRepository, never()).save(any());
+        verify(transactionTemplate, never()).execute(any());
+    }
+
+    @Test
+    void should_pushDownCurrentOwner_when_listDatasources_given_otherUserContext() {
+        // given 当前请求者为 OTHER_OWNER_ID，列表查询应将归属条件下推为"当前用户"
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(connectionRepository.findByCondition(null, null, null, 1, 20, OTHER_OWNER_ID)).thenReturn(List.of());
+        when(connectionRepository.countByCondition(null, null, null, OTHER_OWNER_ID)).thenReturn(0L);
+
+        // when
+        var query = new com.linkroa.deepdataagent.datasource.application.query.ListDatasourceQuery(null, null, null, 1, 20);
+        var result = service.listDatasources(query);
+
+        // then 归属过滤精确下推为当前请求者（而非任何固定 owner）
+        assertEquals(0, result.total());
+        verify(connectionRepository).findByCondition(null, null, null, 1, 20, OTHER_OWNER_ID);
+        verify(connectionRepository).countByCondition(null, null, null, OTHER_OWNER_ID);
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipColumns_when_listColumns_given_otherOwner() {
+        // given 表父链解析归属为 OWNER_ID，当前请求者为 OTHER_OWNER_ID
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(tableInfoRepository.findOwnerIdByTableId(1L)).thenReturn(Optional.of(OWNER_ID));
+
+        // when / then 父链归属不匹配以 404 折叠，且不读取列
+        assertThrows(ResourceNotFoundException.class, () -> service.listColumns(1L));
+        verify(columnInfoRepository, never()).findByTableId(any());
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipComment_when_updateTableComment_given_otherOwner() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(tableInfoRepository.findOwnerIdByTableId(1L)).thenReturn(Optional.of(OWNER_ID));
+
+        // when / then 越权改表注释被父链归属拦截，404 且零写入
+        assertThrows(ResourceNotFoundException.class, () -> service.updateTableComment(1L, "test comment"));
+        verify(tableInfoRepository, never()).updateTableCustomComment(any(), any());
+        verify(domainService, never()).validateComment(any());
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipComment_when_updateColumnComment_given_otherOwner() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(columnInfoRepository.findOwnerIdByColumnId(1L)).thenReturn(Optional.of(OWNER_ID));
+
+        // when / then 越权改列注释被父链归属拦截，404 且零写入
+        assertThrows(ResourceNotFoundException.class, () -> service.updateColumnComment(1L, "column comment"));
+        verify(columnInfoRepository, never()).updateColumnCustomComment(any(), any());
+        verify(domainService, never()).validateComment(any());
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipRead_when_getApiSchemaDetail_given_otherOwner() {
+        // given API schema 父链解析归属为 OWNER_ID
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(apiSchemaRepository.findOwnerIdByApiSchemaId(1L)).thenReturn(Optional.of(OWNER_ID));
+
+        // when / then 越权读取详情被父链归属拦截，404 且不读取记录
+        assertThrows(ResourceNotFoundException.class, () -> service.getApiSchemaDetail(1L));
+        verify(apiSchemaRepository, never()).findById(any());
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipUpdate_when_updateApiSchema_given_otherOwner() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(apiSchemaRepository.findOwnerIdByApiSchemaId(1L)).thenReturn(Optional.of(OWNER_ID));
+        var schemaCommand = new ApiSchemaCommand(
+                "test", HttpMethod.GET, "http://example.com", null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+
+        // when / then 越权更新被父链归属拦截，404 且零写入
+        assertThrows(ResourceNotFoundException.class, () -> service.updateApiSchema(1L, schemaCommand));
+        verify(apiSchemaRepository, never()).update(any());
+        verify(transactionTemplate, never()).execute(any());
+    }
+
+    @Test
+    void should_throwResourceNotFoundAndSkipDelete_when_deleteApiSchema_given_otherOwner() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(apiSchemaRepository.findOwnerIdByApiSchemaId(1L)).thenReturn(Optional.of(OWNER_ID));
+
+        // when / then 越权删除被父链归属拦截，404 且不发生删除
+        assertThrows(ResourceNotFoundException.class, () -> service.deleteApiSchema(1L));
+        verify(apiSchemaRepository, never()).deleteById(any());
     }
 }

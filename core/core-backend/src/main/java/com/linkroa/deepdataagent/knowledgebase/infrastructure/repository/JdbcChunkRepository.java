@@ -151,6 +151,24 @@ public class JdbcChunkRepository implements ChunkRepository {
     }
 
     @Override
+    public long countByOwner(Long ownerId) {
+        // 入参为空视为无命中：零 DB 交互
+        if (ObjectUtils.isEmpty(ownerId)) {
+            return 0L;
+        }
+        return mapper.countByOwner(ownerId);
+    }
+
+    @Override
+    public Optional<Long> findOwnerIdByChunkId(Long chunkId) {
+        // 入参为空视为无命中：零 DB 交互
+        if (ObjectUtils.isEmpty(chunkId)) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(mapper.selectOwnerIdByChunkId(chunkId));
+    }
+
+    @Override
     public List<Long> findIdsByKbId(Long kbId, int limit) {
         return mapper.selectIdsByKbId(kbId, limit);
     }

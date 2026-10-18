@@ -27,6 +27,8 @@ import com.linkroa.deepdataagent.knowledgebase.domain.repository.KnowledgeBaseRe
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.shared.security.AuthContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -60,6 +62,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.ArgumentMatchers.eq;
@@ -98,6 +101,12 @@ class ChunkApplicationServiceTest {
 
     /** 测试用知识库ID */
     private static final Long KB_ID = 10L;
+
+    /** 当前认证用户 ID（请求面归属语义：所访问的知识库 / 文档 / 切片属该用户） */
+    private static final Long OWNER_ID = 1L;
+
+    /** 他人归属用户 ID（横向越权矩阵用：当前用户 ≠ 资源归属者） */
+    private static final Long OTHER_OWNER_ID = 2L;
 
     /** 测试用文档ID */
     private static final Long DOC_ID = 100L;
@@ -140,6 +149,7 @@ class ChunkApplicationServiceTest {
 
     @BeforeEach
     void setUp() {
+        AuthContext.setUserId(OWNER_ID);
         lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
             return callback.doInTransaction(mock(TransactionStatus.class));
@@ -149,12 +159,23 @@ class ChunkApplicationServiceTest {
             consumer.accept(mock(TransactionStatus.class));
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
+        // 归属语义默认桩：知识库归属当前用户、切片 / 文档父链归属当前用户（请求面归属闸门通过）；
+        // 需要 404 / 非本人归属的用例覆写为 empty
+        lenient().when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
+                .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        lenient().when(chunkRepository.findOwnerIdByChunkId(CHUNK_ID)).thenReturn(Optional.of(OWNER_ID));
+        lenient().when(documentRepository.findOwnerIdByDocumentId(DOC_ID)).thenReturn(Optional.of(OWNER_ID));
+    }
+
+    @AfterEach
+    void tearDown() {
+        AuthContext.clear();
     }
 
     private KnowledgeBase buildKb(LifecycleStatus status) {
         OffsetDateTime now = OffsetDateTime.now();
         return KnowledgeBase.restore(KB_ID, "产品手册", "描述", "Chinese", status,
-                null, null, null, null, null, null, null, now, now);
+                null, null, null, null, null, null, null, OWNER_ID, now, now);
     }
 
     private Document buildDocument(Long kbId, int chunkCount) {
@@ -208,7 +229,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_saveChunkAndRefreshCount_when_create_given_validCommand() {
         // given
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 0)));
         stubCreateTransactionPremises();
@@ -241,7 +262,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_assignMaxSequencePlusOne_when_create_given_existingChunks() {
         // given：文档当前最大序号为 7
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 8)));
         stubCreateTransactionPremises();
@@ -267,7 +288,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_ignoreClientSequence_when_create_given_clientProvidedSequence() {
         // given：命令携带非法的大序号 999，服务端计算值为 8
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 8)));
         stubCreateTransactionPremises();
@@ -292,7 +313,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_startSequenceFromZero_when_create_given_noExistingChunks() {
         // given：最大序号查询返回 null（文档无切片）
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 0)));
         stubCreateTransactionPremises();
@@ -315,7 +336,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_throwNotFound_when_create_given_documentRowGoneInsideTransaction() {
         // given：事务外归属校验通过，事务内行锁读取已无行
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 0)));
         when(documentRepository.findByIdForUpdate(DOC_ID)).thenReturn(Optional.empty());
@@ -328,7 +349,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_defaultTextContentType_when_create_given_blankContentType() {
         // given
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 0)));
         stubCreateTransactionPremises();
@@ -348,7 +369,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_skipRefresh_when_create_given_documentRemovedBeforeRefresh() {
         // given：首次查询用于归属校验，回写时文档已被并发清理
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.findById(DOC_ID))
                 .thenReturn(Optional.of(buildDocument(KB_ID, 0)), Optional.empty());
@@ -367,7 +388,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_throwNotFound_when_create_given_knowledgeBaseNotExist() {
         // given
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.empty());
 
         // when // then
         assertThrows(ResourceNotFoundException.class, () -> service.create(createCommand("TEXT")));
@@ -377,7 +398,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_throwBadRequest_when_create_given_deletingKnowledgeBase() {
         // given
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.DELETING)));
 
         // when // then
@@ -388,7 +409,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_throwNotFound_when_create_given_documentNotExist() {
         // given
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.empty());
 
@@ -400,7 +421,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_throwBadRequest_when_create_given_documentBelongsToOtherKb() {
         // given
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocument(OTHER_KB_ID, 0)));
 
@@ -412,7 +433,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_throwBadRequest_when_create_given_unsupportedContentType() {
         // given
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 0)));
 
@@ -428,7 +449,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_upsertRepresentationWithVector_when_create_given_embeddingAvailable() {
         // given：嵌入模型可用（返回 pgvector 字面量）
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 0)));
         stubCreateTransactionPremises();
@@ -459,7 +480,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_writeFullTextRepresentationOnly_when_create_given_noEmbeddingModel() {
         // given：知识库未配置嵌入模型（返回 null，不抛异常）
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 0)));
         stubCreateTransactionPremises();
@@ -485,7 +506,7 @@ class ChunkApplicationServiceTest {
     @Test
     void should_throwAndWriteNothing_when_create_given_embeddingFails() {
         // given：向量化上游不可达
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(documentRepository.findById(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 0)));
         when(chunkEmbeddingApi.embedLiteral(KB_ID, "切片内容"))
@@ -634,7 +655,7 @@ class ChunkApplicationServiceTest {
         when(chunkRepository.findDocumentIdsByChunkIds(List.of(CHUNK_ID))).thenReturn(Map.of(CHUNK_ID, DOC_ID));
         when(documentRepository.findById(DOC_ID))
                 .thenReturn(Optional.of(buildDocumentWithStatus(KB_ID, 3, DocumentStatus.PROCESSED)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         stubManualSource(List.of(CHUNK_ID));
     }
@@ -684,7 +705,7 @@ class ChunkApplicationServiceTest {
         when(chunkRepository.findDocumentIdsByChunkIds(List.of(CHUNK_ID))).thenReturn(Map.of(CHUNK_ID, DOC_ID));
         when(documentRepository.findById(DOC_ID))
                 .thenReturn(Optional.of(buildDocumentWithStatus(KB_ID, 3, DocumentStatus.PROCESSED)));
-        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID)).thenReturn(Optional.empty());
 
         // when // then
         assertThrows(ResourceNotFoundException.class, () -> service.delete(new DeleteChunkCommand(CHUNK_ID)));
@@ -697,7 +718,7 @@ class ChunkApplicationServiceTest {
         when(chunkRepository.findDocumentIdsByChunkIds(List.of(CHUNK_ID))).thenReturn(Map.of(CHUNK_ID, DOC_ID));
         when(documentRepository.findById(DOC_ID))
                 .thenReturn(Optional.of(buildDocumentWithStatus(KB_ID, 3, DocumentStatus.PROCESSED)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.DELETING)));
 
         // when // then
@@ -711,7 +732,7 @@ class ChunkApplicationServiceTest {
         when(chunkRepository.findDocumentIdsByChunkIds(List.of(CHUNK_ID))).thenReturn(Map.of(CHUNK_ID, DOC_ID));
         when(documentRepository.findById(DOC_ID))
                 .thenReturn(Optional.of(buildDocumentWithStatus(KB_ID, 3, DocumentStatus.DELETING)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
 
         // when // then
@@ -725,7 +746,7 @@ class ChunkApplicationServiceTest {
         when(chunkRepository.findDocumentIdsByChunkIds(List.of(CHUNK_ID))).thenReturn(Map.of(CHUNK_ID, DOC_ID));
         when(documentRepository.findById(DOC_ID))
                 .thenReturn(Optional.of(buildDocumentWithStatus(KB_ID, 3, DocumentStatus.DELETE_FAILED)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
 
         // when // then
@@ -843,7 +864,7 @@ class ChunkApplicationServiceTest {
         when(chunkRepository.findDocumentIdsByChunkIds(List.of(CHUNK_ID))).thenReturn(Map.of(CHUNK_ID, DOC_ID));
         when(documentRepository.findById(DOC_ID))
                 .thenReturn(Optional.of(buildDocumentWithStatus(KB_ID, 3, DocumentStatus.PROCESSED)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(chunkRepository.findSourcesByChunkIds(List.of(CHUNK_ID)))
                 .thenReturn(Map.of(CHUNK_ID, ChunkSource.PARSED));
@@ -870,7 +891,7 @@ class ChunkApplicationServiceTest {
                 .thenReturn(Map.of(CHUNK_ID, DOC_ID, parsedChunkId, DOC_ID));
         when(documentRepository.findById(DOC_ID))
                 .thenReturn(Optional.of(buildDocumentWithStatus(KB_ID, 3, DocumentStatus.PROCESSED)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(chunkRepository.findSourcesByChunkIds(batchIds))
                 .thenReturn(Map.of(CHUNK_ID, ChunkSource.MANUAL, parsedChunkId, ChunkSource.PARSED));
@@ -937,7 +958,7 @@ class ChunkApplicationServiceTest {
         stubManualSourcePerBatch();
         when(documentRepository.findById(DOC_ID))
                 .thenReturn(Optional.of(buildDocumentWithStatus(KB_ID, 9, DocumentStatus.PROCESSED)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(chunkRepository.findMediaReferencesByDocumentId(DOC_ID)).thenReturn(Map.of());
 
@@ -959,7 +980,7 @@ class ChunkApplicationServiceTest {
         stubManualSourcePerBatch();
         when(documentRepository.findById(DOC_ID))
                 .thenReturn(Optional.of(buildDocumentWithStatus(KB_ID, 9, DocumentStatus.PROCESSED)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(chunkRepository.findMediaReferencesByDocumentId(DOC_ID)).thenReturn(Map.of());
         doNothing()
@@ -1664,7 +1685,7 @@ class ChunkApplicationServiceTest {
     void should_returnMediaStream_when_openMedia_given_validReferenceAndObjectExists() throws Exception {
         // given：切片登记媒体引用，库 ACTIVE，对象存储命中对象
         when(chunkRepository.findById(CHUNK_ID)).thenReturn(Optional.of(buildMediaChunk(MEDIA_REFERENCE_JSON)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(mediaImageCleanupService.parseMediaReference(MEDIA_REFERENCE_JSON)).thenReturn(MEDIA_REFERENCE);
         when(kbAssetStoragePort.open("rag/10/100/images/a.png")).thenReturn(Optional.of(
@@ -1686,7 +1707,7 @@ class ChunkApplicationServiceTest {
     void should_throwNotFound_when_openMedia_given_chunkWithoutMediaReference() {
         // given：文本切片无媒体引用（解析结果为 null）
         when(chunkRepository.findById(CHUNK_ID)).thenReturn(Optional.of(buildMediaChunk(null)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
 
         // when // then：404「切片无媒体图片引用」，不触碰对象存储
@@ -1700,7 +1721,7 @@ class ChunkApplicationServiceTest {
     void should_throwNotFound_when_openMedia_given_mediaObjectMissing() {
         // given：引用合法但对象存储中对象不存在（open 返回 empty）
         when(chunkRepository.findById(CHUNK_ID)).thenReturn(Optional.of(buildMediaChunk(MEDIA_REFERENCE_JSON)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
         when(mediaImageCleanupService.parseMediaReference(MEDIA_REFERENCE_JSON)).thenReturn(MEDIA_REFERENCE);
         when(kbAssetStoragePort.open("rag/10/100/images/a.png")).thenReturn(Optional.empty());
@@ -1715,7 +1736,7 @@ class ChunkApplicationServiceTest {
     void should_throwBadRequest_when_openMedia_given_knowledgeBaseNotActive() {
         // given：所属知识库处于删除流程（非 ACTIVE），前置闸门拒绝且不触碰对象存储
         when(chunkRepository.findById(CHUNK_ID)).thenReturn(Optional.of(buildMediaChunk(MEDIA_REFERENCE_JSON)));
-        when(knowledgeBaseRepository.findById(KB_ID))
+        when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.DELETING)));
 
         // when // then
@@ -1725,4 +1746,127 @@ class ChunkApplicationServiceTest {
         verifyNoInteractions(kbAssetStoragePort);
     }
 
+    // ==================== 归属隔离（横向越权矩阵） ====================
+
+    /**
+     * 越权读取他人切片：沿 chunk → document → knowledge_base 父链解析出的归属者非当前用户，
+     * 按「切片不存在」折叠为 404（不泄露存在性）。
+     */
+    @Test
+    void should_throwNotFound_when_get_given_chunkOwnedByOther() {
+        // given：当前用户切换为他人，父链解析出的归属者仍为 OWNER_ID
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        ResourceNotFoundException exception = assertThrows(ResourceNotFoundException.class,
+                () -> service.get(CHUNK_ID));
+        assertTrue(exception.getMessage().contains("切片不存在"));
+    }
+
+    /** 越权新增切片：按 kbId 入口校验归属失败即 404，且零写入（不落切片行、不写派生表示）。 */
+    @Test
+    void should_throwNotFoundAndNotWrite_when_create_given_foreignKnowledgeBase() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class, () -> service.create(createCommand("TEXT")));
+        verify(chunkRepository, never()).save(any());
+        verify(chunkRepresentationRepository, never()).upsert(any(), any());
+        verify(chunkEmbeddingApi, never()).embedLiteral(any(), any());
+    }
+
+    /** 越权新增切片（按 chunkId 校验前的预读）：归属不匹配 → 404 且零写入。 */
+    @Test
+    void should_throwNotFoundAndNotWrite_when_update_given_chunkOwnedByOther() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.update(new UpdateChunkCommand(CHUNK_ID, "新内容", 30)));
+        verify(chunkRepository, never()).update(any());
+        verify(chunkEmbeddingApi, never()).embedLiteral(any(), any());
+    }
+
+    /** 越权删除他人切片：拒绝发生在任何物理清退之前（对象回收与切片行删除均零发起）。 */
+    @Test
+    void should_throwNotFoundAndNotDelete_when_delete_given_chunkOwnedByOther() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class, () -> service.delete(new DeleteChunkCommand(CHUNK_ID)));
+        verify(chunkPhysicalDeleteService, never()).deleteChunks(any(), any(), anyBoolean());
+        verify(mediaImageCleanupService, never()).recycleChunkMediaObject(any());
+    }
+
+    /** 越权批量删除：整批拒绝且零清退（父链解析在闸门阶段已判归属）。 */
+    @Test
+    void should_throwNotFoundAndNotDelete_when_deleteBatch_given_chunkOwnedByOther() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.deleteBatch(new DeleteChunksCommand(List.of(CHUNK_ID))));
+        verify(chunkPhysicalDeleteService, never()).deleteChunks(any(), any(), anyBoolean());
+    }
+
+    /** 越权读取他人切片媒体：404 折叠且不触碰对象存储。 */
+    @Test
+    void should_throwNotFoundAndNotOpenMedia_when_openMedia_given_chunkOwnedByOther() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class, () -> service.openMedia(CHUNK_ID));
+        verifyNoInteractions(kbAssetStoragePort);
+    }
+
+    /** 越权按知识库统计切片：归属校验失败即 404，且不执行统计查询。 */
+    @Test
+    void should_throwNotFoundAndNotCount_when_count_given_foreignKnowledgeBase() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class, () -> service.count(KB_ID, null, null, null));
+        verify(chunkRepository, never()).countByKbId(any(), any(), any(), any());
+    }
+
+    /** 越权按文档列切片：父链归属不匹配 → 404，且不执行切片查询。 */
+    @Test
+    void should_throwNotFoundAndNotList_when_listByDocument_given_documentOwnedByOther() {
+        // given
+        AuthContext.setUserId(OTHER_OWNER_ID);
+
+        // when // then
+        assertThrows(ResourceNotFoundException.class, () -> service.listByDocument(DOC_ID, 1, 20));
+        verify(chunkRepository, never()).findByDocumentId(any(), anyInt(), anyInt());
+    }
+
+    /**
+     * 后台链路不受归属过滤影响：整篇替换（摄入管线入口）在无请求者身份的线程上照常完成，
+     * 证明隔离校验仅收口于请求面（MUST NOT 下沉仓储层）。
+     */
+    @Test
+    void should_completeReplaceWithoutIdentity_when_replaceForDocument_given_noAuthenticatedContext() {
+        // given：显式清空归属上下文，模拟摄入 worker 线程（无任何请求者身份）
+        AuthContext.clear();
+        when(documentRepository.findByIdForUpdate(DOC_ID)).thenReturn(Optional.of(buildDocument(KB_ID, 0)));
+        // 后台链路按 kbId 直读（findById），MUST NOT 走归属过滤
+        when(knowledgeBaseRepository.findById(KB_ID)).thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
+        when(chunkRepository.saveBatch(anyList(), any()))
+                .thenReturn(List.of(withId(buildChunk("切片内容", 30))));
+        when(documentRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // when：后台入口无身份上下文，MUST NOT 抛未认证异常、MUST NOT 被归属校验拦下
+        service.replaceForDocument(DOC_ID,
+                List.of(new ChunkDraft(1, "切片内容", 30, null, "TEXT", null)), null);
+
+        // then：链路正常走到文档计数回写
+        verify(documentRepository).update(any());
+        verify(chunkRepository).deleteByDocumentId(DOC_ID);
+    }
 }

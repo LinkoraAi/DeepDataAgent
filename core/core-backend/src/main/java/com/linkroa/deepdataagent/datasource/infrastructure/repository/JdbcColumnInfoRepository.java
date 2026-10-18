@@ -9,6 +9,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public class JdbcColumnInfoRepository implements ColumnInfoRepository {
@@ -53,6 +54,14 @@ public class JdbcColumnInfoRepository implements ColumnInfoRepository {
     @Override
     public void updateColumnCustomComment(Long id, String columnCustomComment) {
         mapper.updateColumnCustomComment(id, columnCustomComment);
+    }
+
+    @Override
+    public Optional<Long> findOwnerIdByColumnId(Long columnId) {
+        if (columnId == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(mapper.selectOwnerIdByColumnId(columnId));
     }
 
     @Override

@@ -271,6 +271,6 @@ class InFlightTaskConvergenceServiceTest {
     private KnowledgeBase buildKb(LifecycleStatus status) {
         OffsetDateTime now = OffsetDateTime.now();
         return KnowledgeBase.restore(KB_ID, "产品手册", "原始描述", "Chinese", status, null,
-                null, null, null, null, null, null, now, now);
+                null, null, null, null, null, null, 1L, now, now);
     }
 }

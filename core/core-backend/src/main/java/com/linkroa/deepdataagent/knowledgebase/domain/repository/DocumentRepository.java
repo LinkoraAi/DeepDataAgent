@@ -48,6 +48,24 @@ public interface DocumentRepository {
     long countByKbIdOnly(Long kbId);
 
     /**
+     * 按归属者统计文档总数（请求面 stats 口径，归属经 document → knowledge_base 父链收敛）。
+     *
+     * @param ownerId 归属用户 ID，可为空（空即返回 0）
+     * @return 该用户全部知识库下的文档总数
+     */
+    long countByOwner(Long ownerId);
+
+    /**
+     * 沿父链解析文档的归属者（document → knowledge_base）。
+     * <p>请求面按文档标识寻址的归属判定入口；文档不存在或父链断裂返回 {@link Optional#empty()}，
+     * 与「非本人归属」对外不可区分（不泄露存在性）。MUST NOT 用于后台链路。</p>
+     *
+     * @param documentId 文档主键，可为空
+     * @return 所属知识库的归属用户 ID；无命中返回空
+     */
+    Optional<Long> findOwnerIdByDocumentId(Long documentId);
+
+    /**
      * 分批取知识库内存活文档的 ID（id 升序，清退调度用）。
      * <p>物理删体系下已收口文档行不存在，故每轮从头取 LIMIT 即可：上一批删除后自然轮到下一批，
      * 中断后重跑幂等、无需游标。</p>

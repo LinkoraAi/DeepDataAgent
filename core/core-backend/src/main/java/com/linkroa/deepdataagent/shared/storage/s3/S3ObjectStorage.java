@@ -184,7 +184,7 @@ public class S3ObjectStorage implements ObjectStorage {
         } catch (SdkClientException e) {
             throw unavailable("桶就绪检查", bucket, e);
         }
-        log.info("对象存储配置桶就绪: bucket={}", bucket);
+        log.info("Object storage bucket is ready: bucket={}", bucket);
     }
 
     /**

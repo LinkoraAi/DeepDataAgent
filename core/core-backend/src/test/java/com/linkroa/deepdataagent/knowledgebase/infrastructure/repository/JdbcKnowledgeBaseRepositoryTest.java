@@ -37,6 +37,12 @@ class JdbcKnowledgeBaseRepositoryTest {
 
     private static final OffsetDateTime NOW = OffsetDateTime.parse("2026-09-01T10:00:00+08:00");
 
+    /** 测试用归属用户 ID（owner 隔离语义） */
+    private static final Long OWNER_ID = 1L;
+
+    /** 他人归属用户 ID（横向越权矩阵用：当前用户 ≠ 资源归属者） */
+    private static final Long OTHER_OWNER_ID = 2L;
+
     @Mock
     private KnowledgeBaseMapper mapper;
 
@@ -50,6 +56,7 @@ class JdbcKnowledgeBaseRepositoryTest {
         entity.setDescription("描述");
         entity.setLifecycleStatus(status);
         entity.setRagEngineConfig("{\"engineType\":\"DOCUMENT_ENGINE\"}");
+        entity.setOwnerId(OWNER_ID);
         entity.setCreatedAt(NOW);
         entity.setUpdatedAt(NOW);
         return entity;
@@ -57,13 +64,13 @@ class JdbcKnowledgeBaseRepositoryTest {
 
     private static KnowledgeBase aggregateOf(Long id, String name, LifecycleStatus status) {
         return KnowledgeBase.restore(id, name, "描述", "Chinese", status,
-                null, "{\"engineType\":\"DOCUMENT_ENGINE\"}", null, null, null, null, null, NOW, NOW);
+                null, "{\"engineType\":\"DOCUMENT_ENGINE\"}", null, null, null, null, null, OWNER_ID, NOW, NOW);
     }
 
     @Test
     void should_returnPersistedAggregate_when_save_given_newAggregateWithoutId() {
         // given
-        KnowledgeBase kb = KnowledgeBase.create("新库", "描述", null, null, null, null, null, null, null);
+        KnowledgeBase kb = KnowledgeBase.create("新库", "描述", null, null, null, null, null, null, null, OWNER_ID);
         AtomicReference<Long> idAtInsert = new AtomicReference<>(1L);
         doAnswer(invocation -> {
             KnowledgeBaseEntity argument = invocation.getArgument(0);
@@ -86,7 +93,7 @@ class JdbcKnowledgeBaseRepositoryTest {
     @Test
     void should_returnOriginalAggregate_when_save_given_reselectMissesRecord() {
         // given
-        KnowledgeBase kb = KnowledgeBase.create("回退库", null, null, null, null, null, null, null, null);
+        KnowledgeBase kb = KnowledgeBase.create("回退库", null, null, null, null, null, null, null, null, OWNER_ID);
         doAnswer(invocation -> {
             ((KnowledgeBaseEntity) invocation.getArgument(0)).setId(101L);
             return 1;
@@ -133,10 +140,10 @@ class JdbcKnowledgeBaseRepositoryTest {
     @Test
     void should_returnAggregate_when_findByName_given_existingRecord() {
         // given
-        when(mapper.selectByName("唯一库")).thenReturn(entityOf(8L, "唯一库", "ACTIVE"));
+        when(mapper.selectByNameAndOwner("唯一库", OWNER_ID)).thenReturn(entityOf(8L, "唯一库", "ACTIVE"));
 
         // when
-        Optional<KnowledgeBase> found = repository.findByName("唯一库");
+        Optional<KnowledgeBase> found = repository.findByNameAndOwner("唯一库", OWNER_ID);
 
         // then
         assertTrue(found.isPresent());
@@ -158,45 +165,92 @@ class JdbcKnowledgeBaseRepositoryTest {
         verify(mapper, never()).selectById(9L);
     }
 
+    /** 按 (id, owner) 命中：请求面归属判定的仓储入口。 */
+    @Test
+    void should_returnAggregate_when_findByIdAndOwner_given_ownerMatches() {
+        // given
+        when(mapper.selectByIdAndOwner(11L, OWNER_ID)).thenReturn(entityOf(11L, "归我库", "ACTIVE"));
+
+        // when
+        Optional<KnowledgeBase> found = repository.findByIdAndOwner(11L, OWNER_ID);
+
+        // then
+        assertTrue(found.isPresent());
+        assertEquals("归我库", found.get().name());
+        assertEquals(OWNER_ID, found.get().ownerId());
+    }
+
+    /** 归属不匹配时按 (id, owner) 无命中——与「不存在」同形（不泄露存在性）。 */
+    @Test
+    void should_returnEmpty_when_findByIdAndOwner_given_ownerMismatch() {
+        // given：仓储层按 (id, owner) 等值查询，他人 owner 无命中
+        when(mapper.selectByIdAndOwner(11L, OTHER_OWNER_ID)).thenReturn(null);
+
+        // when // then
+        assertTrue(repository.findByIdAndOwner(11L, OTHER_OWNER_ID).isEmpty());
+    }
+
+    /** 入参缺失时零 DB 交互：归属判定不产生任何查询。 */
+    @Test
+    void should_returnEmptyWithoutQuery_when_findByIdAndOwner_given_blankIdOrOwner() {
+        // when // then
+        assertTrue(repository.findByIdAndOwner(null, OWNER_ID).isEmpty());
+        assertTrue(repository.findByIdAndOwner(11L, null).isEmpty());
+        verifyNoInteractions(mapper);
+    }
+
+    /** existsOwned：命中为 true，未命中为 false（轻量投影）。 */
+    @Test
+    void should_reportOwnership_when_existsOwned_given_hitAndMiss() {
+        // given
+        when(mapper.selectByIdAndOwner(11L, OWNER_ID)).thenReturn(entityOf(11L, "归我库", "ACTIVE"));
+        when(mapper.selectByIdAndOwner(12L, OWNER_ID)).thenReturn(null);
+
+        // when // then
+        assertTrue(repository.existsOwned(11L, OWNER_ID));
+        assertFalse(repository.existsOwned(12L, OWNER_ID));
+    }
+
     @Test
     void should_convertPageToOffset_when_findByCondition_given_statusAndPage() {
         // given
-        when(mapper.selectByCondition("kw", "ACTIVE", KnowledgeBaseSortField.CREATED_AT, false, 20L, 10))
+        when(mapper.selectByCondition("kw", "ACTIVE", KnowledgeBaseSortField.CREATED_AT, false, 20L, 10, OWNER_ID))
                 .thenReturn(List.of(entityOf(1L, "库一", "ACTIVE"), entityOf(2L, "库二", "ACTIVE")));
 
         // when
         List<KnowledgeBase> found = repository.findByCondition("kw", LifecycleStatus.ACTIVE,
-                KnowledgeBaseSortField.CREATED_AT, false, 3, 10);
+                KnowledgeBaseSortField.CREATED_AT, false, 3, 10, OWNER_ID);
 
         // then
         assertEquals(2, found.size());
         assertEquals("库一", found.get(0).name());
         assertEquals("库二", found.get(1).name());
-        verify(mapper).selectByCondition("kw", "ACTIVE", KnowledgeBaseSortField.CREATED_AT, false, 20L, 10);
+        verify(mapper).selectByCondition("kw", "ACTIVE", KnowledgeBaseSortField.CREATED_AT, false, 20L, 10,
+                OWNER_ID);
     }
 
     @Test
     void should_passNullStatus_when_findByCondition_given_nullStatusAndFirstPage() {
         // given
-        when(mapper.selectByCondition(null, null, KnowledgeBaseSortField.UPDATED_AT, true, 0L, 20))
+        when(mapper.selectByCondition(null, null, KnowledgeBaseSortField.UPDATED_AT, true, 0L, 20, OWNER_ID))
                 .thenReturn(List.of());
 
         // when
         List<KnowledgeBase> found = repository.findByCondition(null, null,
-                KnowledgeBaseSortField.UPDATED_AT, true, 1, 20);
+                KnowledgeBaseSortField.UPDATED_AT, true, 1, 20, OWNER_ID);
 
         // then
         assertTrue(found.isEmpty());
-        verify(mapper).selectByCondition(null, null, KnowledgeBaseSortField.UPDATED_AT, true, 0L, 20);
+        verify(mapper).selectByCondition(null, null, KnowledgeBaseSortField.UPDATED_AT, true, 0L, 20, OWNER_ID);
     }
 
     @Test
     void should_delegateCount_when_countByCondition_given_keywordAndStatus() {
         // given
-        when(mapper.countByCondition("kw", "DELETE_FAILED")).thenReturn(5L);
+        when(mapper.countByCondition("kw", "DELETE_FAILED", OWNER_ID)).thenReturn(5L);
 
         // when
-        long total = repository.countByCondition("kw", LifecycleStatus.DELETE_FAILED);
+        long total = repository.countByCondition("kw", LifecycleStatus.DELETE_FAILED, OWNER_ID);
 
         // then
         assertEquals(5L, total);
@@ -205,14 +259,14 @@ class JdbcKnowledgeBaseRepositoryTest {
     @Test
     void should_passNullStatusName_when_countByStatus_given_nullStatus() {
         // given
-        when(mapper.countByStatus(null)).thenReturn(12L);
+        when(mapper.countByStatus(null, OWNER_ID)).thenReturn(12L);
 
         // when
-        long total = repository.countByStatus(null);
+        long total = repository.countByStatus(null, OWNER_ID);
 
         // then
         assertEquals(12L, total);
-        verify(mapper).countByStatus(null);
+        verify(mapper).countByStatus(null, OWNER_ID);
     }
 
     @Test

@@ -105,6 +105,8 @@ public class DeletionCleanupTaskExecutor {
 
     /**
      * 按配置构建执行器与并发配额信号量（先于任何提交发生；容器管理生命周期）。
+     * <p>生效配置的启动期观测由 {@code RagCleanupExecutorConfig} 统一打印一次，本方法不再重复输出，
+     * 避免启动日志出现同源字段两次。</p>
      */
     @PostConstruct
     public void initialize() {
@@ -112,8 +114,6 @@ public class DeletionCleanupTaskExecutor {
         ThreadFactory threadFactory = Thread.ofVirtual().name(THREAD_NAME_PREFIX, 0).factory();
         this.concurrencyQuota = new Semaphore(permits);
         this.executor = Executors.newThreadPerTaskExecutor(threadFactory);
-        log.info("[删除清退执行器] 虚拟线程执行器已就绪: maxConcurrent={}, shutdownGraceSeconds={}",
-                permits, effectiveGraceSeconds());
     }
 
     /**

@@ -32,6 +32,7 @@ import com.linkroa.deepdataagent.knowledgebase.domain.repository.KnowledgeBaseRe
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.shared.security.AuthContext;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -54,6 +55,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
@@ -284,8 +286,7 @@ public class DocumentApplicationService {
      * @throws ResourceConflictException 命中重复且冲突动作为 REJECT（409，消息携带重复摘要）
      */
     public UploadDocumentResult upload(UploadDocumentCommand command) {
-        KnowledgeBase knowledgeBase = knowledgeBaseRepository.findById(command.kbId())
-                .orElseThrow(() -> new ResourceNotFoundException("知识库不存在"));
+        KnowledgeBase knowledgeBase = requireOwnedKnowledgeBase(command.kbId());
         KnowledgeBaseValidator.validateNotDeleting(knowledgeBase);
         FileType fileType = DocumentValidator.validateFileType(command.fileType());
         byte[] content = command.content();
@@ -353,6 +354,7 @@ public class DocumentApplicationService {
     private UploadDocumentResult registerUnderKnowledgeBaseLock(UploadDocumentCommand command, FileType fileType,
                                                                 S3File stored, String contentHash) {
         KnowledgeBase locked = knowledgeBaseRepository.findByIdForUpdate(command.kbId())
+                .filter(kb -> kb.isOwnedBy(AuthContext.getUserId()))
                 .orElseThrow(() -> new ResourceNotFoundException("知识库不存在"));
         KnowledgeBaseValidator.validateNotDeleting(locked);
         DedupPolicyConfig policy = documentDedupService.resolvePolicy(locked);
@@ -387,8 +389,7 @@ public class DocumentApplicationService {
      */
     public List<DedupHit> precheck(Long kbId, String fileName, String contentHash) {
         String normalizedContentHash = DocumentValidator.validatePrecheckAxes(fileName, contentHash);
-        KnowledgeBase knowledgeBase = knowledgeBaseRepository.findById(kbId)
-                .orElseThrow(() -> new ResourceNotFoundException("知识库不存在"));
+        KnowledgeBase knowledgeBase = requireOwnedKnowledgeBase(kbId);
         KnowledgeBaseValidator.validateNotDeleting(knowledgeBase);
         return documentDedupService.detect(kbId, documentDedupService.resolvePolicy(knowledgeBase),
                 fileName, normalizedContentHash);
@@ -501,33 +502,36 @@ public class DocumentApplicationService {
      * @throws DeepDataAgentException 状态取值非法（400）
      */
     public List<Document> list(ListDocumentQuery query) {
+        // 归属前置：列表按知识库维度收敛于当前用户，非本人库直接 404
+        requireOwnedKnowledgeBase(query.kbId());
         return documentRepository.findByKbId(query.kbId(), query.fileName(),
                 DocumentValidator.parseStatusOrNull(query.status()), query.page(), query.size());
     }
 
     /**
-     * 统计知识库内文档列表命中总数。
+     * 统计知识库内文档列表命中总数（归属前置，非本人知识库 404）。
      *
      * @param kbId     知识库ID
      * @param fileName 文件名关键字，可为空
      * @param status   文档处理状态（DocumentStatus 枚举名），可为空
      * @return 命中记录数
-     * @throws DeepDataAgentException 状态取值非法（400）
+     * @throws DeepDataAgentException    状态取值非法（400）
+     * @throws ResourceNotFoundException 知识库不存在或非当前用户归属（404）
      */
     public long count(Long kbId, String fileName, String status) {
+        requireOwnedKnowledgeBase(kbId);
         return documentRepository.countByKbId(kbId, fileName, DocumentValidator.parseStatusOrNull(status));
     }
 
     /**
-     * 按主键查询文档详情。
+     * 按主键查询文档详情（归属经 document → knowledge_base 父链校验）。
      *
      * @param id 文档ID
      * @return 文档聚合根
-     * @throws ResourceNotFoundException 文档不存在（404）
+     * @throws ResourceNotFoundException 文档不存在或非当前用户归属（404，两情形不可区分）
      */
     public Document get(Long id) {
-        return documentRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("文档不存在"));
+        return requireOwnedDocument(id);
     }
 
     /**
@@ -544,10 +548,9 @@ public class DocumentApplicationService {
      * @throws DeepDataAgentException    知识库不可用 / 存储引用缺失或非法（400）
      */
     public DocumentContentResult openContent(Long id) {
-        Document document = documentRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("文档不存在"));
-        KnowledgeBase knowledgeBase = knowledgeBaseRepository.findById(document.kbId())
-                .orElseThrow(() -> new DeepDataAgentException(ERROR_KB_UNAVAILABLE));
+        // 归属前置：文档（含父链知识库）非当前用户归属一律 404，不触碰对象存储
+        Document document = requireOwnedDocument(id);
+        KnowledgeBase knowledgeBase = requireOwnedKnowledgeBase(document.kbId());
         if (!knowledgeBase.isActive()) {
             throw new DeepDataAgentException(ERROR_KB_UNAVAILABLE);
         }
@@ -571,10 +574,9 @@ public class DocumentApplicationService {
      * @throws DeepDataAgentException    知识库不可用 / 存储引用缺失或非法（400）/ 非办公类型不支持文本提取（400）
      */
     public DocumentTextPreviewResult openTextPreview(Long id) {
-        Document document = documentRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("文档不存在"));
-        KnowledgeBase knowledgeBase = knowledgeBaseRepository.findById(document.kbId())
-                .orElseThrow(() -> new DeepDataAgentException(ERROR_KB_UNAVAILABLE));
+        // 归属前置：文档（含父链知识库）非当前用户归属一律 404，不触碰对象存储与文本提取
+        Document document = requireOwnedDocument(id);
+        KnowledgeBase knowledgeBase = requireOwnedKnowledgeBase(document.kbId());
         if (!knowledgeBase.isActive()) {
             throw new DeepDataAgentException(ERROR_KB_UNAVAILABLE);
         }
@@ -596,6 +598,52 @@ public class DocumentApplicationService {
             log.warn("办公文档文本预览提取失败，documentId={}, fileName={}", id, document.fileName(), e);
             throw new DeepDataAgentException("文档内容解析失败，无法在线预览，请下载后查看");
         }
+    }
+
+    /**
+     * 归属前置：读取知识库并校验归属当前认证用户（请求面统一入口）。
+     * <p>不存在与非本人归属统一以 404 折叠（不泄露存在性）。</p>
+     *
+     * @param kbId 知识库主键
+     * @return 归属当前用户的知识库
+     * @throws ResourceNotFoundException 知识库不存在或非当前用户归属（404，两情形不可区分）
+     */
+    private KnowledgeBase requireOwnedKnowledgeBase(Long kbId) {
+        return knowledgeBaseRepository.findByIdAndOwner(kbId, AuthContext.requireUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("知识库不存在"));
+    }
+
+    /**
+     * 归属前置：沿父链（document → knowledge_base）校验文档归属当前认证用户。
+     * <p>文档不存在、父链断裂与非本人归属统一以 404 折叠。</p>
+     *
+     * @param documentId 文档主键
+     * @return 归属当前用户的文档
+     * @throws ResourceNotFoundException 文档不存在或非当前用户归属（404，两情形不可区分）
+     */
+    private Document requireOwnedDocument(Long documentId) {
+        // 沿父链（document → knowledge_base）单次联查解析归属，任一环节缺失或非本人归属一律 404
+        Long currentOwnerId = AuthContext.requireUserId();
+        Optional<Long> kbOwnerId = documentRepository.findOwnerIdByDocumentId(documentId);
+        if (kbOwnerId.isEmpty() || !currentOwnerId.equals(kbOwnerId.get())) {
+            throw new ResourceNotFoundException("文档不存在");
+        }
+        return documentRepository.findById(documentId)
+                .orElseThrow(() -> new ResourceNotFoundException("文档不存在"));
+    }
+
+    /**
+     * 轻量归属判定：知识库是否归属当前认证用户（不抛异常，供条件过滤使用）。
+     *
+     * @param kbId 知识库主键，可为空
+     * @return true 表示归属当前用户；未认证或非本人返回 false
+     */
+    private boolean isOwnedKnowledgeBase(Long kbId) {
+        Long currentOwnerId = AuthContext.getUserId();
+        if (currentOwnerId == null) {
+            return false;
+        }
+        return knowledgeBaseRepository.existsOwned(kbId, currentOwnerId);
     }
 
     /**
@@ -643,6 +691,8 @@ public class DocumentApplicationService {
      */
     public Document delete(DeleteDocumentCommand command) {
         Long documentId = command.id();
+        // 归属前置：非本人文档一律 404，且 MUST 先于任何状态变更与清退任务投递
+        requireOwnedDocument(documentId);
         Document accepted = transactionTemplate.execute(status -> acceptDelete(documentId));
         // 受理短事务已提交（transactionTemplate 返回）：此处才允许清退线程可见 DELETING 行
         submitDocumentCleanupAfterCommit(documentId);
@@ -925,10 +975,10 @@ public class DocumentApplicationService {
         ChunkStrategyConfigValidator.validate(command.chunkStrategyOverride());
         Document reset = transactionTemplate.execute(status -> {
             Document document = documentRepository.findByIdForUpdate(command.id())
+                    .filter(doc -> doc.kbId() != null && isOwnedKnowledgeBase(doc.kbId()))
                     .orElseThrow(() -> new ResourceNotFoundException("文档不存在"));
             DocumentValidator.validateCanReparse(document);
-            KnowledgeBase knowledgeBase = knowledgeBaseRepository.findById(document.kbId())
-                    .orElseThrow(() -> new ResourceNotFoundException("知识库不存在"));
+            KnowledgeBase knowledgeBase = requireOwnedKnowledgeBase(document.kbId());
             KnowledgeBaseValidator.validateNotDeleting(knowledgeBase);
             String effectiveStrategy = resolveChunkStrategy(command.chunkStrategyOverride(), knowledgeBase);
             Document pending = document.withChunkStrategy(effectiveStrategy)

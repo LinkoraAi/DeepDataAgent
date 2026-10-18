@@ -72,6 +72,9 @@ class DefaultDatasourceApiTest {
     /** 发布语言 DTO 包前缀（契约面纯净性断言的允许类型范围）。 */
     private static final String API_DTO_PACKAGE = "com.linkroa.deepdataagent.datasource.api.dto";
 
+    /** 测试用归属用户 ID（领域对象构造时的归属者）。 */
+    private static final Long OWNER_ID = 1L;
+
     @Mock
     private DatasourceConnectionRepository connectionRepository;
 
@@ -448,7 +451,7 @@ class DefaultDatasourceApiTest {
     private static DatasourceConnection enabledJdbc(Long id, String name) {
         return new DatasourceConnection(id, name, DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
                 new JdbcConnectionConfig("localhost", 3306, "db", "root", "pwd", null),
-                null, null, null, null, null);
+                null, OWNER_ID, null, null, null, null);
     }
 
     /**
@@ -457,7 +460,7 @@ class DefaultDatasourceApiTest {
     private static DatasourceConnection disabledJdbc(Long id, String name) {
         return new DatasourceConnection(id, name, DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.DISABLED,
                 new JdbcConnectionConfig("localhost", 3306, "db", "root", "pwd", null),
-                null, null, null, null, null);
+                null, OWNER_ID, null, null, null, null);
     }
 
     /**
@@ -465,7 +468,7 @@ class DefaultDatasourceApiTest {
      */
     private static DatasourceConnection enabledApi(Long id, String name) {
         return new DatasourceConnection(id, name, DatasourceType.API, null, DatasourceStatus.ENABLED,
-                null, null, null, null, null, null);
+                null, null, OWNER_ID, null, null, null, null);
     }
 
     /**

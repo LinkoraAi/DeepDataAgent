@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.datasource.infrastructure.persistence.entity.TableInfoEntity;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -19,6 +21,22 @@ import java.util.List;
  */
 @Mapper
 public interface TableInfoMapper extends BaseMapper<TableInfoEntity> {
+
+    /**
+     * 沿父链解析表所属数据源的归属者（table_info → database_schema → datasource_connection）。
+     * <p>请求面按表标识寻址的归属判定入口；表不存在或父链断裂返回 null，由调用方按 404 处理。</p>
+     *
+     * @param tableId 表主键
+     * @return 所属数据源的归属用户 ID；无命中返回 null
+     */
+    @Select("""
+            SELECT c.owner_id
+            FROM table_info t
+            JOIN database_schema s ON s.id = t.database_schema_id
+            JOIN datasource_connection c ON c.id = s.connection_id
+            WHERE t.id = #{tableId}
+            """)
+    Long selectOwnerIdByTableId(@Param("tableId") Long tableId);
 
     default List<TableInfoEntity> selectByDatabaseSchemaId(Long databaseSchemaId) {
         return selectList(Wrappers.<TableInfoEntity>lambdaQuery()

@@ -310,6 +310,6 @@ class KnowledgeBaseControllerTest {
     private KnowledgeBase knowledgeBase(Long id, LifecycleStatus lifecycleStatus, String errorMessage) {
         return KnowledgeBase.restore(id, "测试知识库", "用于单测的知识库", "Chinese", lifecycleStatus,
                 errorMessage, RAG_CONFIG, DEDUP_POLICY, RETRIEVAL_STRATEGY, EMBEDDING_CONFIG, MULTI_MODEL_CONFIG,
-                ENTITY_TYPE_CONFIG, null, null);
+                ENTITY_TYPE_CONFIG, 1L, null, null);
     }
 }

@@ -12,6 +12,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class JdbcDatasourceConnectionRepositoryTest extends DatasourceRepositoryTestSupport {
 
+    /** 测试用归属用户 ID（所有落库数据源均归属该用户）。 */
+    private static final Long OWNER_ID = 1L;
+
     @Autowired
     private JdbcDatasourceConnectionRepository repository;
 
@@ -84,7 +87,7 @@ class JdbcDatasourceConnectionRepositoryTest extends DatasourceRepositoryTestSup
         DatasourceConnection updated = new DatasourceConnection(
                 saved.id(), "updated-name", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
                 new JdbcConnectionConfig("newhost", 3307, "newdb", "newuser", "newpass", null),
-                "updated desc", saved.createdAt(), saved.updatedAt(), saved.createdBy(), saved.updatedBy()
+                "updated desc", saved.ownerId(), saved.createdAt(), saved.updatedAt(), saved.createdBy(), saved.updatedBy()
         );
 
         DatasourceConnection result = repository.update(updated);
@@ -118,10 +121,10 @@ class JdbcDatasourceConnectionRepositoryTest extends DatasourceRepositoryTestSup
     void should_filterByKeyword_when_findByCondition_given_keyword() {
         repository.save(createJdbcConnection(null));
 
-        List<DatasourceConnection> results = repository.findByCondition("test", null, null, 0, 10);
+        List<DatasourceConnection> results = repository.findByCondition("test", null, null, 0, 10, OWNER_ID);
         assertEquals(1, results.size());
 
-        List<DatasourceConnection> empty = repository.findByCondition("nonexistent", null, null, 0, 10);
+        List<DatasourceConnection> empty = repository.findByCondition("nonexistent", null, null, 0, 10, OWNER_ID);
         assertEquals(0, empty.size());
     }
 
@@ -130,11 +133,11 @@ class JdbcDatasourceConnectionRepositoryTest extends DatasourceRepositoryTestSup
         repository.save(createJdbcConnection(null));
         repository.save(createApiConnection(null));
 
-        List<DatasourceConnection> jdbcResults = repository.findByCondition(null, DatasourceType.JDBC, null, 0, 10);
+        List<DatasourceConnection> jdbcResults = repository.findByCondition(null, DatasourceType.JDBC, null, 0, 10, OWNER_ID);
         assertEquals(1, jdbcResults.size());
         assertEquals(DatasourceType.JDBC, jdbcResults.getFirst().type());
 
-        List<DatasourceConnection> apiResults = repository.findByCondition(null, DatasourceType.API, null, 0, 10);
+        List<DatasourceConnection> apiResults = repository.findByCondition(null, DatasourceType.API, null, 0, 10, OWNER_ID);
         assertEquals(1, apiResults.size());
         assertEquals(DatasourceType.API, apiResults.getFirst().type());
     }
@@ -144,10 +147,10 @@ class JdbcDatasourceConnectionRepositoryTest extends DatasourceRepositoryTestSup
         DatasourceConnection saved = repository.save(createJdbcConnection(null));
         repository.updateStatus(saved.id(), DatasourceStatus.DISABLED);
 
-        List<DatasourceConnection> enabled = repository.findByCondition(null, null, DatasourceStatus.ENABLED, 0, 10);
+        List<DatasourceConnection> enabled = repository.findByCondition(null, null, DatasourceStatus.ENABLED, 0, 10, OWNER_ID);
         assertEquals(0, enabled.size());
 
-        List<DatasourceConnection> disabled = repository.findByCondition(null, null, DatasourceStatus.DISABLED, 0, 10);
+        List<DatasourceConnection> disabled = repository.findByCondition(null, null, DatasourceStatus.DISABLED, 0, 10, OWNER_ID);
         assertEquals(1, disabled.size());
     }
 
@@ -156,10 +159,10 @@ class JdbcDatasourceConnectionRepositoryTest extends DatasourceRepositoryTestSup
         repository.save(createJdbcConnection(null));
         repository.save(createApiConnection(null));
 
-        long total = repository.countByCondition(null, null, null);
+        long total = repository.countByCondition(null, null, null, OWNER_ID);
         assertEquals(2, total);
 
-        long jdbcCount = repository.countByCondition(null, DatasourceType.JDBC, null);
+        long jdbcCount = repository.countByCondition(null, DatasourceType.JDBC, null, OWNER_ID);
         assertEquals(1, jdbcCount);
     }
 
@@ -169,26 +172,84 @@ class JdbcDatasourceConnectionRepositoryTest extends DatasourceRepositoryTestSup
             DatasourceConnection conn = new DatasourceConnection(
                     null, "ds-" + i, DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
                     new JdbcConnectionConfig("host", 3306, "db", "user", "pass", null),
-                    null, null, null, null, null
+                    null, OWNER_ID, null, null, null, null
             );
             repository.save(conn);
         }
 
-        List<DatasourceConnection> page1 = repository.findByCondition(null, null, null, 1, 2);
+        List<DatasourceConnection> page1 = repository.findByCondition(null, null, null, 1, 2, OWNER_ID);
         assertEquals(2, page1.size());
 
-        List<DatasourceConnection> page3 = repository.findByCondition(null, null, null, 3, 2);
+        List<DatasourceConnection> page3 = repository.findByCondition(null, null, null, 3, 2, OWNER_ID);
         assertEquals(1, page3.size());
     }
 
     private DatasourceConnection createJdbcConnection(Long id) {
         return new DatasourceConnection(id, "test-ds", DatasourceType.JDBC, JdbcType.MYSQL, DatasourceStatus.ENABLED,
                 new JdbcConnectionConfig("localhost", 3306, "testdb", "root", "pass", null),
-                null, null, null, null, null);
+                null, OWNER_ID, null, null, null, null);
     }
 
     private DatasourceConnection createApiConnection(Long id) {
         return new DatasourceConnection(id, "api-ds", DatasourceType.API, null, DatasourceStatus.ENABLED,
-                null, null, null, null, null, null);
+                null, null, OWNER_ID, null, null, null, null);
+    }
+
+    // ==================== 归属隔离（owner 维度查询） ====================
+
+    /** 他人归属用户 ID（横向越权矩阵用）。 */
+    private static final Long OTHER_OWNER_ID = 2L;
+
+    /** 归属一致时按 (id, owner) 可命中。 */
+    @Test
+    void should_findByIdAndOwner_when_saved_given_ownerMatches() {
+        DatasourceConnection saved = repository.save(createJdbcConnection(null));
+
+        Optional<DatasourceConnection> found = repository.findByIdAndOwner(saved.id(), OWNER_ID);
+
+        assertTrue(found.isPresent());
+        assertEquals(saved.name(), found.get().name());
+    }
+
+    /** 归属不匹配时按 (id, owner) 无命中——与「不存在」同形（不泄露存在性）。 */
+    @Test
+    void should_returnEmpty_when_findByIdAndOwner_given_otherOwner() {
+        DatasourceConnection saved = repository.save(createJdbcConnection(null));
+
+        Optional<DatasourceConnection> found = repository.findByIdAndOwner(saved.id(), OTHER_OWNER_ID);
+
+        assertTrue(found.isEmpty());
+    }
+
+    /** existsOwned：归属一致为 true、他人为 false。 */
+    @Test
+    void should_reportOwnership_when_existsOwned_given_ownerAndOtherOwner() {
+        DatasourceConnection saved = repository.save(createJdbcConnection(null));
+
+        assertTrue(repository.existsOwned(saved.id(), OWNER_ID));
+        assertFalse(repository.existsOwned(saved.id(), OTHER_OWNER_ID));
+    }
+
+    /** 按 (name, owner) 命中：owner 内唯一口径下的判重查询入口。 */
+    @Test
+    void should_findByNameAndOwner_when_saved_given_ownerMatches() {
+        repository.save(createJdbcConnection(null));
+
+        Optional<DatasourceConnection> found = repository.findByNameAndOwner("test-ds", OWNER_ID);
+
+        assertTrue(found.isPresent());
+        assertEquals("test-ds", found.get().name());
+        assertTrue(repository.findByNameAndOwner("test-ds", OTHER_OWNER_ID).isEmpty());
+    }
+
+    /** 列表 / 计数按 owner 收敛：他人 owner 查不到本用户数据源。 */
+    @Test
+    void should_scopeToOwner_when_findByConditionAndCount_given_otherOwner() {
+        repository.save(createJdbcConnection(null));
+
+        assertEquals(1, repository.findByCondition(null, null, null, 1, 20, OWNER_ID).size());
+        assertEquals(0, repository.findByCondition(null, null, null, 1, 20, OTHER_OWNER_ID).size());
+        assertEquals(1L, repository.countByCondition(null, null, null, OWNER_ID));
+        assertEquals(0L, repository.countByCondition(null, null, null, OTHER_OWNER_ID));
     }
 }

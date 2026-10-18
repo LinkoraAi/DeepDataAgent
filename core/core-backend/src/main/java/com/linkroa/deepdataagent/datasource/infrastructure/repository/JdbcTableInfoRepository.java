@@ -43,6 +43,14 @@ public class JdbcTableInfoRepository implements TableInfoRepository {
     }
 
     @Override
+    public Optional<Long> findOwnerIdByTableId(Long tableId) {
+        if (tableId == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(mapper.selectOwnerIdByTableId(tableId));
+    }
+
+    @Override
     public List<TableInfo> findByDatabaseSchemaId(Long databaseSchemaId) {
         return mapper.selectByDatabaseSchemaId(databaseSchemaId)
                 .stream()

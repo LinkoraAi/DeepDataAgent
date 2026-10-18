@@ -1,5 +1,6 @@
 package com.linkroa.deepdataagent.knowledgebase.application.service;
 
+import com.linkroa.deepdataagent.agent.api.ModelProfileReferenceApi;
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskRegistry;
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskType;
 import com.linkroa.deepdataagent.knowledgebase.api.KbCleanupTaskSubmitter;
@@ -20,6 +21,8 @@ import com.linkroa.deepdataagent.knowledgebase.domain.repository.KnowledgeBaseRe
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.shared.security.AuthContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -64,6 +67,12 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class KnowledgeBaseApplicationServiceTest {
 
+    /** 当前认证用户 ID（请求面归属语义：创建即归属该用户） */
+    private static final Long OWNER_ID = 1L;
+
+    /** 另一认证用户 ID（越权隔离用例：当前用户 ≠ 资源归属者，用于验证横向隔离） */
+    private static final Long OTHER_OWNER_ID = 2L;
+
     @Mock
     private KnowledgeBaseRepository knowledgeBaseRepository;
     @Mock
@@ -76,12 +85,15 @@ class KnowledgeBaseApplicationServiceTest {
     private KbCleanupTaskSubmitter kbCleanupTaskSubmitter;
     @Mock
     private InFlightTaskRegistry inFlightTaskRegistry;
+    @Mock
+    private ModelProfileReferenceApi modelProfileReferenceApi;
 
     @InjectMocks
     private KnowledgeBaseApplicationService service;
 
     @BeforeEach
     void setUp() {
+        AuthContext.setUserId(OWNER_ID);
         lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
             return callback.doInTransaction(mock(TransactionStatus.class));
@@ -93,6 +105,11 @@ class KnowledgeBaseApplicationServiceTest {
         }).when(transactionTemplate).executeWithoutResult(any());
     }
 
+    @AfterEach
+    void tearDown() {
+        AuthContext.clear();
+    }
+
     private KnowledgeBase buildKb(Long id, String name, LifecycleStatus status) {
         return buildKb(id, name, status, null);
     }
@@ -101,13 +118,13 @@ class KnowledgeBaseApplicationServiceTest {
         OffsetDateTime now = OffsetDateTime.now();
         return KnowledgeBase.restore(id, name, "原始描述", "Chinese", status,
                 errorMessage, "{\"engine\":\"builtin\"}", "{\"matchRule\":\"NAME\"}", "{\"mode\":\"HYBRID\"}",
-                "{\"model\":\"bge-m3\"}", "{\"vlm\":\"qwen-vl\"}", "{\"types\":[\"PRODUCT\"]}", now, now);
+                "{\"model\":\"bge-m3\"}", "{\"vlm\":\"qwen-vl\"}", "{\"types\":[\"PRODUCT\"]}", OWNER_ID, now, now);
     }
 
     @Test
     void should_saveKnowledgeBase_when_create_given_uniqueName() {
         // given
-        when(knowledgeBaseRepository.findByName("产品手册")).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByNameAndOwner("产品手册", OWNER_ID)).thenReturn(Optional.empty());
         when(knowledgeBaseRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("产品手册", "描述", "Chinese",
                 null, null, null, null, null, null);
@@ -124,7 +141,7 @@ class KnowledgeBaseApplicationServiceTest {
     @Test
     void should_saveKnowledgeBaseWithLanguage_when_create_given_legalJapaneseLanguage() {
         // given：语言经独立入参传递（真相源=language 列），rag_engine_config 不再携带语言键
-        when(knowledgeBaseRepository.findByName("日文文库")).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByNameAndOwner("日文文库", OWNER_ID)).thenReturn(Optional.empty());
         when(knowledgeBaseRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("日文文库", "描述", "Japanese",
                 "{\"engineType\":\"DOCUMENT_ENGINE\"}",
@@ -142,7 +159,7 @@ class KnowledgeBaseApplicationServiceTest {
     @Test
     void should_fallbackDefaultChinese_when_create_given_blankLanguageArgument() {
         // given：语言入参空白 → 聚合 create 显式兜底 Chinese（不依赖列库默认值）
-        when(knowledgeBaseRepository.findByName("默认文库")).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByNameAndOwner("默认文库", OWNER_ID)).thenReturn(Optional.empty());
         when(knowledgeBaseRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("默认文库", "描述", null,
                 "{\"engineType\":\"DOCUMENT_ENGINE\"}", null, null, null, null, null);
@@ -158,7 +175,7 @@ class KnowledgeBaseApplicationServiceTest {
     @Test
     void should_throwBadRequest_when_create_given_unlistedLanguagePortuguese() {
         // given：Portuguese 不在 11 全名值域
-        when(knowledgeBaseRepository.findByName("葡语文库")).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByNameAndOwner("葡语文库", OWNER_ID)).thenReturn(Optional.empty());
         CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("葡语文库", "描述", "Portuguese",
                 "{\"engineType\":\"DOCUMENT_ENGINE\"}",
                 null, null, null, null, null);
@@ -177,7 +194,7 @@ class KnowledgeBaseApplicationServiceTest {
     @Test
     void should_throwBadRequest_when_create_given_bareLanguageCodeJa() {
         // given：历史裸语言码同样拒绝（值域为全名）
-        when(knowledgeBaseRepository.findByName("裸码文库")).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByNameAndOwner("裸码文库", OWNER_ID)).thenReturn(Optional.empty());
         CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("裸码文库", "描述", "ja",
                 null, null, null, null, null, null);
 
@@ -189,7 +206,7 @@ class KnowledgeBaseApplicationServiceTest {
     @Test
     void should_throwBadRequest_when_create_given_mediaEngineType() {
         // given：本期仅支持文档引擎，创建携带 MEDIA_ENGINE 应入口拒绝
-        when(knowledgeBaseRepository.findByName("媒体文库")).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByNameAndOwner("媒体文库", OWNER_ID)).thenReturn(Optional.empty());
         CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("媒体文库", "描述", "Chinese",
                 "{\"engineType\":\"MEDIA_ENGINE\"}", null, null, null, null, null);
 
@@ -247,7 +264,7 @@ class KnowledgeBaseApplicationServiceTest {
     @Test
     void should_throwBadRequestWithoutSave_when_create_given_illegalChunkStrategy() {
         // given：创建携带库级分块策略，但非 GENERAL 模式带了参数
-        when(knowledgeBaseRepository.findByName("分块文库")).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByNameAndOwner("分块文库", OWNER_ID)).thenReturn(Optional.empty());
         CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("分块文库", "描述", "Chinese",
                 "{\"engineType\":\"DOCUMENT_ENGINE\",\"chunkStrategy\":{\"chunkMode\":\"LAWS\","
                         + "\"modeConfig\":{\"params\":{\"chunk_token_num\":1024}}}}",
@@ -297,7 +314,7 @@ class KnowledgeBaseApplicationServiceTest {
     @Test
     void should_throwConflict_when_create_given_duplicatedName() {
         // given
-        when(knowledgeBaseRepository.findByName("产品手册"))
+        when(knowledgeBaseRepository.findByNameAndOwner("产品手册", OWNER_ID))
                 .thenReturn(Optional.of(buildKb(9L, "产品手册", LifecycleStatus.ACTIVE)));
         CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("产品手册", "描述", "Chinese",
                 null, null, null, null, null, null);
@@ -322,7 +339,7 @@ class KnowledgeBaseApplicationServiceTest {
         // then
         assertEquals("产品手册", updated.name());
         assertEquals("{\"mode\":\"HYBRID\"}", updated.retrievalStrategy());
-        verify(knowledgeBaseRepository, never()).findByName(any());
+        verify(knowledgeBaseRepository, never()).findByNameAndOwner(any(), any());
     }
 
     @Test
@@ -346,7 +363,7 @@ class KnowledgeBaseApplicationServiceTest {
         // given
         KnowledgeBase current = buildKb(1L, "产品手册", LifecycleStatus.ACTIVE);
         when(knowledgeBaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(current));
-        when(knowledgeBaseRepository.findByName("新名称"))
+        when(knowledgeBaseRepository.findByNameAndOwner("新名称", OWNER_ID))
                 .thenReturn(Optional.of(buildKb(2L, "新名称", LifecycleStatus.ACTIVE)));
         UpdateKnowledgeBaseCommand command = new UpdateKnowledgeBaseCommand(1L, "新名称", null, "Chinese",
                 null, null, null, null, null, null);
@@ -370,7 +387,7 @@ class KnowledgeBaseApplicationServiceTest {
 
         // then
         assertEquals("新描述", updated.description());
-        verify(knowledgeBaseRepository, never()).findByName(any());
+        verify(knowledgeBaseRepository, never()).findByNameAndOwner(any(), any());
     }
 
     @Test
@@ -566,8 +583,8 @@ class KnowledgeBaseApplicationServiceTest {
     void should_recreateWithSameName_when_create_given_previousRowPhysicallyClosed() {
         // given：前序清退链已经 Repository.executeDelete 条件物理 DELETE 收口（行消失 → uk_kb_name 释放，
         //       普通唯一索引无行冲突），故同名判重查询与主键查询均无命中
-        when(knowledgeBaseRepository.findByName("产品手册")).thenReturn(Optional.empty());
-        when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByNameAndOwner("产品手册", OWNER_ID)).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.empty());
         when(knowledgeBaseRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("产品手册", "描述", "Chinese",
                 null, null, null, null, null, null);
@@ -632,7 +649,7 @@ class KnowledgeBaseApplicationServiceTest {
     void should_returnActiveKnowledgeBase_when_get_given_existingId() {
         // given
         KnowledgeBase existing = buildKb(1L, "产品手册", LifecycleStatus.ACTIVE);
-        when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(existing));
+        when(knowledgeBaseRepository.findByIdAndOwner(1L, OWNER_ID)).thenReturn(Optional.of(existing));
 
         // when
         KnowledgeBase result = service.get(1L);
@@ -644,7 +661,7 @@ class KnowledgeBaseApplicationServiceTest {
     @Test
     void should_throwNotFound_when_get_given_missingId() {
         // given
-        when(knowledgeBaseRepository.findById(404L)).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByIdAndOwner(404L, OWNER_ID)).thenReturn(Optional.empty());
 
         // when // then
         assertThrows(ResourceNotFoundException.class, () -> service.get(404L));
@@ -658,7 +675,7 @@ class KnowledgeBaseApplicationServiceTest {
                 buildKb(2L, "手册删除中", LifecycleStatus.DELETING),
                 buildKb(3L, "手册删除失败", LifecycleStatus.DELETE_FAILED, "[KB-CLEANUP] step=GRAPH"));
         when(knowledgeBaseRepository.findByCondition(eq("手册"), isNull(),
-                eq(KnowledgeBaseSortField.CREATED_AT), eq(false), eq(1), eq(20))).thenReturn(pageData);
+                eq(KnowledgeBaseSortField.CREATED_AT), eq(false), eq(1), eq(20), eq(OWNER_ID))).thenReturn(pageData);
 
         // when
         List<KnowledgeBase> result = service.list(new ListKnowledgeBaseQuery("手册", 1, 20, null, null));
@@ -666,21 +683,21 @@ class KnowledgeBaseApplicationServiceTest {
         // then：三态全集（含删除中 / 删除失败库）一并回显（未提供排序参数时按创建时间倒序兜底）
         assertEquals(pageData, result);
         verify(knowledgeBaseRepository).findByCondition(eq("手册"), isNull(),
-                eq(KnowledgeBaseSortField.CREATED_AT), eq(false), eq(1), eq(20));
+                eq(KnowledgeBaseSortField.CREATED_AT), eq(false), eq(1), eq(20), eq(OWNER_ID));
     }
 
     @Test
     void should_passParsedSortParams_when_list_given_validSortOptions() {
         // given
         when(knowledgeBaseRepository.findByCondition(isNull(), isNull(),
-                eq(KnowledgeBaseSortField.NAME), eq(true), eq(1), eq(20))).thenReturn(List.of());
+                eq(KnowledgeBaseSortField.NAME), eq(true), eq(1), eq(20), eq(OWNER_ID))).thenReturn(List.of());
 
         // when
         service.list(new ListKnowledgeBaseQuery(null, 1, 20, "name", "asc"));
 
         // then
         verify(knowledgeBaseRepository).findByCondition(isNull(), isNull(),
-                eq(KnowledgeBaseSortField.NAME), eq(true), eq(1), eq(20));
+                eq(KnowledgeBaseSortField.NAME), eq(true), eq(1), eq(20), eq(OWNER_ID));
     }
 
     @Test
@@ -691,7 +708,8 @@ class KnowledgeBaseApplicationServiceTest {
         // when // then（白名单外排序字段直接拒绝而非静默忽略）
         DeepDataAgentException exception = assertThrows(DeepDataAgentException.class, () -> service.list(query));
         assertTrue(exception.getMessage().contains("不支持的排序字段"));
-        verify(knowledgeBaseRepository, never()).findByCondition(any(), any(), any(), anyBoolean(), anyInt(), anyInt());
+        verify(knowledgeBaseRepository, never()).findByCondition(any(), any(), any(), anyBoolean(), anyInt(), anyInt(),
+                any());
     }
 
     @Test
@@ -707,22 +725,22 @@ class KnowledgeBaseApplicationServiceTest {
     @Test
     void should_returnZero_when_count_given_noMatch() {
         // given：计数口径与列表一致——不下传具体状态值，三态全集过滤在仓储侧完成
-        when(knowledgeBaseRepository.countByCondition(isNull(), isNull())).thenReturn(0L);
+        when(knowledgeBaseRepository.countByCondition(isNull(), isNull(), eq(OWNER_ID))).thenReturn(0L);
 
         // when
         long total = service.count(null);
 
         // then
         assertEquals(0L, total);
-        verify(knowledgeBaseRepository).countByCondition(isNull(), isNull());
+        verify(knowledgeBaseRepository).countByCondition(isNull(), isNull(), eq(OWNER_ID));
     }
 
     @Test
     void should_returnThreeMetrics_when_stats_given_repositoriesReady() {
         // given
-        when(knowledgeBaseRepository.countByStatus(LifecycleStatus.ACTIVE)).thenReturn(3L);
-        when(documentRepository.countByKbId(null, null, null)).thenReturn(12L);
-        when(chunkRepository.countByKbId(null, null, null, null)).thenReturn(300L);
+        when(knowledgeBaseRepository.countByStatus(LifecycleStatus.ACTIVE, OWNER_ID)).thenReturn(3L);
+        when(documentRepository.countByOwner(OWNER_ID)).thenReturn(12L);
+        when(chunkRepository.countByOwner(OWNER_ID)).thenReturn(300L);
 
         // when
         Map<String, Long> stats = service.stats();
@@ -794,12 +812,12 @@ class KnowledgeBaseApplicationServiceTest {
     void should_useDefaultPage_when_list_given_illegalPaging() {
         // given
         when(knowledgeBaseRepository.findByCondition(isNull(), isNull(),
-                eq(KnowledgeBaseSortField.CREATED_AT), eq(false), eq(1), eq(20))).thenReturn(List.of());
+                eq(KnowledgeBaseSortField.CREATED_AT), eq(false), eq(1), eq(20), eq(OWNER_ID))).thenReturn(List.of());
 
         // when // then
         assertDoesNotThrow(() -> service.list(new ListKnowledgeBaseQuery(null, 0, -5, null, null)));
         verify(knowledgeBaseRepository).findByCondition(isNull(), isNull(),
-                eq(KnowledgeBaseSortField.CREATED_AT), eq(false), eq(1), eq(20));
+                eq(KnowledgeBaseSortField.CREATED_AT), eq(false), eq(1), eq(20), eq(OWNER_ID));
     }
 
     @Test
@@ -1025,5 +1043,192 @@ class KnowledgeBaseApplicationServiceTest {
         assertEquals(LifecycleStatus.DELETING, accepted.lifecycleStatus());
         verify(kbCleanupTaskSubmitter, never()).submit(any());
         verify(knowledgeBaseRepository).markFailed(1L, REGISTER_FAILED_TRACE);
+    }
+
+    // ==================== 请求面归属隔离（横向越权矩阵） ====================
+
+    @Test
+    void should_throwNotFound_when_get_given_knowledgeBaseOwnedByOther() {
+        // given：当前用户切为 OTHER_OWNER_ID，仓储按 (id, owner) 过滤未命中（他人库对当前用户不可见）
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(knowledgeBaseRepository.findByIdAndOwner(1L, OTHER_OWNER_ID)).thenReturn(Optional.empty());
+
+        // when
+        ResourceNotFoundException exception = assertThrows(ResourceNotFoundException.class, () -> service.get(1L));
+
+        // then：404 折叠，消息与「库不存在」一致（MUST NOT 泄露资源存在性）
+        assertTrue(exception.getMessage().contains("知识库不存在"));
+        verify(knowledgeBaseRepository).findByIdAndOwner(1L, OTHER_OWNER_ID);
+    }
+
+    @Test
+    void should_throwNotFoundAndNotUpdate_when_update_given_knowledgeBaseOwnedByOther() {
+        // given：AuthContext=OTHER_OWNER_ID，行锁读得归属 OWNER_ID 的库 → 归属过滤未命中即 404
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(knowledgeBaseRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
+        UpdateKnowledgeBaseCommand command = new UpdateKnowledgeBaseCommand(1L, "新名称", null, "Chinese",
+                null, null, null, null, null, null);
+
+        // when // then：越权编辑被折叠为 404，且 MUST 零写入（不产生任何状态变更）
+        assertThrows(ResourceNotFoundException.class, () -> service.update(command));
+        verify(knowledgeBaseRepository, never()).update(any());
+    }
+
+    @Test
+    void should_throwNotFoundAndNotUpdate_when_updateRetrievalConfig_given_knowledgeBaseOwnedByOther() {
+        // given：当前用户切为 OTHER_OWNER_ID，行归属者为 OWNER_ID
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(knowledgeBaseRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
+        UpdateRetrievalConfigCommand command = new UpdateRetrievalConfigCommand(1L,
+                "{\"strategyType\":\"naive\",\"resultChunkCount\":20}");
+
+        // when // then：越权修改检索配置 404 折叠，零写入
+        assertThrows(ResourceNotFoundException.class, () -> service.updateRetrievalConfig(command));
+        verify(knowledgeBaseRepository, never()).update(any());
+    }
+
+    @Test
+    void should_throwNotFoundAndNotUpdate_when_updateEntityTypeConfig_given_knowledgeBaseOwnedByOther() {
+        // given：当前用户切为 OTHER_OWNER_ID，行归属者为 OWNER_ID
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(knowledgeBaseRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
+        UpdateEntityTypeConfigCommand command = new UpdateEntityTypeConfigCommand(1L,
+                "{\"entityTypes\":[{\"entityType\":\"Product\"}]}");
+
+        // when // then：越权修改实体类型配置 404 折叠，零写入
+        assertThrows(ResourceNotFoundException.class, () -> service.updateEntityTypeConfig(command));
+        verify(knowledgeBaseRepository, never()).update(any());
+    }
+
+    @Test
+    void should_throwNotFoundAndNotSubmit_when_delete_given_knowledgeBaseOwnedByOther() {
+        // given：当前用户切为 OTHER_OWNER_ID，行锁读得归属 OWNER_ID 的 ACTIVE 库
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(knowledgeBaseRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
+
+        // when // then：越权删除 MUST 先于任何状态变更被折叠为 404——
+        // 不做状态置位、不投递清退任务（否则将误删他人库）
+        assertThrows(ResourceNotFoundException.class, () -> service.delete(new DeleteKnowledgeBaseCommand(1L)));
+        verify(kbCleanupTaskSubmitter, never()).submit(any());
+        verify(knowledgeBaseRepository, never()).transitLifecycle(any(), any(), any());
+    }
+
+    @Test
+    void should_filterByCurrentUserOwner_when_list_given_otherUserContext() {
+        // given：当前用户切为 OTHER_OWNER_ID，列表查询必须按「当前认证用户」过滤（非硬编码归属）
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(knowledgeBaseRepository.findByCondition(isNull(), isNull(),
+                eq(KnowledgeBaseSortField.CREATED_AT), eq(false), eq(1), eq(20), eq(OTHER_OWNER_ID)))
+                .thenReturn(List.of());
+
+        // when
+        service.list(new ListKnowledgeBaseQuery(null, 1, 20, null, null));
+
+        // then：归属下传为当前用户（第 7 参），实现跨用户列表互相隔离
+        verify(knowledgeBaseRepository).findByCondition(isNull(), isNull(),
+                eq(KnowledgeBaseSortField.CREATED_AT), eq(false), eq(1), eq(20), eq(OTHER_OWNER_ID));
+    }
+
+    @Test
+    void should_scopeAllCountsToCurrentUser_when_stats_given_otherUserContext() {
+        // given：当前用户切为 OTHER_OWNER_ID，三项统计口径均须收敛到当前用户（不泄漏跨用户规模）
+        AuthContext.setUserId(OTHER_OWNER_ID);
+        when(knowledgeBaseRepository.countByStatus(LifecycleStatus.ACTIVE, OTHER_OWNER_ID)).thenReturn(0L);
+        when(documentRepository.countByOwner(OTHER_OWNER_ID)).thenReturn(0L);
+        when(chunkRepository.countByOwner(OTHER_OWNER_ID)).thenReturn(0L);
+
+        // when
+        service.stats();
+
+        // then：库数 / 文档数 / 切片数均以当前用户 ownerId 过滤，跨用户计数互相独立
+        verify(knowledgeBaseRepository).countByStatus(LifecycleStatus.ACTIVE, OTHER_OWNER_ID);
+        verify(documentRepository).countByOwner(OTHER_OWNER_ID);
+        verify(chunkRepository).countByOwner(OTHER_OWNER_ID);
+    }
+
+    // ==================== 模型引用写入期单闸门 ====================
+
+    @Test
+    void should_throwNotFoundAndNotSave_when_create_given_foreignEmbeddingModel() {
+        // given：名称在归属者内可用，但嵌入模型引用归属他人的配置（existsOwned 返回 false）
+        when(knowledgeBaseRepository.findByNameAndOwner("产品手册", OWNER_ID)).thenReturn(Optional.empty());
+        when(modelProfileReferenceApi.existsOwned("prof_foreign", OWNER_ID)).thenReturn(false);
+        CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("产品手册", "描述", "Chinese",
+                null, null, null, "{\"modelProfileId\":\"prof_foreign\"}", null, null);
+
+        // when
+        ResourceNotFoundException exception = assertThrows(ResourceNotFoundException.class,
+                () -> service.create(command));
+
+        // then：引用非归属模型 404 折叠（消息同「模型不存在」，不泄露存在性），且 MUST NOT 落库
+        assertTrue(exception.getMessage().contains("模型配置不存在"));
+        verify(knowledgeBaseRepository, never()).save(any());
+    }
+
+    @Test
+    void should_saveKnowledgeBase_when_create_given_ownedEmbeddingModel() {
+        // given：嵌入模型引用归属当前用户（existsOwned 返回 true）→ 闸门放行
+        when(knowledgeBaseRepository.findByNameAndOwner("产品手册", OWNER_ID)).thenReturn(Optional.empty());
+        when(modelProfileReferenceApi.existsOwned("prof_mine", OWNER_ID)).thenReturn(true);
+        when(knowledgeBaseRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("产品手册", "描述", "Chinese",
+                null, null, null, "{\"modelProfileId\":\"prof_mine\"}", null, null);
+
+        // when
+        KnowledgeBase saved = service.create(command);
+
+        // then：引用本人模型放行，落库一次且归属者仍为当前用户
+        assertEquals(OWNER_ID, saved.ownerId());
+        verify(knowledgeBaseRepository).save(any(KnowledgeBase.class));
+        verify(modelProfileReferenceApi).existsOwned("prof_mine", OWNER_ID);
+    }
+
+    @Test
+    void should_throwNotFoundAndNotUpdate_when_update_given_foreignMultiModel() {
+        // given：行归属当前用户，但本次落库的多模态配置引用归属他人的模型配置
+        when(knowledgeBaseRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
+        when(modelProfileReferenceApi.existsOwned("prof_foreign", OWNER_ID)).thenReturn(false);
+        UpdateKnowledgeBaseCommand command = new UpdateKnowledgeBaseCommand(1L, null, null, "Chinese",
+                null, null, null, null, "{\"modelProfileId\":\"prof_foreign\"}", null);
+
+        // when // then：更新期同样施加引用归属闸门——404 折叠且零写入
+        assertThrows(ResourceNotFoundException.class, () -> service.update(command));
+        verify(knowledgeBaseRepository, never()).update(any());
+    }
+
+    @Test
+    void should_throwNotFoundAndNotUpdate_when_updateRetrievalConfig_given_foreignRerankModel() {
+        // given：检索策略启用重排且引用归属他人的重排模型（归一后 rerankConfig.modelProfileId 非空）
+        when(knowledgeBaseRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
+        when(modelProfileReferenceApi.existsOwned("prof_foreign", OWNER_ID)).thenReturn(false);
+        UpdateRetrievalConfigCommand command = new UpdateRetrievalConfigCommand(1L,
+                "{\"strategyType\":\"NAIVE\",\"rerankConfig\":{\"enabled\":true,"
+                        + "\"modelProfileId\":\"prof_foreign\",\"topK\":5}}");
+
+        // when // then：重排模型引用非归属 → 404 折叠，零写入
+        assertThrows(ResourceNotFoundException.class, () -> service.updateRetrievalConfig(command));
+        verify(knowledgeBaseRepository, never()).update(any());
+    }
+
+    @Test
+    void should_notCheckModelOwnership_when_create_given_embeddingConfigWithoutProfileId() {
+        // given：嵌入配置不含 modelProfileId 键（未引用模型），闸门无引用可校
+        when(knowledgeBaseRepository.findByNameAndOwner("产品手册", OWNER_ID)).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("产品手册", "描述", "Chinese",
+                null, null, null, "{\"model\":\"bge-m3\"}", null, null);
+
+        // when
+        KnowledgeBase saved = service.create(command);
+
+        // then：无引用时 MUST NOT 触发跨 BC 归属查询，创建正常放行
+        assertEquals(OWNER_ID, saved.ownerId());
+        verify(modelProfileReferenceApi, never()).existsOwned(any(), any());
     }
 }

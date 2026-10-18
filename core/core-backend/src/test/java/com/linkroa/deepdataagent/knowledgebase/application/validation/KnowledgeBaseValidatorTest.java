@@ -25,7 +25,7 @@ class KnowledgeBaseValidatorTest {
 
     private KnowledgeBase buildKb(Long id, LifecycleStatus status) {
         return KnowledgeBase.restore(id, "产品手册", "描述", "Chinese", status,
-                null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, 1L, null, null);
     }
 
     @Test

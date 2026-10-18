@@ -72,7 +72,7 @@ class DocumentDedupServiceTest {
     private KnowledgeBase buildKbWithPolicy(String dedupPolicy) {
         OffsetDateTime now = OffsetDateTime.now();
         return KnowledgeBase.restore(KB_ID, "产品手册", "描述", "Chinese", LifecycleStatus.ACTIVE,
-                null, null, dedupPolicy, null, null, null, null, now, now);
+                null, null, dedupPolicy, null, null, null, null, 1L, now, now);
     }
 
     /**

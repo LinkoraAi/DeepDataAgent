@@ -25,6 +25,9 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class ApiConnectionStrategyTest {
 
+    /** 测试用归属用户 ID（领域对象构造时的归属者）。 */
+    private static final Long OWNER_ID = 1L;
+
     @Mock
     private ApiPaginationHandler paginationHandler;
 
@@ -40,7 +43,7 @@ class ApiConnectionStrategyTest {
 
     private DatasourceConnection buildApiConnection() {
         return new DatasourceConnection(1L, "api-test", DatasourceType.API, null,
-                DatasourceStatus.ENABLED, null, null, null, null, null, null);
+                DatasourceStatus.ENABLED, null, null, OWNER_ID, null, null, null, null);
     }
 
     private ApiSchema buildApiSchema() {

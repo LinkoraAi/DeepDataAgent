@@ -4,18 +4,21 @@
 -- 说明：本脚本为全库一次性初始化基线（历史 V1~V19 演进 + 后续 environment 契约
 --       config 结构、资源 ID 前缀、session_thread、技能类型词汇等增量的最终态合并），
 --       一经应用即不可修改（checksum 校验），后续任何改动请新增 V{n+1}__{desc}.sql。
---       基线例外（两次，均因项目未上线、存量库可重建或以 `flyway repair` 对齐 checksum）：
+--       基线例外（三次，均因项目未上线、存量库可重建或以 `flyway repair` 对齐 checksum）：
 --         ① move-coordination-leases-to-redis PR-C4：删除 coordination BC 协调租约表建表段
 --            （协调租约全量迁至 Redis，PG 侧表零代码读写）；
 --         ② slim-scope-fix-integration-tests：退役 Deployment / Vault / Memory / MCP 服务器声明 /
 --            请求幂等（Idempotency-Key），删除对应建表段，以及 agent_version.mcp_servers_json、
 --            agent_session.vault_ids、agent_session.memory_store_ids 列。
+--         ③ add-owner-isolation-to-kb-datasource：knowledge_base / datasource_connection 增
+--            owner_id 归属列（BIGINT NOT NULL），名称唯一索引由全局收敛为 (owner_id, name)，
+--            并新增 owner 维度列表索引；开发阶段存量库由维护者自行 repair / 重建并指派数据归属。
 --       存量开发 / 集成库须 `flyway repair` 对齐校验和（或直接重建空库）后再迁移。
 -- 分组：按限界上下文（BC）划分 —— auth / file / datasource / agent / skill / runtime。
 -- 约定：全库基础字段统一 created_at / updated_at / created_by / updated_by / is_deleted，
 --       时间类型统一 TIMESTAMPTZ（默认 now()），时区统一 Asia/Shanghai；
---       基础字段由 MyBatis-Plus 自动填充；数据源元数据与业务表列注释由领域实体维护，
---       此处仅对运行簿 / 关键演进列保留注释。
+--       基础字段由 MyBatis-Plus 自动填充；datasource BC 的表与字段注释随建表段维护，
+--       其余业务表列注释由领域实体维护，此处仅对运行簿 / 关键演进列保留注释。
 -- =====================================================================
 
 -- =====================================================================
@@ -78,6 +81,7 @@ CREATE TABLE datasource_connection (
     status                 VARCHAR(20)  NOT NULL DEFAULT '',
     jdbc_connection_config JSONB,
     description            VARCHAR(500),
+    owner_id               BIGINT       NOT NULL,
     created_at             TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at             TIMESTAMPTZ  NOT NULL DEFAULT now(),
     created_by             VARCHAR(100),
@@ -85,7 +89,25 @@ CREATE TABLE datasource_connection (
     is_deleted             SMALLINT     NOT NULL DEFAULT 0
 );
 
-CREATE UNIQUE INDEX uk_name ON datasource_connection (name) WHERE is_deleted = 0;
+-- 名称唯一性以归属者为界（owner 内唯一，跨用户允许同名）
+CREATE UNIQUE INDEX uk_name ON datasource_connection (owner_id, name) WHERE is_deleted = 0;
+-- 列表主查询路径：owner 隔离 + (created_at, id) 排序
+CREATE INDEX idx_datasource_owner_created ON datasource_connection (owner_id, created_at) WHERE is_deleted = 0;
+
+COMMENT ON TABLE  datasource_connection                              IS '数据源连接表（datasource 聚合根；JDBC/API 两大类，库表列与 API 模式等元数据均挂于本表之下）';
+COMMENT ON COLUMN datasource_connection.id                           IS '主键（自增数字ID）';
+COMMENT ON COLUMN datasource_connection.name                         IS '数据源名称（owner 内唯一，跨用户允许同名，见 uk_name）';
+COMMENT ON COLUMN datasource_connection.type                         IS '数据源主类型：JDBC=关系型数据库 / API=接口数据源';
+COMMENT ON COLUMN datasource_connection.sub_type                     IS 'JDBC 子类型（MYSQL/CLICKHOUSE/POSTGRESQL；仅 type=JDBC 时有值，type=API 时为 NULL）';
+COMMENT ON COLUMN datasource_connection.status                       IS '状态：ENABLED=启用 / DISABLED=停用（仅启用数据源可被会话装配引用）';
+COMMENT ON COLUMN datasource_connection.jdbc_connection_config       IS 'JDBC 连接配置（JSONB：host/port/database/用户口令等；敏感字段加密入库，明文不出库不进日志）';
+COMMENT ON COLUMN datasource_connection.description                  IS '数据源描述';
+COMMENT ON COLUMN datasource_connection.owner_id                     IS '归属用户ID（创建即定，一经写入不可变；数据源及其元数据仅归属者可见可操作）';
+COMMENT ON COLUMN datasource_connection.created_at                   IS '创建时间';
+COMMENT ON COLUMN datasource_connection.updated_at                   IS '更新时间';
+COMMENT ON COLUMN datasource_connection.created_by                   IS '创建人';
+COMMENT ON COLUMN datasource_connection.updated_by                   IS '更新人';
+COMMENT ON COLUMN datasource_connection.is_deleted                   IS '逻辑删除标记（0=未删除，1=已删除）';
 
 CREATE TABLE database_schema (
     id            BIGSERIAL     PRIMARY KEY,
@@ -101,6 +123,17 @@ CREATE TABLE database_schema (
 
 CREATE UNIQUE INDEX uk_connection_schema ON database_schema (connection_id, schema_name) WHERE is_deleted = 0;
 
+COMMENT ON TABLE  database_schema              IS '数据库 Schema 元数据表（JDBC 数据源元数据同步发现的 schema 层，连接内唯一）';
+COMMENT ON COLUMN database_schema.id           IS '主键（自增数字ID）';
+COMMENT ON COLUMN database_schema.connection_id IS '所属数据源连接ID（弱引用 datasource_connection.id，type=JDBC）';
+COMMENT ON COLUMN database_schema.schema_name  IS 'Schema 名称（源库实际库名/模式名，同一连接内唯一）';
+COMMENT ON COLUMN database_schema.description  IS '描述';
+COMMENT ON COLUMN database_schema.created_at   IS '创建时间';
+COMMENT ON COLUMN database_schema.updated_at   IS '更新时间';
+COMMENT ON COLUMN database_schema.created_by   IS '创建人';
+COMMENT ON COLUMN database_schema.updated_by   IS '更新人';
+COMMENT ON COLUMN database_schema.is_deleted   IS '逻辑删除标记（0=未删除，1=已删除）';
+
 CREATE TABLE table_info (
     id                   BIGSERIAL     PRIMARY KEY,
     database_schema_id   BIGINT        NOT NULL,
@@ -115,6 +148,18 @@ CREATE TABLE table_info (
 );
 
 CREATE UNIQUE INDEX uk_database_schema_table ON table_info (database_schema_id, table_name) WHERE is_deleted = 0;
+
+COMMENT ON TABLE  table_info                     IS '表元数据表（schema 下同步发现的表；源库注释与用户自定义注释并存，schema 内表名唯一）';
+COMMENT ON COLUMN table_info.id                  IS '主键（自增数字ID）';
+COMMENT ON COLUMN table_info.database_schema_id  IS '所属库 Schema 元数据ID（弱引用 database_schema.id）';
+COMMENT ON COLUMN table_info.table_name          IS '表名（源库实际表名，同一 schema 内唯一）';
+COMMENT ON COLUMN table_info.table_comment       IS '源库表注释（元数据同步取得，重新同步时刷新）';
+COMMENT ON COLUMN table_info.table_custom_comment IS '用户自定义表注释（对外展示优先于 table_comment，不被元数据同步覆盖）';
+COMMENT ON COLUMN table_info.created_at          IS '创建时间';
+COMMENT ON COLUMN table_info.updated_at          IS '更新时间';
+COMMENT ON COLUMN table_info.created_by          IS '创建人';
+COMMENT ON COLUMN table_info.updated_by          IS '更新人';
+COMMENT ON COLUMN table_info.is_deleted          IS '逻辑删除标记（0=未删除，1=已删除）';
 
 CREATE TABLE column_info (
     id                    BIGSERIAL     PRIMARY KEY,
@@ -132,6 +177,19 @@ CREATE TABLE column_info (
 
 CREATE UNIQUE INDEX uk_table_column ON column_info (table_id, column_name) WHERE is_deleted = 0;
 
+COMMENT ON TABLE  column_info                       IS '列元数据表（表下同步发现的列；源库注释与用户自定义注释并存，表内列名唯一）';
+COMMENT ON COLUMN column_info.id                    IS '主键（自增数字ID）';
+COMMENT ON COLUMN column_info.table_id              IS '所属表元数据ID（弱引用 table_info.id）';
+COMMENT ON COLUMN column_info.column_name           IS '列名（源库实际列名，同一表内唯一）';
+COMMENT ON COLUMN column_info.data_type             IS '列数据类型（源库上报的数据库类型名）';
+COMMENT ON COLUMN column_info.column_comment        IS '源库列注释（元数据同步取得，重新同步时刷新）';
+COMMENT ON COLUMN column_info.column_custom_comment IS '用户自定义列注释（对外展示优先于 column_comment，不被元数据同步覆盖）';
+COMMENT ON COLUMN column_info.created_at            IS '创建时间';
+COMMENT ON COLUMN column_info.updated_at            IS '更新时间';
+COMMENT ON COLUMN column_info.created_by            IS '创建人';
+COMMENT ON COLUMN column_info.updated_by            IS '更新人';
+COMMENT ON COLUMN column_info.is_deleted            IS '逻辑删除标记（0=未删除，1=已删除）';
+
 CREATE TABLE api_schema (
     id            BIGSERIAL     PRIMARY KEY,
     connection_id BIGINT        NOT NULL,
@@ -147,6 +205,19 @@ CREATE TABLE api_schema (
 );
 
 CREATE UNIQUE INDEX uk_connection_api ON api_schema (connection_id, url, method) WHERE is_deleted = 0;
+
+COMMENT ON TABLE  api_schema            IS 'API 接口模式表（API 型数据源下的接口定义，连接内以 url+method 唯一）';
+COMMENT ON COLUMN api_schema.id         IS '主键（自增数字ID）';
+COMMENT ON COLUMN api_schema.connection_id IS '所属数据源连接ID（弱引用 datasource_connection.id，type=API）';
+COMMENT ON COLUMN api_schema.name       IS '接口名称（业务展示名）';
+COMMENT ON COLUMN api_schema.url        IS '请求 URL';
+COMMENT ON COLUMN api_schema.method     IS 'HTTP 方法（大写枚举名，缺省 GET）';
+COMMENT ON COLUMN api_schema.config     IS 'API 请求配置（JSONB：鉴权、headers/query/body 参数、分页与 jsonPath 解析规则等；敏感字段加密入库）';
+COMMENT ON COLUMN api_schema.created_at IS '创建时间';
+COMMENT ON COLUMN api_schema.updated_at IS '更新时间';
+COMMENT ON COLUMN api_schema.created_by IS '创建人';
+COMMENT ON COLUMN api_schema.updated_by IS '更新人';
+COMMENT ON COLUMN api_schema.is_deleted IS '逻辑删除标记（0=未删除，1=已删除）';
 
 CREATE TABLE api_field (
     id            BIGSERIAL     PRIMARY KEY,
@@ -164,6 +235,20 @@ CREATE TABLE api_field (
 );
 
 CREATE UNIQUE INDEX uk_api_schema_field ON api_field (api_schema_id, original_name) WHERE is_deleted = 0;
+
+COMMENT ON TABLE  api_field              IS 'API 响应字段表（由响应 JSON 试解析得到的字段映射定义，模式内原始字段名唯一）';
+COMMENT ON COLUMN api_field.id           IS '主键（自增数字ID）';
+COMMENT ON COLUMN api_field.api_schema_id IS '所属 API 模式ID（弱引用 api_schema.id）';
+COMMENT ON COLUMN api_field.original_name IS '响应 JSON 原始字段名（同一 api_schema 内唯一）';
+COMMENT ON COLUMN api_field.display_name IS '展示名（对外别名，可空=与原始名一致）';
+COMMENT ON COLUMN api_field.json_path    IS '字段在响应 JSON 中的完整路径（如 $.list.*.id）';
+COMMENT ON COLUMN api_field.field_type   IS '字段类型（解析器推断：string/number/boolean/object/array；缺省空串）';
+COMMENT ON COLUMN api_field.description  IS '字段描述';
+COMMENT ON COLUMN api_field.created_at   IS '创建时间';
+COMMENT ON COLUMN api_field.updated_at   IS '更新时间';
+COMMENT ON COLUMN api_field.created_by   IS '创建人';
+COMMENT ON COLUMN api_field.updated_by   IS '更新人';
+COMMENT ON COLUMN api_field.is_deleted   IS '逻辑删除标记（0=未删除，1=已删除）';
 
 -- =====================================================================
 -- BC: agent（Agent 定义 / 版本 / 模型配置 / 运行环境 / 调度器）
@@ -498,17 +583,22 @@ CREATE TABLE knowledge_base (
                                 embedding_config    JSONB,
                                 multi_model_config  JSONB,
                                 entity_type_config  JSONB,
+                                owner_id            BIGINT          NOT NULL,
                                 created_at          TIMESTAMPTZ     NOT NULL DEFAULT now(),
                                 updated_at          TIMESTAMPTZ     NOT NULL DEFAULT now(),
                                 created_by          VARCHAR(100),
                                 updated_by          VARCHAR(100)
 );
 
-CREATE UNIQUE INDEX uk_kb_name ON knowledge_base (name);
+-- 名称唯一性以归属者为界（owner 内唯一，跨用户允许同名；物理删行消失即释放键）
+CREATE UNIQUE INDEX uk_kb_name ON knowledge_base (owner_id, name);
+-- 列表主查询路径：owner 隔离 + 创建时间排序
+CREATE INDEX idx_kb_owner_created ON knowledge_base (owner_id, created_at);
 
 COMMENT ON TABLE knowledge_base IS '知识库表';
 COMMENT ON COLUMN knowledge_base.id IS '知识库ID';
 COMMENT ON COLUMN knowledge_base.name IS '知识库名称';
+COMMENT ON COLUMN knowledge_base.owner_id IS '归属用户ID（创建即定，一经写入不可变；知识库及其文档切片仅归属者可见可操作）';
 COMMENT ON COLUMN knowledge_base.description IS '知识库描述';
 COMMENT ON COLUMN knowledge_base.language IS '知识库语言: 11语言全名(Chinese/English/Japanese/Korean/French/German/Spanish/Portuguese/Russian/Arabic/Italian)';
 COMMENT ON COLUMN knowledge_base.lifecycle_status IS '生命周期状态: ACTIVE/DELETING/DELETE_FAILED（DELETED常量已移除；收口即物理DELETE行消失、行缺失即已删除）';

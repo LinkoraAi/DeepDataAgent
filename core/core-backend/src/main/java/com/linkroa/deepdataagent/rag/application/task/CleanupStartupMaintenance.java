@@ -67,11 +67,12 @@ public class CleanupStartupMaintenance {
                     inFlightTaskConverger.convergeAllOfType(InFlightTaskType.DOC_CLEANUP, DOC_CLEANUP_RECOVERY_TRACE);
             int convergedKbs =
                     inFlightTaskConverger.convergeAllOfType(InFlightTaskType.KB_CLEANUP, KB_CLEANUP_RECOVERY_TRACE);
-            log.info("[删除清退启动恢复] 本实例残留收敛完成: 文档残留(置DELETE_FAILED)={}, "
-                    + "知识库残留(置DELETE_FAILED)={}", convergedDocs, convergedKbs);
+            log.info("[CleanupStartupMaintenance] residual convergence done: documents set to DELETE_FAILED={}, "
+                    + "knowledge bases set to DELETE_FAILED={}", convergedDocs, convergedKbs);
         } catch (Exception e) {
-            log.error("[删除清退启动恢复] 本实例残留收敛失败，不阻断应用启动"
-                    + "（残留停留原状态，可由用户重删或下次启动恢复兜底）", e);
+            log.error("[CleanupStartupMaintenance] residual convergence failed for this instance, "
+                    + "startup not blocked (residual stays in its current state, handled by user re-delete "
+                    + "or next startup recovery)", e);
         }
     }
 }

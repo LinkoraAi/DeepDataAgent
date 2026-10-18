@@ -82,6 +82,7 @@ public interface KnowledgeBasePersistenceConvert {
                 entity.getEmbeddingConfig(),
                 entity.getMultiModelConfig(),
                 entity.getEntityTypeConfig(),
+                entity.getOwnerId(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt());
     }
