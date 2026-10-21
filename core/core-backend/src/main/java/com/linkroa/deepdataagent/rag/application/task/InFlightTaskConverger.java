@@ -6,6 +6,8 @@ import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskType;
 import org.apache.commons.lang3.ObjectUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.event.ContextClosedEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.util.Set;
@@ -104,7 +106,21 @@ public class InFlightTaskConverger {
     }
 
     /**
-     * 清空本实例全部注册表键（停机流程收到终止信号后的<strong>首个动作</strong>，先于宽限等待）。
+     * 停机时序落点：容器关闭事件（{@link ContextClosedEvent}）抵达即清空本实例注册表键。
+     * <p>Spring 关闭序列固定为「发布 ContextClosedEvent → 停止 SmartLifecycle（缓存连接工厂在列，
+     * 停止后状态 STOPPED）→ 销毁 Bean（@PreDestroy/@Destroy）」——清空动作若挂在任何 Bean 的
+     * 销毁回调里，缓存必已停止、操作注定失败（历史缺陷：每次优雅停机必抛
+     * {@code LettuceConnectionFactory has been STOPPED}）。本事件钩子即「收到终止信号后的首个动作」
+     * 的真实时点：缓存必活、先于一切宽限等待；各执行器的停机链不再自行调用清空。</p>
+     */
+    @EventListener(ContextClosedEvent.class)
+    public void onContextClosed() {
+        clearInstanceRegistryQuietly();
+    }
+
+    /**
+     * 清空本实例全部注册表键（停机收到终止信号后的<strong>首个动作</strong>，由
+     * {@link #onContextClosed()} 在容器关闭事件时点触发，先于宽限等待与缓存生命周期停止）。
      * <p>目的是使「新进程读到非空键」等价于「真崩溃（来不及清空）」，消除滚动发布期间新旧进程并存
      * 造成的误判。清空失败仅 ERROR 留痕，MUST NOT 阻断停机链的后续等待与收敛。</p>
      */

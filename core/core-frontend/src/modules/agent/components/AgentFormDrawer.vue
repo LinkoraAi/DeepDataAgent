@@ -9,7 +9,7 @@ import { createAgent, publishVersion } from '../api/agents';
 import type { AgentConfigPayload, AgentWire } from '../api/agents';
 import { listCloudModels } from '../api/cloud-models';
 import type { ModelCatalogDto } from '../api/cloud-models';
-import { listEnabledProfiles, MODEL_TYPE_CHAT } from '@/modules/model/api';
+import { listEnabledProfiles, MODEL_TYPE_CHAT_LLM, MODEL_TYPE_CHAT_VLM } from '@/modules/model/api';
 import type { ModelProfileResponse } from '@/modules/model/api';
 import {
   agentToDraft,
@@ -120,9 +120,11 @@ const effortOptions = computed(() => (selectedCatalogItem.value?.efforts ?? [])
 const contextWindowOptions = computed(() => (selectedCatalogItem.value?.availableContextWindows ?? [])
   .map((value) => ({ value, label: String(value) })));
 
-/** 载入启用中的对话模型配置（失败直显原因，下拉留空可重试）。 */
+/** 载入启用中的对话类模型配置（对话LLM + 视觉对话；服务端按多值类型过滤，失败直显原因）。 */
 async function loadModels(): Promise<void> {
-  const list = await modelTask.run(() => listEnabledProfiles(MODEL_TYPE_CHAT));
+  const list = await modelTask.run(() =>
+    listEnabledProfiles([MODEL_TYPE_CHAT_LLM, MODEL_TYPE_CHAT_VLM]),
+  );
   if (modelTask.error.value) {
     MessagePlugin.error(errorMessage(modelTask.error.value));
     profiles.value = [];

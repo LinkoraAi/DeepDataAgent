@@ -14,9 +14,10 @@ import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType;
  *   <li><b>无失败自动回退</b>——本端口只在解析前选型，解析期失败由具体
  *       {@link DocumentParser} 实现抛异常交由调用方置 FAILED，不得自动切换另一种引擎。</li>
  * </ul>
- * <p><b>类型路由</b>：带文档类型的重载按「引擎能力」选型——文档类型落在所选引擎
- * {@link DocumentParser#supportedTypes()} 集合内才返回该引擎，否则返回本地直读兜底解析器
- * （{@code LocalReadFallbackDocumentParser}），MUST NOT 因「引擎不支持该类型」把文档置 FAILED。</p>
+ * <p><b>类型路由（按引擎分治）</b>：带文档类型的重载按「引擎能力」选型——文档类型落在所选引擎
+ * {@link DocumentParser#supportedTypes()} 集合内才返回该引擎；否则 <b>LOCAL</b> 回落本地直读兜底解析器
+ * （图片视觉直通 / 纯文本直读），<b>MINERU</b> 抛出可读的 {@link IllegalArgumentException} 并列出支持类型
+ * （严格模式，无兜底）。上传入口经 {@code ParserCapabilityApi} 以同一口径提前拦截。</p>
  */
 public interface DocumentParserRegistry {
 
@@ -31,13 +32,14 @@ public interface DocumentParserRegistry {
 
     /**
      * 按解析配置 + 文档类型选择文档解析器（类型路由）。
-     * <p>文档类型落在所选引擎支持集合内 → 返回该引擎解析器；否则跳过引擎、返回本地直读兜底解析器；
-     * 类型为 null（未知）时同样走本地直读兜底。</p>
+     * <p>文档类型落在所选引擎支持集合内 → 返回该引擎解析器；否则 LOCAL 返回本地直读兜底解析器，
+     * MINERU 抛出 {@link IllegalArgumentException}（含支持类型清单）。</p>
      *
      * @param parseConfig 知识库解析配置（provider + 引擎参数；provider 为空按 LOCAL 兜底）
-     * @param fileType    文档类型，可为 null（未知类型，走本地直读兜底）
-     * @return 与配置及类型匹配的文档解析器（引擎支持该类型）或本地直读兜底解析器
-     * @throws IllegalArgumentException 解析配置为 null、provider 未知或 MINERU 必填参数缺失
+     * @param fileType    文档类型，可为 null（未知类型；LOCAL 走兜底，MINERU 拒绝）
+     * @return 引擎解析器，或 LOCAL 引擎下的本地直读兜底解析器
+     * @throws IllegalArgumentException 解析配置为 null、provider 未知、MINERU 必填参数缺失，
+     *                                  或 MINERU 遇不受支持的文档类型
      */
     DocumentParser resolve(DocumentParseConfig parseConfig, FileType fileType);
 }

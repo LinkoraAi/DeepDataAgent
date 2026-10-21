@@ -213,6 +213,7 @@ class IngestionWorkerTest {
         ReflectionTestUtils.setField(ingestionWorker, "ingestionExecutor", fanoutExecutor);
         ReflectionTestUtils.setField(ingestionWorker, "extractionJsonMode", false);
         ReflectionTestUtils.setField(ingestionWorker, "extractionMaxGleaning", 1);
+        ReflectionTestUtils.setField(ingestionWorker, "extractionConcurrency", 3);
         ReflectionTestUtils.setField(ingestionWorker, "describeConcurrency", 4);
         // 注入器为纯函数依赖，Worker 测试聚焦管线编排，统一打桩为原样透传（不改变解析产物），
         // 注入逻辑本身由 MultimodalContextInjectorTest 单独覆盖；lenient 兼容未走到 Stage 1a 的用例
@@ -400,6 +401,8 @@ class IngestionWorkerTest {
         ArgumentCaptor<GraphMergeContext> mergeCaptor = ArgumentCaptor.forClass(GraphMergeContext.class);
         verify(graphMergeService).mergeNodesAndEdges(mergeCaptor.capture(), anyList(), anyList());
         assertNotNull(extractCaptor.getValue().llmCacheHits());
+        assertEquals(3, extractCaptor.getValue().concurrency(),
+                "抽取并发度应取配置值而非代码常量");
         assertNotNull(mergeCaptor.getValue().llmCacheHits());
         assertSame(extractCaptor.getValue().llmCacheHits(), mergeCaptor.getValue().llmCacheHits());
     }
@@ -1033,17 +1036,20 @@ class IngestionWorkerTest {
 
     @Test
     void should_markFailedWithExtractPrefix_when_execute_given_extractionThrows() {
-        // given：Stage 4 实体抽取失败（切片已落库，产物保留）
+        // given：Stage 4 实体抽取失败（切片已落库，产物保留），异常已携带分块序号与失败分类
         stubContext(documentContext(null, embeddingConfig(), null));
         stubParseAndChunk(List.of(textChunk("Alice met Bob")));
         when(entityExtractionService.extract(any(), anyList()))
-                .thenThrow(new IllegalStateException("抽取失败"));
+                .thenThrow(new IllegalStateException(
+                        "分块抽取失败：sequence=[10]，失败块数=[1]，原因分类=[TIMEOUT]：模型接口调用失败: timeout"));
 
         // when
         ingestionWorker.execute(DOCUMENT_ID);
 
-        // then
-        assertFailedStage(IngestionStage.EXTRACT);
+        // then：阶段前缀、分块序号与失败分类均进入 error_message
+        String message = assertFailedStage(IngestionStage.EXTRACT);
+        assertTrue(message.contains("sequence=[10]"), message);
+        assertTrue(message.contains("TIMEOUT"), message);
         verify(chunkPersistenceService)
                 .replaceForDocument(eq(DOCUMENT_ID), anyList(), eq(EMBED_PROFILE), isNull());
         verifyNoInteractions(graphMergeService);
@@ -1478,19 +1484,19 @@ class IngestionWorkerTest {
     }
 
     @Test
-    void should_useKbLanguageAcrossStages_when_execute_given_kbLanguageJapanese() {
-        // given：知识库语言配置为 Japanese（多模态增强路径，覆盖媒体描述 / 抽取上下文 / 合并上下文三处），
+    void should_useKbLanguageAcrossStages_when_execute_given_kbLanguageEnglish() {
+        // given：知识库语言配置为 English（多模态增强路径，覆盖媒体描述 / 抽取上下文 / 合并上下文三处），
         // 代码内回落默认仍为 Chinese，验证库级配置优先生效
         ContentBlockVO imageBlock = new ContentBlockVO(ContentBlockVO.TYPE_IMAGE, "raw caption", Map.of());
         stubContext(documentContextWithLanguage(ragEngineConfig(RagEngineType.DOCUMENT_ENGINE),
-                embeddingConfig(), multiModelConfig(), "Japanese"));
+                embeddingConfig(), multiModelConfig(), "English"));
         stubParseAndChunk(imageBlock, List.of(new ChunkVO(1, "original image text", 3, imageBlock)));
         MediaDescriptionVO description =
                 new MediaDescriptionVO("Yamagoto Portrait", "image", "one line", "detailed caption", true);
-        when(mediaDescriptorService.describe(eq(KB_ID), eq(LLM_PROFILE), eq("Japanese"), eq(imageBlock), any(),
+        when(mediaDescriptorService.describe(eq(KB_ID), eq(LLM_PROFILE), eq("English"), eq(imageBlock), any(),
                 any())).thenReturn(description);
         ChunkVO rebuilt = new ChunkVO(1, "template enhanced text", 8, imageBlock);
-        when(mediaChunkTemplateService.buildChunk(eq(1), eq(imageBlock), eq(description), eq("Japanese"), any()))
+        when(mediaChunkTemplateService.buildChunk(eq(1), eq(imageBlock), eq(description), eq("English"), any()))
                 .thenReturn(rebuilt);
         when(entityExtractionService.extract(any(), anyList())).thenReturn(EntityExtractionResult.empty());
         when(ingestionSourceReader.listChunkIdentitiesByDocument(DOCUMENT_ID))
@@ -1501,18 +1507,18 @@ class IngestionWorkerTest {
         // when
         ingestionWorker.execute(DOCUMENT_ID);
 
-        // then：媒体描述与模板重建收到 Japanese
-        verify(mediaDescriptorService).describe(eq(KB_ID), eq(LLM_PROFILE), eq("Japanese"), eq(imageBlock), any(),
+        // then：媒体描述与模板重建收到 English
+        verify(mediaDescriptorService).describe(eq(KB_ID), eq(LLM_PROFILE), eq("English"), eq(imageBlock), any(),
                 any());
-        verify(mediaChunkTemplateService).buildChunk(eq(1), eq(imageBlock), eq(description), eq("Japanese"), any());
-        // then：sidecar 抽取上下文与图合并上下文的语言同为 Japanese
+        verify(mediaChunkTemplateService).buildChunk(eq(1), eq(imageBlock), eq(description), eq("English"), any());
+        // then：sidecar 抽取上下文与图合并上下文的语言同为 English
         ArgumentCaptor<EntityExtractionContext> extractCaptor =
                 ArgumentCaptor.forClass(EntityExtractionContext.class);
         verify(entityExtractionService).extract(extractCaptor.capture(), anyList());
-        assertEquals("Japanese", extractCaptor.getValue().language());
+        assertEquals("English", extractCaptor.getValue().language());
         ArgumentCaptor<GraphMergeContext> mergeCaptor = ArgumentCaptor.forClass(GraphMergeContext.class);
         verify(graphMergeService).mergeNodesAndEdges(mergeCaptor.capture(), anyList(), anyList());
-        assertEquals("Japanese", mergeCaptor.getValue().language());
+        assertEquals("English", mergeCaptor.getValue().language());
     }
 
     /**

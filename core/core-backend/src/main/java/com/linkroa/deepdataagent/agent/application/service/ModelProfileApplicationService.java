@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -114,7 +115,17 @@ public class ModelProfileApplicationService {
                 existing.createdBy(),
                 existing.updatedBy()
         );
-        return transactionTemplate.execute(status -> modelProfileRepository.update(updated));
+        // 类型变更守卫：仅在类型实际变化时进入锁行复核（无变化走原路径，不增加写开销）
+        boolean typeChanged = !Objects.equals(existing.modelType(), command.modelType());
+        return transactionTemplate.execute(status -> {
+            if (typeChanged) {
+                // 事务内锁行 + 复核 Agent 版本引用计数，避免并发 check-then-act 造成槽位悬空
+                ModelProfile locked = requireOwnedForUpdate(command.profileId());
+                long refCount = agentVersionRepository.countByModelProfileId(command.profileId());
+                ModelProfileValidator.validateTypeChange(locked, command.modelType(), refCount);
+            }
+            return modelProfileRepository.update(updated);
+        });
     }
 
     /**
@@ -129,25 +140,26 @@ public class ModelProfileApplicationService {
     }
 
     /**
-     * 按关键字 / 状态分页列出当前用户的模型配置。
+     * 按关键字 / 状态 / 类型分页列出当前用户的模型配置。
      *
-     * @param query 查询条件（关键字 / 状态 / 页码 / 页大小）
+     * @param query 查询条件（关键字 / 状态 / 类型码列表 / 页码 / 页大小）
      * @return 当前用户可见的模型配置列表
      */
     public List<ModelProfile> listProfiles(ListModelProfileQuery query) {
         Long ownerId = AuthContext.requireUserId();
-        return modelProfileRepository.findByCondition(ownerId, query.keyword(), query.status(), query.page(), query.size());
+        return modelProfileRepository.findByCondition(ownerId, query.keyword(), query.status(),
+                query.modelTypes(), query.page(), query.size());
     }
 
     /**
      * 统计当前用户满足条件的模型配置总数（与分页列表同口径，供分页总数展示）。
      *
-     * @param query 查询条件（关键字 / 状态）
+     * @param query 查询条件（关键字 / 状态 / 类型码列表）
      * @return 命中总数
      */
     public long countProfiles(ListModelProfileQuery query) {
         Long ownerId = AuthContext.requireUserId();
-        return modelProfileRepository.countByCondition(ownerId, query.keyword(), query.status());
+        return modelProfileRepository.countByCondition(ownerId, query.keyword(), query.status(), query.modelTypes());
     }
 
     /**

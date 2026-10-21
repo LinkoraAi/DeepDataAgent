@@ -103,17 +103,4 @@ class DefaultChunkBatchWriterTest {
         // then
         verify(chunkApplicationService).markFailed(100L, "解析超时");
     }
-
-    @Test
-    void should_returnFailedCount_when_failNonTerminal_given_delegatedResult() {
-        // given：启动清理批量收敛非终态，影响行数透传
-        when(chunkApplicationService.failNonTerminal("[STARTUP] 服务重启中断，请重新解析")).thenReturn(3);
-
-        // when
-        int failed = writer.failNonTerminal("[STARTUP] 服务重启中断，请重新解析");
-
-        // then
-        assertEquals(3, failed);
-        verify(chunkApplicationService).failNonTerminal("[STARTUP] 服务重启中断，请重新解析");
-    }
 }

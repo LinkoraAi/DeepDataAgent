@@ -76,7 +76,7 @@ class ModelProfileApplicationServiceTest {
     private ModelProfile createEnabledProfile(String profileId, String name) {
         return ModelProfile.restore(
                 profileId, name, null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                "encrypted", "gpt", 8192, 2048, 10, ModelType.CHAT, null,
+                "encrypted", "gpt", 8192, 2048, 10, ModelType.CHAT_LLM, null,
                 ModelProfileStatus.ENABLED, 1L,
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")),
                 OffsetDateTime.now(ZoneId.of("Asia/Shanghai")), null, null);
@@ -84,7 +84,7 @@ class ModelProfileApplicationServiceTest {
 
     private CreateModelProfileCommand buildCreateCommand(String name) {
         return new CreateModelProfileCommand(name, null, ApiFormat.OPENAI, "https://example.com/v1",
-                "gpt-4", "sk-plain", "gpt", 8192, 2048, 10, ModelType.CHAT, null);
+                "gpt-4", "sk-plain", "gpt", 8192, 2048, 10, ModelType.CHAT_LLM, null);
     }
 
     @Test
@@ -124,7 +124,7 @@ class ModelProfileApplicationServiceTest {
 
         UpdateModelProfileCommand command = new UpdateModelProfileCommand(
                 "p1", "chat-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                null, "gpt", 8192, 2048, 10, ModelType.CHAT, null);
+                null, "gpt", 8192, 2048, 10, ModelType.CHAT_LLM, null);
 
         // when
         ModelProfile updated = service.updateProfile(command);
@@ -144,7 +144,7 @@ class ModelProfileApplicationServiceTest {
 
         UpdateModelProfileCommand command = new UpdateModelProfileCommand(
                 "p1", "chat-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                "", "gpt", 8192, 2048, 10, ModelType.CHAT, null);
+                "", "gpt", 8192, 2048, 10, ModelType.CHAT_LLM, null);
 
         // when
         ModelProfile updated = service.updateProfile(command);
@@ -164,7 +164,7 @@ class ModelProfileApplicationServiceTest {
 
         UpdateModelProfileCommand command = new UpdateModelProfileCommand(
                 "p1", "chat-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                "sk-new", "gpt", 8192, 2048, 10, ModelType.CHAT, null);
+                "sk-new", "gpt", 8192, 2048, 10, ModelType.CHAT_LLM, null);
 
         // when
         ModelProfile updated = service.updateProfile(command);
@@ -183,7 +183,7 @@ class ModelProfileApplicationServiceTest {
 
         UpdateModelProfileCommand command = new UpdateModelProfileCommand(
                 "p1", "other-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
-                null, "gpt", 8192, 2048, 10, ModelType.CHAT, null);
+                null, "gpt", 8192, 2048, 10, ModelType.CHAT_LLM, null);
 
         // when / then
         assertThrows(ResourceConflictException.class, () -> service.updateProfile(command));
@@ -216,6 +216,48 @@ class ModelProfileApplicationServiceTest {
         // then
         verify(modelProfileRepository).findByProfileIdForUpdate("p1");
         verify(modelProfileRepository).deleteByProfileId("p1");
+    }
+
+    @Test
+    void should_throwConflict_when_updateProfile_given_typeChangedAndReferenced() {
+        // given
+        ModelProfile existing = createEnabledProfile("p1", "chat-profile");
+        when(modelProfileRepository.findByProfileId("p1")).thenReturn(Optional.of(existing));
+        when(modelProfileRepository.findByDisplayName("chat-profile")).thenReturn(Optional.empty());
+        when(modelProfileRepository.findByProfileIdForUpdate("p1")).thenReturn(Optional.of(existing));
+        when(agentVersionRepository.countByModelProfileId("p1")).thenReturn(2L);
+
+        UpdateModelProfileCommand command = new UpdateModelProfileCommand(
+                "p1", "chat-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
+                null, "gpt", 8192, 2048, 10, ModelType.RERANK, null);
+
+        // when / then
+        ResourceConflictException ex = assertThrows(ResourceConflictException.class,
+                () -> service.updateProfile(command));
+        assertTrue(ex.getMessage().contains("不可变更模型类型"));
+        verify(modelProfileRepository, never()).update(any());
+    }
+
+    @Test
+    void should_updateType_when_updateProfile_given_typeChangedWithoutReference() {
+        // given
+        ModelProfile existing = createEnabledProfile("p1", "chat-profile");
+        when(modelProfileRepository.findByProfileId("p1")).thenReturn(Optional.of(existing));
+        when(modelProfileRepository.findByDisplayName("chat-profile")).thenReturn(Optional.empty());
+        when(modelProfileRepository.findByProfileIdForUpdate("p1")).thenReturn(Optional.of(existing));
+        when(agentVersionRepository.countByModelProfileId("p1")).thenReturn(0L);
+        when(modelProfileRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        UpdateModelProfileCommand command = new UpdateModelProfileCommand(
+                "p1", "chat-profile", null, ApiFormat.OPENAI, "https://example.com/v1", "gpt-4",
+                null, "gpt", 8192, 2048, 10, ModelType.RERANK, null);
+
+        // when
+        ModelProfile updated = service.updateProfile(command);
+
+        // then
+        assertEquals(ModelType.RERANK, updated.modelType());
+        verify(modelProfileRepository).findByProfileIdForUpdate("p1");
     }
 
     @Test

@@ -260,38 +260,4 @@ class JdbcDocumentRepositoryTest {
         assertFalse(byNullTo);
         verifyNoInteractions(mapper);
     }
-
-    @Test
-    void should_delegateFailNonTerminal_when_failNonTerminal_given_fromStatusesAndMessage() {
-        // given
-        when(mapper.failNonTerminal(anyCollection(), eq("FAILED"), eq("[STARTUP] 服务重启中断，请重新解析")))
-                .thenReturn(3);
-
-        // when
-        int failed = repository.failNonTerminal(
-                Set.of(DocumentStatus.PENDING, DocumentStatus.PROCESSING),
-                DocumentStatus.FAILED, "[STARTUP] 服务重启中断，请重新解析");
-
-        // then：枚举按名称透传给 Mapper（Set 迭代序不定，按内容校验），影响行数原样返回
-        assertEquals(3, failed);
-        ArgumentCaptor<Collection<String>> fromCaptor = ArgumentCaptor.forClass(Collection.class);
-        verify(mapper).failNonTerminal(fromCaptor.capture(), eq("FAILED"),
-                eq("[STARTUP] 服务重启中断，请重新解析"));
-        assertEquals(Set.of("PENDING", "PROCESSING"), Set.copyOf(fromCaptor.getValue()));
-    }
-
-    @Test
-    void should_returnZeroWithoutSql_when_failNonTerminal_given_blankArguments() {
-        // when
-        int byEmptyFrom = repository.failNonTerminal(Set.of(), DocumentStatus.FAILED, "启动清理");
-        int byNullTo = repository.failNonTerminal(Set.of(DocumentStatus.PENDING), null, "启动清理");
-        int byBlankMessage = repository.failNonTerminal(
-                Set.of(DocumentStatus.PENDING), DocumentStatus.FAILED, " ");
-
-        // then：非法入参直接返回 0，不触达 Mapper
-        assertEquals(0, byEmptyFrom);
-        assertEquals(0, byNullTo);
-        assertEquals(0, byBlankMessage);
-        verifyNoInteractions(mapper);
-    }
 }

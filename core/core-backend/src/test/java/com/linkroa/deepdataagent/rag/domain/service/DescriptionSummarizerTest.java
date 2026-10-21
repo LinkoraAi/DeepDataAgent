@@ -280,14 +280,14 @@ class DescriptionSummarizerTest {
     }
 
     /**
-     * 场景：语言全名 {@code Japanese} 的图合并上下文触发单次 LLM 摘要。
-     * 预期：最终提示词中 {language} 实测为 {@code Japanese}（非旧口径的 English 标签回落）。
+     * 场景：语言全名 {@code English} 的图合并上下文触发单次 LLM 摘要。
+     * 预期：最终提示词中 {language} 实测为 {@code English}（非旧口径的 English 标签回落）。
      */
     @Test
-    void should_injectJapaneseFullName_when_summarize_given_japaneseContextLanguage() {
+    void should_injectEnglishFullName_when_summarize_given_japaneseContextLanguage() {
         // given
         GraphMergeContext ctx = new GraphMergeContext(KB_ID, DOC_ID, SUMMARY_PROFILE_ID,
-                EMBEDDING_PROFILE_ID, "Japanese", FORCE_LLM_PARAMS, "tester", null, null);
+                EMBEDDING_PROFILE_ID, "English", FORCE_LLM_PARAMS, "tester", null, null);
         stubForSingleLlm();
         when(llmClient.chat(any(LlmChatRequest.class))).thenReturn(new LlmChatResult("MERGED DESC", 5));
 
@@ -296,8 +296,8 @@ class DescriptionSummarizerTest {
 
         // then
         String prompt = capturedSummaryPrompt();
-        assertTrue(prompt.contains("The entire output must be written in Japanese."),
-                "{language} 应注入 Japanese，不回退历史 English 标签");
+        assertTrue(prompt.contains("The entire output must be written in English."),
+                "{language} 应注入 English，不回退历史 English 标签");
     }
 
     // ------------------------------------------------------------------ 测试辅助

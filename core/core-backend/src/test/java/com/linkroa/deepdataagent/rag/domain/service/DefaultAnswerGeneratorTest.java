@@ -19,6 +19,8 @@ import com.linkroa.deepdataagent.rag.domain.port.LlmChatRequest;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatResult;
 import com.linkroa.deepdataagent.rag.domain.port.LlmClient;
 import com.linkroa.deepdataagent.rag.domain.port.LlmImage;
+import com.linkroa.deepdataagent.rag.domain.port.LlmStreamClient;
+import com.linkroa.deepdataagent.rag.domain.port.LlmStreamDelta;
 import com.linkroa.deepdataagent.rag.domain.repository.LlmCacheRepository;
 import com.linkroa.deepdataagent.rag.infrastructure.prompts.catalog.PromptCatalog;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +30,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
+import reactor.core.publisher.Flux;
 import tools.jackson.databind.ObjectMapper;
 
 import java.nio.charset.StandardCharsets;
@@ -114,11 +117,11 @@ class DefaultAnswerGeneratorTest {
 
     /** rag_response 按被测类同口径（response_type/user_prompt/context_data）渲染的期望全文 */
     private static final String RENDERED_RAG_PROMPT = PromptCatalog.render(RAG_TEMPLATE, LANGUAGE,
-            Map.of("response_type", "Multiple Paragraphs", "user_prompt", "n/a", "context_data", CONTEXT_DATA));
+            Map.of("response_type", "Multiple Paragraphs", "user_prompt", "", "context_data", CONTEXT_DATA));
 
     /** naive_rag_response 按被测类同口径（response_type/user_prompt/content_data）渲染的期望全文 */
     private static final String RENDERED_NAIVE_PROMPT = PromptCatalog.render(NAIVE_TEMPLATE, LANGUAGE,
-            Map.of("response_type", "Multiple Paragraphs", "user_prompt", "n/a", "content_data", CONTEXT_DATA));
+            Map.of("response_type", "Multiple Paragraphs", "user_prompt", "", "content_data", CONTEXT_DATA));
 
     /** fail_response（无占位符）渲染的期望全文 */
     private static final String RENDERED_FAIL_TEXT = PromptCatalog.render(FAIL_TEMPLATE, LANGUAGE, Map.of());
@@ -174,9 +177,26 @@ class DefaultAnswerGeneratorTest {
      */
     @BeforeEach
     void setUp() {
-        answerGenerator = new DefaultAnswerGenerator(llmClient, llmCacheRepository,
+        answerGenerator = new DefaultAnswerGenerator(streamingAdapter(), llmCacheRepository,
                 knowledgeBaseApi, answerImageResolver, objectMapper);
         lenient().when(knowledgeBaseApi.findMediaModelProfileIdByKbId(KB_ID)).thenReturn(CHAT_PROFILE_ID);
+    }
+
+    /**
+     * 流式端口适配器：把既有 {@link LlmClient} Mock 的同步回复折算为单增量流。
+     * <p>用 {@link Flux#defer} 延迟到订阅时执行，使 {@code thenThrow} 桩保持「流内异常」语义，
+     * 从而让既有同步语义用例继续覆盖降级路径，无需逐条改写桩。</p>
+     *
+     * @return 流式端口适配器
+     */
+    private LlmStreamClient streamingAdapter() {
+        return request -> Flux.defer(() -> {
+            LlmChatResult result = llmClient.chat(request);
+            if (result == null) {
+                return Flux.empty();
+            }
+            return Flux.just(new LlmStreamDelta(result.text(), result.totalTokens()));
+        });
     }
 
     /**

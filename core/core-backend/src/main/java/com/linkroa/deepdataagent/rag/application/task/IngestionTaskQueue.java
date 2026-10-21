@@ -87,8 +87,8 @@ public class IngestionTaskQueue {
     /** 停机收敛回写的失败原因：可辨识前缀 [SHUTDOWN]，提示用户手动重新解析。 */
     private static final String SHUTDOWN_ERROR_MESSAGE = "[SHUTDOWN] 服务停机中断，请重新解析";
 
-    /** 同时在飞摄入管线上限（{@code app.rag.ingestion.max-inflight}，缺省 5），即常驻消费线程数。 */
-    @Value("${app.rag.ingestion.max-inflight:5}")
+    /** 同时在飞摄入管线上限（{@code app.rag.ingestion.max-inflight}，缺省 3），即常驻消费线程数。 */
+    @Value("${app.rag.ingestion.max-inflight:3}")
     private int maxInflight;
 
     /** 待消费文档ID队列：无界（元素仅 documentId，量级可忽略），超限任务在此等待。 */
@@ -211,8 +211,11 @@ public class IngestionTaskQueue {
      * 等待指定文档的摄入任务终止确认（删除链掐灭等待，承接原调度器同名语义）。
      * <p>三段判定：①仍在队列中 → 直接撤下（remove 成功即消费方未取到）并确认；
      * ②在飞 → 等待其收尾闩归零或直至超时；③两处皆无 → 本无任务（或已收尾），立即确认。
-     * 超时返回 {@code false}——调用方（删除链）WARN 留痕后继续清退，晚退 worker 必经
-     * 阶段边界取消检查自灭，其迟到回写另有 {@code replaceForDocument} 的 PROCESSING 前置收口。</p>
+     * <b>MUST NOT 中断在飞线程</b>：线程中断会破坏该线程上的 JDBC 连接
+     * （{@code SocketException: Closed by interrupt} / Hikari 连接获取被中断），并使
+     * worker 的取消状态读取失败、误走失败回写。取消依赖文档 {@code DELETING} 状态检查
+     * （阶段边界）与图合并写入门闩；等待超时返回 {@code false}，调用方 WARN 留痕后继续清退，
+     * 晚退 worker 不再产生任何数据写入。</p>
      *
      * @param documentId 文档ID，可为空（空视为无任务，直接返回 true）
      * @param timeout    最长等待时长，可为空（空按 0 处理，仅探测不等待）
@@ -252,7 +255,9 @@ public class IngestionTaskQueue {
      * <p>全程 MUST NOT 中断消费线程或任务线程：消费者执行器仅 {@code shutdown()}（绝不用
      * {@code shutdownNow()}），已运行的消费者由停机标志驱动、经带超时出队轮询自然退出；
      * 已在执行的在飞任务不被打断，宽限内正常结束者仍置成功态。
-     * 清空注册表键先于宽限等待，仅为消除滚动发布期间新旧进程并存的误判（清空键不等于放弃任务）。</p>
+     * 注册表键的清空不发生在销毁回调（该时点缓存生命周期已停止、操作必失败），而由
+     * {@link InFlightTaskConverger#onContextClosed()} 在容器关闭事件时点先行完成
+     * （清空键不等于放弃任务，仅为消除滚动发布误判）。</p>
      */
     @PreDestroy
     public void shutdown() {
@@ -263,15 +268,13 @@ public class IngestionTaskQueue {
         if (ObjectUtils.isNotEmpty(executor)) {
             executor.shutdown();
         }
-        // 2. 停机链首个动作：清空本实例全部注册表键（先于宽限等待）
-        inFlightTaskConverger.clearInstanceRegistryQuietly();
-        // 3. 宽限内等待在飞任务自然结束（不中断任何线程）
+        // 2. 宽限内等待在飞任务自然结束（不中断任何线程；键清空已由关闭事件完成）
         awaitInFlightCompletion(SHUTDOWN_GRACE_MILLIS);
-        // 4. 宽限期满后显式收敛残留（排队中 ∪ 在飞中，不依赖已被清空的键凭据）
+        // 3. 宽限期满后显式收敛残留（排队中 ∪ 在飞中，不依赖已被清空的键凭据）
         convergeResidueOnShutdown();
-        // 5. 有界确认消费者循环退出（不超过剩余宽限，超时仅 WARN，不中断、不阻塞收敛）
+        // 4. 有界确认消费者循环退出（不超过剩余宽限，超时仅 WARN，不中断、不阻塞收敛）
         awaitConsumerTermination(executor, remainingGraceMillis(startNanos));
-        // 6. 收尾留痕
+        // 5. 收尾留痕
         log.info("[摄入任务队列] 已停机, consumers={}, queuedSize={}", effectiveConsumerCount(), taskQueue.size());
     }
 
@@ -404,7 +407,8 @@ public class IngestionTaskQueue {
                 marked = false;
             }
             if (!marked) {
-                log.info("出队领取未命中（文档已被删除链/本实例启动恢复改写或不存在），静默丢弃, documentId={}", documentId);
+                log.info("出队领取未命中（文档已被删除链/本实例启动恢复改写或不存在），静默丢弃, documentId={}",
+                        documentId);
                 return;
             }
             // execute 永不向外抛出（内部已做失败回写与取消判定），异常防护由 finally 清理路径兜底

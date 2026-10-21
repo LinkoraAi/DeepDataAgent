@@ -95,10 +95,6 @@ public class ChunkApplicationService {
     /** 成功终态写入（markProcessed）的唯一合法源状态：PROCESSING（已出队领取、管线在飞）→ PROCESSED（管线完整结束） */
     private static final Set<DocumentStatus> MARK_PROCESSED_FROM_STATUSES = Set.of(DocumentStatus.PROCESSING);
 
-    /** 非终态批量收敛覆盖的状态集合：PENDING（已入队）与 PROCESSING（在飞）在进程重启后均无对应内存任务，由本实例启动恢复统一收敛为 FAILED */
-    private static final Set<DocumentStatus> NON_TERMINAL_STATUSES =
-            Set.of(DocumentStatus.PENDING, DocumentStatus.PROCESSING);
-
     /** 已进入删除链的状态集合：DELETING / DELETE_FAILED 两态拒绝切片回写（删除链两态闸门，
      *  DELETED 常量已移除，行缺失由文档行锁读取按 404 前置兜底） */
     private static final Set<DocumentStatus> DELETION_CHAIN_STATUSES =
@@ -688,25 +684,6 @@ public class ChunkApplicationService {
         // errorMessage 传 null：transitStatus 无条件写 error_message，即成功终态同批清除残留失败原因
         return documentRepository.transitStatus(documentId, MARK_PROCESSED_FROM_STATUSES,
                 DocumentStatus.PROCESSED, null);
-    }
-
-    /**
-     * 非终态批量收敛：把全部非终态（PENDING / PROCESSING）未删除文档一次性置为 FAILED 并回写失败原因
-     * <p><b>保留能力，当前无生产调用点</b>：启动恢复链路已改按本实例在飞注册表键逐条读取残留，
-     * 经数据库权威状态一致性校验后条件置态，本方法不再被启动链路使用，也不再自称「启动清理专用」。
-     * 原崩溃残留收敛语义保留：进程崩溃重启后内存队列丢失，DB 中冻结的两态文档均无对应任务，
-     * 统一收敛为 FAILED；不重建队列、不自动重跑，由用户手动重新解析。
-     * 单条批量 UPDATE，天然幂等（无命中影响 0 行）。</p>
-     *
-     * @param errorMessage 失败原因描述，非空白
-     * @return 实际置为 FAILED 的文档数（0 表示无残留）
-     * @throws DeepDataAgentException 失败原因为空白（400）
-     */
-    public int failNonTerminal(String errorMessage) {
-        if (StringUtils.isBlank(errorMessage)) {
-            throw new DeepDataAgentException("失败原因不能为空");
-        }
-        return documentRepository.failNonTerminal(NON_TERMINAL_STATUSES, DocumentStatus.FAILED, errorMessage);
     }
 
     /**

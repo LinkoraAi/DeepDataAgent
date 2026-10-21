@@ -77,6 +77,17 @@ public interface DocumentRepository {
     List<Long> findIdsByKbId(Long kbId, int limit);
 
     /**
+     * 整库删除受理：把库内非终态文档批量置为 {@code DELETING}（单条条件 UPDATE）。
+     * <p>与知识库 {@code ACTIVE → DELETING} 同事务执行：排队中的任务在出队领取时
+     * （PENDING → PROCESSING）即失败放弃，解析中的任务在阶段边界状态检查处自灭，
+     * 从源头保证「删库后不再有摄入写入」。</p>
+     *
+     * @param kbId 知识库ID（可空，空返回 0）
+     * @return 受影响行数
+     */
+    int markNonTerminalDeletingByKbId(Long kbId);
+
+    /**
      * 按 ID 集合批量物理删除文档（标准 deleteByIds，无 @TableLogic，行消失即「已删除」）。
      *
      * @param ids 文档 ID 集合（空集合直接返回 0）
@@ -120,20 +131,4 @@ public interface DocumentRepository {
      * @return true 表示 CAS 命中并完成留痕；false 表示未命中（幂等空转）
      */
     boolean markFailed(Long documentId, String reason);
-
-    /**
-     * 非终态文档批量状态流转（保留能力；启动恢复链路已改为按本实例在飞注册表键逐条一致性校验收敛，
-     * 本方法当前无生产调用点）：
-     * 以单条条件 UPDATE 把「状态命中 fromStatuses 之一」的全部存活文档行置为 toStatus
-     * 并回写失败原因。
-     * <p>语义为「一次性网式收敛」：无游标、无批量上限（崩溃残留量级远小于单语句承载能力），
-     * 天然幂等（二次执行影响 0 行）。物理删体系下行消失即已删除、天然不参与；
-     * 进入删除链（DELETING/DELETE_FAILED）的文档因状态不在 fromStatuses 集合内而不参与收敛。</p>
-     *
-     * @param fromStatuses 允许的非终态状态集合（空集合直接返回 0）
-     * @param toStatus     目标状态（清理场景为 FAILED）
-     * @param errorMessage 失败原因（写入 error_message），空白直接返回 0
-     * @return 实际流转（命中并更新）的文档行数
-     */
-    int failNonTerminal(Set<DocumentStatus> fromStatuses, DocumentStatus toStatus, String errorMessage);
 }

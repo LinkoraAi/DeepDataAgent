@@ -1,7 +1,6 @@
 package com.linkroa.deepdataagent.knowledgebase.application.service;
 
 import com.linkroa.deepdataagent.agent.api.ModelProfileReferenceApi;
-import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskRegistry;
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskType;
 import com.linkroa.deepdataagent.knowledgebase.api.KbCleanupTaskSubmitter;
 import com.linkroa.deepdataagent.knowledgebase.application.command.CreateKnowledgeBaseCommand;
@@ -16,7 +15,6 @@ import com.linkroa.deepdataagent.knowledgebase.application.validation.KnowledgeB
 import com.linkroa.deepdataagent.knowledgebase.application.validation.RagEngineConfigValidator;
 import com.linkroa.deepdataagent.knowledgebase.application.validation.RetrievalConfigValidator;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.KnowledgeBase;
-import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.DocumentStatus;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.KnowledgeBaseSortField;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.LifecycleStatus;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.RetrievalStrategyType;
@@ -67,9 +65,6 @@ public class KnowledgeBaseApplicationService {
     /** 清退失败留痕（error_message）截断上限，防止超长异常文案溢出留痕列（与文档删除链同形口径） */
     private static final int KB_ERROR_MESSAGE_MAX_LENGTH = 500;
 
-    /** 整库清退在飞登记失败的失败留痕文案（登记失败 MUST NOT 静默放行，按失败兜底置 DELETE_FAILED） */
-    private static final String KB_CLEANUP_REGISTER_FAILED_TRACE = "[KB-CLEANUP] step=in_flight_register: 在飞登记失败";
-
     /** 检索策略 JSON 的字段名：策略类型 */
     private static final String FIELD_STRATEGY_TYPE = "strategyType";
 
@@ -87,6 +82,9 @@ public class KnowledgeBaseApplicationService {
 
     /** 检索策略 JSON 的字段名：重排配置 */
     private static final String FIELD_RERANK_CONFIG = "rerankConfig";
+
+    /** 重排配置的字段名：是否启用 */
+    private static final String FIELD_RERANK_ENABLED = "enabled";
 
     /** 检索策略 JSON 的字段名：融合配置 */
     private static final String FIELD_FUSION_CONFIG = "fusionConfig";
@@ -112,8 +110,8 @@ public class KnowledgeBaseApplicationService {
     /** 整库清退任务提交端口（RAG 侧删除清退虚拟线程执行器实现，返回值即该库清退在飞判定） */
     private final KbCleanupTaskSubmitter kbCleanupTaskSubmitter;
 
-    /** 在飞任务注册表（rag BC 实现）：任务投递前登记在飞凭据、状态收敛后移除成员，供本实例启动恢复收敛悬挂任务 */
-    private final InFlightTaskRegistry inFlightTaskRegistry;
+    /** 在飞任务事务同步登记器（受理事务内登记，未提交时补偿移除） */
+    private final InFlightTaskTransactionalRegistrar inFlightTaskTransactionalRegistrar;
 
     /** 模型配置归属查询契约（跨 BC，agent BC 提供）：写入期校验所引用的模型配置归属当前用户 */
     private final ModelProfileReferenceApi modelProfileReferenceApi;
@@ -126,7 +124,7 @@ public class KnowledgeBaseApplicationService {
      * @param chunkRepository         切片仓储（切片统计）
      * @param transactionTemplate     编程式事务模板（写操作的精确事务边界）
      * @param kbCleanupTaskSubmitter  整库清退任务提交端口（跨 BC 契约，实现位于 rag BC）
-     * @param inFlightTaskRegistry    在飞任务注册表（跨 BC 契约，实现位于 rag BC）
+     * @param inFlightTaskTransactionalRegistrar 在飞任务事务同步登记器（受理事务内登记）
      * @param modelProfileReferenceApi 模型配置归属查询契约（跨 BC 契约，实现位于 agent BC）
      */
     public KnowledgeBaseApplicationService(KnowledgeBaseRepository knowledgeBaseRepository,
@@ -134,14 +132,14 @@ public class KnowledgeBaseApplicationService {
                                            ChunkRepository chunkRepository,
                                            TransactionTemplate transactionTemplate,
                                            KbCleanupTaskSubmitter kbCleanupTaskSubmitter,
-                                           InFlightTaskRegistry inFlightTaskRegistry,
+                                           InFlightTaskTransactionalRegistrar inFlightTaskTransactionalRegistrar,
                                            ModelProfileReferenceApi modelProfileReferenceApi) {
         this.knowledgeBaseRepository = knowledgeBaseRepository;
         this.documentRepository = documentRepository;
         this.chunkRepository = chunkRepository;
         this.transactionTemplate = transactionTemplate;
         this.kbCleanupTaskSubmitter = kbCleanupTaskSubmitter;
-        this.inFlightTaskRegistry = inFlightTaskRegistry;
+        this.inFlightTaskTransactionalRegistrar = inFlightTaskTransactionalRegistrar;
         this.modelProfileReferenceApi = modelProfileReferenceApi;
     }
 
@@ -230,8 +228,8 @@ public class KnowledgeBaseApplicationService {
      * <p>受理事务内以行锁读取当前生命周期后按<b>三源态矩阵</b>受理（DELETED 不持久、行缺失即已删除）：</p>
      * <ul>
      *   <li>行不存在（含已收口）→ 404；</li>
-     *   <li>{@code ACTIVE}（首删）：存在解析中文档 → 409 拒绝（避免与异步摄入竞态；PENDING 不拦）；
-     *       否则单语句 CAS {@code ACTIVE → DELETING}，未命中（并发窗口状态被改走）→ 409；</li>
+     *   <li>{@code ACTIVE}（首删）：单语句 CAS {@code ACTIVE → DELETING}，同事务把库内非终态文档
+     *       批量置 {@code DELETING}（不再以「存在解析中文档」拒绝删除）；CAS 未命中 → 409；</li>
      *   <li>{@code DELETE_FAILED}（重删）：单语句 CAS {@code DELETE_FAILED → DELETING} 并同语句清除
      *       {@code error_message} 留痕，未命中 → 409；不做 PROCESSING 拦截（库已失活，无摄入竞态）；</li>
      *   <li>{@code DELETING}（在飞重复删除 / 崩溃遗留）：状态已是目标态、零 CAS，出块后由提交端口裁决。</li>
@@ -248,11 +246,16 @@ public class KnowledgeBaseApplicationService {
      * @param command 删除命令
      * @return 受理后的知识库快照（生命周期恒为 DELETING、失败留痕已清，供控制器回显「删除中」）
      * @throws ResourceNotFoundException 知识库不存在或已收口（行缺失，404）
-     * @throws ResourceConflictException 存在解析中的文档，或并发下 CAS 状态迁移未命中（409）
+     * @throws ResourceConflictException 并发下 CAS 状态迁移未命中（409）
      */
     public KnowledgeBase delete(DeleteKnowledgeBaseCommand command) {
         Long kbId = command.id();
-        KnowledgeBase accepted = transactionTemplate.execute(status -> acceptDelete(kbId));
+        KnowledgeBase accepted = transactionTemplate.execute(status -> {
+            KnowledgeBase current = acceptDelete(kbId);
+            // 与受理同事务登记：登记失败即回滚，知识库保持受理前生命周期
+            inFlightTaskTransactionalRegistrar.register(InFlightTaskType.KB_CLEANUP, kbId);
+            return current;
+        });
         submitCleanupTaskAfterCommit(kbId);
         return accepted;
     }
@@ -517,24 +520,24 @@ public class KnowledgeBaseApplicationService {
     }
 
     /**
-     * 首删受理（ACTIVE → DELETING）：先拦解析中文档，再单语句 CAS。
+     * 首删受理（ACTIVE → DELETING）：CAS 成功后把库内非终态文档一并置 DELETING。
+     * <p>不再以「存在解析中文档」拒绝删除：删除语义要求立即停止库内全部摄入任务。
+     * 同事务内先 CAS 知识库状态、再批量置文档 DELETING——文档状态一旦为 DELETING，
+     * 排队任务出队领取（PENDING → PROCESSING）即未命中而放弃，解析中任务在阶段边界
+     * 状态检查处自灭；清退链随后再对有界等待在飞任务收口（不中断线程）。</p>
      */
     private KnowledgeBase acceptFirstDelete(KnowledgeBase current) {
-        long processingCount = documentRepository.countByKbId(current.id(), null, DocumentStatus.PROCESSING);
-        if (processingCount > 0) {
-            throw new ResourceConflictException(
-                    "知识库存在 " + processingCount + " 个解析中的文档，请先等待解析完成后再删除");
-        }
         boolean hit = knowledgeBaseRepository.transitLifecycle(current.id(), LifecycleStatus.ACTIVE,
                 LifecycleStatus.DELETING);
         if (!hit) {
             throw new ResourceConflictException("知识库状态已变更，请重新发起删除");
         }
+        documentRepository.markNonTerminalDeletingByKbId(current.id());
         return current.markDeleting();
     }
 
     /**
-     * 重删受理（DELETE_FAILED → DELETING 并清除失败留痕）：单语句 CAS，未命中即并发窗口状态被改走。
+     * 重删受理（DELETE_FAILED → DELETING 并清除失败留痕）：同事务把库内非终态文档置 DELETING。
      */
     private KnowledgeBase acceptRedelete(KnowledgeBase current) {
         boolean hit = knowledgeBaseRepository.transitLifecycleClearingFailure(current.id(),
@@ -542,15 +545,14 @@ public class KnowledgeBaseApplicationService {
         if (!hit) {
             throw new ResourceConflictException("知识库状态已变更，请重新发起删除");
         }
+        documentRepository.markNonTerminalDeletingByKbId(current.id());
         return current.clearFailureOnRedelete();
     }
 
     /**
      * 删除受理事务提交后投递整库清退任务（尽力投递）。
-     * <p>时序：登记先于投递——先在飞注册表登记 {@link InFlightTaskType#KB_CLEANUP} 凭据，再投递清退任务；
-     * 登记与投递均为纯内存操作，MUST 处于事务之外——本方法仅在 {@code transactionTemplate}
-     * 返回（事务已提交）后调用。登记失败（注册表不可用）按失败兜底置 DELETE_FAILED 留痕，
-     * MUST NOT 静默放行；登记成功后投递的返回值即受理矩阵所需的在飞判定：{@code false} 表示该库清退已在飞
+     * <p>在飞登记已随受理事务完成（见 {@link #delete}），本方法只在事务提交后负责投递，
+     * MUST NOT 再次登记。投递的返回值即受理矩阵所需的在飞判定：{@code false} 表示该库清退已在飞
      * （重复删除幂等跳过，不产生第二个任务），{@code true} 表示本次新建任务（首删 / 重删 / 崩溃遗留重触发）。
      * 投递失败（含停机拒收 {@code IllegalStateException}）仅 ERROR 留痕并<b>保留在飞成员</b>，
      * 绝不回滚受理、不影响用户删除结果：知识库停留 DELETING，由用户重删或本实例启动恢复
@@ -559,13 +561,6 @@ public class KnowledgeBaseApplicationService {
      * @param kbId 已受理删除的知识库主键
      */
     private void submitCleanupTaskAfterCommit(Long kbId) {
-        try {
-            inFlightTaskRegistry.register(InFlightTaskType.KB_CLEANUP, kbId);
-        } catch (RuntimeException e) {
-            log.error("知识库清退任务在飞登记失败，按失败兜底置 DELETE_FAILED, kbId={}", kbId, e);
-            markFailed(kbId, KB_CLEANUP_REGISTER_FAILED_TRACE);
-            return;
-        }
         try {
             boolean submitted = kbCleanupTaskSubmitter.submit(kbId);
             if (!submitted) {
@@ -617,36 +612,92 @@ public class KnowledgeBaseApplicationService {
     }
 
     /**
-     * 校验知识库配置引用的模型配置归属（写入期单闸门，design D6）。
+     * 校验知识库配置引用的模型配置「归属 + 槽位类型」（写入期单闸门）。
      * <p>覆盖三类引用载体：嵌入模型配置（{@code embedding_config.modelProfileId}）、
-     * 知识库级大模型配置（{@code multi_model_config.modelProfileId}）、
-     * 检索策略中的重排模型（{@code retrieval_strategy.rerankConfig.modelProfileId}）。
-     * 任一引用不归属当前用户即 404 折叠（不泄露存在性），且 MUST NOT 落库——运行期
-     * （摄入 / 检索线程）无身份上下文，本闸门是唯一防线，MUST NOT 依赖运行期补校验兜底。</p>
+     * 知识库级多模态模型配置（{@code multi_model_config.modelProfileId}）、
+     * 检索策略中的重排模型（{@code retrieval_strategy.rerankConfig.modelProfileId}）。</p>
+     * <p>校验次序 MUST 为<b>先归属、后类型</b>：非归属引用一律 404 折叠（不泄露存在性），
+     * 类型不符仅在归属确认后以 400 返回，避免借类型错误探测他人资源。</p>
+     * <p>槽位口径：嵌入槽位仅接受 EMBEDDING(3)；多模态槽位严格仅接受 CHAT_VLM(2)
+     * （纯对话/嵌入/重排模型必然在摄入期解析失败）；重排槽位仅在接受 RERANK(4) 且
+     * 重排实际启用时校验类型。任一引用不通过即 MUST NOT 落库——运行期（摄入 / 检索线程）
+     * 无身份上下文，本闸门是唯一防线，MUST NOT 依赖运行期补校验兜底。</p>
      *
      * @param embeddingConfig   嵌入模型配置 JSON，可为空（空即不校验）
-     * @param multiModelConfig  知识库级大模型配置 JSON，可为空（空即不校验）
+     * @param multiModelConfig  多模态模型配置 JSON，可为空（空即不校验）
      * @param retrievalStrategy 检索策略 JSON，可为空（空即不校验）
      * @param ownerId           当前认证用户 ID
      * @throws ResourceNotFoundException 引用的模型配置不属于当前用户（404）
+     * @throws DeepDataAgentException    引用类型与槽位不符（400）
      */
     private void validateModelReferences(String embeddingConfig, String multiModelConfig,
                                          String retrievalStrategy, Long ownerId) {
-        requireModelOwned(extractModelProfileId(embeddingConfig), ownerId);
-        requireModelOwned(extractModelProfileId(multiModelConfig), ownerId);
-        requireModelOwned(extractRerankModelProfileId(retrievalStrategy), ownerId);
+        requireModelOwnedForSlot(extractModelProfileId(embeddingConfig), ownerId,
+                ModelProfileReferenceApi.MODEL_TYPE_EMBEDDING);
+        requireModelOwnedForSlot(extractModelProfileId(multiModelConfig), ownerId,
+                ModelProfileReferenceApi.MODEL_TYPE_CHAT_VLM);
+        // 重排类型仅在实际启用时校验：未启用但残留 profileId 时沿用既有归属校验口径
+        requireModelOwnedForSlot(extractRerankModelProfileId(retrievalStrategy), ownerId,
+                isRerankEnabled(retrievalStrategy) ? ModelProfileReferenceApi.MODEL_TYPE_RERANK : null);
     }
 
     /**
-     * 单个模型引用归属判定：空白引用（未配置）放行；非空白且不归属当前用户即 404 折叠。
+     * 单个模型引用的归属 + 槽位类型判定。
+     * <p>空白引用（未配置）放行；非空白且不归属当前用户即 404 折叠；归属确认后，
+     * 若提供期望类型且实际类型不符则 400。</p>
+     *
+     * @param profileId    模型配置业务标识，可为空
+     * @param ownerId      当前认证用户 ID
+     * @param expectedType 槽位期望类型码；{@code null} 表示本槽位不做类型校验
+     * @throws ResourceNotFoundException 配置不存在或不属于当前用户（404）
+     * @throws DeepDataAgentException    类型与槽位不符（400）
      */
-    private void requireModelOwned(String profileId, Long ownerId) {
+    private void requireModelOwnedForSlot(String profileId, Long ownerId, Integer expectedType) {
         if (StringUtils.isBlank(profileId)) {
             return;
         }
-        if (!modelProfileReferenceApi.existsOwned(profileId, ownerId)) {
+        Integer actualType = modelProfileReferenceApi.findOwnedModelTypeCode(profileId, ownerId);
+        if (ObjectUtils.isEmpty(actualType)) {
             throw new ResourceNotFoundException("模型配置不存在");
         }
+        if (ObjectUtils.isNotEmpty(expectedType) && !expectedType.equals(actualType)) {
+            throw new DeepDataAgentException("模型配置(" + profileId + ")类型为" + describeModelType(actualType)
+                    + "，该槽位仅接受" + describeModelType(expectedType) + "，请改选对应类型的模型");
+        }
+    }
+
+    /**
+     * 模型类型码转可读文案（用于槽位校验错误信息）。
+     *
+     * @param typeCode 类型业务码
+     * @return 中文类型名
+     */
+    private String describeModelType(Integer typeCode) {
+        if (typeCode == null) {
+            return "未知类型";
+        }
+        return switch (typeCode) {
+            case ModelProfileReferenceApi.MODEL_TYPE_CHAT_LLM -> "对话LLM";
+            case ModelProfileReferenceApi.MODEL_TYPE_CHAT_VLM -> "视觉对话";
+            case ModelProfileReferenceApi.MODEL_TYPE_EMBEDDING -> "嵌入";
+            case ModelProfileReferenceApi.MODEL_TYPE_RERANK -> "重排";
+            default -> "未知类型(" + typeCode + ")";
+        };
+    }
+
+    /**
+     * 判定检索策略中的重排是否启用：{@code rerankConfig.enabled=true} 才视为启用；
+     * JSON 非法或缺键按未启用处理（结构合法性由 {@code RetrievalConfigValidator} 把关）。
+     *
+     * @param retrievalStrategyJson 检索策略 JSON，可为空
+     * @return true 表示重排已启用
+     */
+    private boolean isRerankEnabled(String retrievalStrategyJson) {
+        return parseJson(retrievalStrategyJson)
+                .map(node -> node.path(FIELD_RERANK_CONFIG))
+                .map(node -> node.path(FIELD_RERANK_ENABLED))
+                .map(JsonNode::asBoolean)
+                .orElse(false);
     }
 
     /**

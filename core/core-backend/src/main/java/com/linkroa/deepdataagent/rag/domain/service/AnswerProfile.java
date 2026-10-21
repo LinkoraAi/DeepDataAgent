@@ -43,8 +43,8 @@ public record AnswerProfile(
     /** 答案形态默认值（{@code {response_type}} 本期无外部来源，恒为该值） */
     public static final String DEFAULT_RESPONSE_TYPE = "Multiple Paragraphs";
 
-    /** 回答模板 {@code {user_prompt}}（附加指令）缺省占位（无来源时填 n/a） */
-    public static final String DEFAULT_USER_PROMPT_ABSENT = "n/a";
+    /** 回答模板 {@code {user_prompt}}（附加指令）缺省值：空串（对齐 LightRAG {@code user_prompt or ""}） */
+    public static final String DEFAULT_USER_PROMPT_ABSENT = "";
 
     /** 占位符变量名：答案形态（{@code {response_type}}） */
     public static final String VAR_RESPONSE_TYPE = "response_type";

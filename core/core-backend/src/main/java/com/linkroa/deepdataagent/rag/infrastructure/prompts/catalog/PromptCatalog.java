@@ -16,16 +16,17 @@ import java.util.regex.Pattern;
 
 /**
  * Prompt 渲染统一静态门面（取代 {@code PromptLoader} + {@code PromptRenderer} 端口，
- * <p>模板正文由编译期静态目录 {@link ZhPromptCatalog}/{@link EnPromptCatalog} 承载
- * （41 模板 × 2 语言套），模板完整性由编译期保证，不存在启动扫描、围栏解析、
- * 计数校验或运行期降级概念；消费方直接静态调用本门面，不再经依赖注入。</p>
- * <p>渲染入参语言为知识库语言全名：{@code Chinese}（大小写不敏感、trim）取中文模板套，
- * 其余一切值（含历史裸语言码 {@code zh}/{@code en}）宽容取英文模板套（见
- * {@link #normalizeLanguage}）；产出语言由提示词内 {@code {language}} 变量另行控制。</p>
+ * <p>模板正文由编译期静态目录 {@link EnPromptCatalog} 单一承载（41 个模板），
+ * 模板完整性由编译期保证，不存在启动扫描、围栏解析、计数校验或运行期降级概念；
+ * 消费方直接静态调用本门面，不再经依赖注入。</p>
+ * <p>指令正文统一为英文：渲染入参语言只做非空白校验，不再选择模板目录；
+ * 产出语言由提示词内 {@code {language}} 变量控制。中文实体类型引导清单
+ * （{@link #buildEntityTypesGuidance}）独立保留，用于向英文抽取模板注入中文类型说明。</p>
  * <p>{@link #render(String, String, Map)} 支持占位符替换：系统常量
  * {@code {tuple_delimiter}}/{@code {completion_delimiter}} 优先注入且禁止用户覆盖；
- * 其余占位符取值自调用方变量，缺失或为 {@code null} 立即抛异常（fail-fast），
- * 替换完成后若仍存在残留占位符同样抛异常，避免静默替换损坏抽取格式。</p>
+ * 其余占位符取值自调用方变量，缺失或为 {@code null} 立即抛异常（fail-fast）。
+ * 替换值为字面量，不参与二次模板解析——值中形如 {@code ${PORT}}、{@code {name}}
+ * 的花括号内容会原样保留（文档原文/用户输入/模型产出均属此类）。</p>
  *
  * @author DeepDataAgent
  */
@@ -108,15 +109,13 @@ public final class PromptCatalog {
 
     /**
      * 渲染指定语言的模板：先注入系统常量（优先于用户变量且忽略同名用户 key），
-     * 再以用户变量替换其余占位符，任意缺失/空值/残留占位符均立即抛异常（fail-fast）。
+     * 再以用户变量替换其余占位符，任意缺失/空值均立即抛异常（fail-fast）。
      *
      * @param templateName 模板名（{@link PromptTemplates} 集中定义的模板名常量）
-     * @param language     知识库语言全名：{@code Chinese}（大小写不敏感）取中文模板套，
-     *                     其余（含历史裸语言码）一律取英文模板套
+     * @param language     语言标识：仅做非空白校验，不参与模板选择；输出语言由 {@code {language}} 变量控制
      * @param vars         占位符变量集合，不允许为 {@code null}
      * @return 渲染完成的模板正文
-     * @throws IllegalArgumentException 模板名/语言/变量非法、模板不存在、某语言版本缺失、
-     *                                  占位符变量缺失或为 null、替换后仍有残留占位符
+     * @throws IllegalArgumentException 模板名/语言/变量非法、模板不存在、占位符变量缺失或为 null
      */
     public static String render(String templateName, String language, Map<String, ?> vars) {
         if (StringUtils.isBlank(templateName)) {
@@ -128,9 +127,7 @@ public final class PromptCatalog {
         if (Objects.isNull(vars)) {
             throw new IllegalArgumentException("渲染变量不能为空");
         }
-        String lang = normalizeLanguage(language);
-        Map<String, String> templates = catalogFor(lang);
-        String body = templates.get(templateName);
+        String body = EnPromptCatalog.TEMPLATES.get(templateName);
         if (Objects.isNull(body)) {
             throw new IllegalArgumentException("未知的 Prompt 模板: " + templateName);
         }
@@ -178,18 +175,33 @@ public final class PromptCatalog {
     }
 
     /**
-     * 按归一语言取对应静态模板目录。
+     * 渲染调用方自持的模板正文（用于双语内容模板：正文由调用方按语言选择，本门面只做变量替换）。
+     * <p>与 {@link #render(String, String, Map)} 共用同一占位符替换与 fail-fast 规则；
+     * {@code language} 不参与模板选择。</p>
      *
-     * @param lang 归一后的模板套语言码（{@code en}/{@code zh}）
-     * @return 模板名 -> 正文的不可变注册表
+     * @param body 模板正文（非空白）
+     * @param vars 占位符变量集合，不允许为 {@code null}
+     * @return 渲染完成的正文
+     * @throws IllegalArgumentException 正文空白、变量为空、占位符缺失
      */
-    private static Map<String, String> catalogFor(String lang) {
-        return LANGUAGE_ZH.equals(lang) ? ZhPromptCatalog.TEMPLATES : EnPromptCatalog.TEMPLATES;
+    public static String renderBody(String body, Map<String, ?> vars) {
+        if (StringUtils.isBlank(body)) {
+            throw new IllegalArgumentException("模板正文不能为空");
+        }
+        if (Objects.isNull(vars)) {
+            throw new IllegalArgumentException("渲染变量不能为空");
+        }
+        return renderTemplate(body, vars);
     }
 
     /**
      * 执行占位符替换：按正则依次替换，系统常量优先、忽略同名用户 key，
-     * 缺失/null 立即抛异常；替换结束后若存在残留占位符同样抛异常。
+     * 缺失/null 立即抛异常。
+     *
+     * <p><b>单遍语义</b>：matcher 只扫描模板正文的字符位置，替换值通过
+     * {@link Matcher#appendReplacement(StringBuilder, String)} 写入输出后不会参与二次扫描；
+     * 因此替换值中的 {@code {...}} 一律按字面量保留。文档原文、用户输入、模型产出
+     * 常含 {@code ${PORT}}、{@code {name}} 等形态，不得被误判为未替换的模板占位符。</p>
      *
      * @param body 模板正文
      * @param vars 用户变量集合
@@ -203,12 +215,7 @@ public final class PromptCatalog {
                     Matcher.quoteReplacement(resolvePlaceholder(matcher.group(1), vars)));
         }
         matcher.appendTail(rendered);
-        String result = rendered.toString();
-        Matcher leftover = PLACEHOLDER_PATTERN.matcher(result);
-        if (leftover.find()) {
-            throw new IllegalArgumentException("模板存在未替换的占位符: {" + leftover.group(1) + "}");
-        }
-        return result;
+        return rendered.toString();
     }
 
     /**
@@ -231,12 +238,12 @@ public final class PromptCatalog {
     }
 
     /**
-     * 语言归一（模板套选择）：输入契约知识库语言全名——仅 {@code Chinese}（大小写不敏感、trim）
-     * 映射中文模板套，其余一律映射英文模板套（含历史裸语言码 {@code zh}/{@code en}，宽容不抛错；
-     * 非中文指令正文英文权威，产出语言由提示词内 {@code {language}} 变量另行控制）。
+     * 语言归一（实体类型引导选择）：输入知识库语言全名——仅 {@code Chinese}（大小写不敏感、trim）
+     * 映射中文引导清单，其余一律映射英文引导清单（含历史裸语言码 {@code zh}/{@code en}，宽容不抛错）。
+     * <p>仅服务 {@link #buildEntityTypesGuidance}；模板目录已收敛为单套英文，不再由本方法选择。</p>
      *
      * @param language 语言标识（知识库语言全名，兼容历史裸语言码）
-     * @return 模板套语言码（{@code en}/{@code zh}）
+     * @return 引导清单语言码（{@code en}/{@code zh}）
      */
     static String normalizeLanguage(String language) {
         if (StringUtils.trim(language).equalsIgnoreCase(LANGUAGE_FULL_NAME_CHINESE)) {

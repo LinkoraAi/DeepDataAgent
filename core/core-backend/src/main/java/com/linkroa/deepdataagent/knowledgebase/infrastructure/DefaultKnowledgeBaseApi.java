@@ -190,7 +190,7 @@ public class DefaultKnowledgeBaseApi implements KnowledgeBaseApi {
     /**
      * language 列值 → 知识库语言全名（读侧归一，与 {@code DefaultIngestionSourceReader}
      * 归一口径一致）。
-     * <p>命中 11 全名值域（trim、大小写不敏感）归一为枚举规范全名（存量值如 {@code ENGLISH}
+     * <p>命中 Chinese/English 全名值域（trim、大小写不敏感）归一为枚举规范全名（存量值如 {@code ENGLISH}
      * 归入 English）；未命中按原文 trim 透传（历史裸语言码宽容口径，维持现状不变）；
      * 列值空白按未配置处理返回 {@code null}（缺省视同 Chinese 由调用方回落）。</p>
      *

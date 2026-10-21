@@ -5,6 +5,7 @@ import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskRegistry;
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskType;
 import com.linkroa.deepdataagent.knowledgebase.api.IngestionCancellationApi;
 import com.linkroa.deepdataagent.knowledgebase.api.IngestionTaskSubmitter;
+import com.linkroa.deepdataagent.knowledgebase.api.ParserCapabilityApi;
 import com.linkroa.deepdataagent.knowledgebase.application.command.DeleteDocumentCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.ReparseDocumentCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.UploadDocumentCommand;
@@ -140,9 +141,6 @@ public class DocumentApplicationService {
             DocumentStatus.PENDING, DocumentStatus.PROCESSING, DocumentStatus.PROCESSED,
             DocumentStatus.FAILED, DocumentStatus.DELETE_FAILED);
 
-    /** 清退步骤标识：在飞登记（登记先于投递，失败按失败兜底置 DELETE_FAILED） */
-    private static final String DELETE_STEP_REGISTER = "in_flight_register";
-
     /** 清退步骤标识：掐灭等待（等待在飞摄入 worker 退出，事务外） */
     private static final String DELETE_STEP_CANCEL_WAIT = "cancel_wait";
 
@@ -212,6 +210,12 @@ public class DocumentApplicationService {
     /** 在飞任务注册表（rag BC 实现）：任务投递前登记在飞凭据、状态收敛后移除成员，供本实例启动恢复收敛悬挂任务 */
     private final InFlightTaskRegistry inFlightTaskRegistry;
 
+    /** 在飞任务事务同步登记器：受理事务内登记，未提交时补偿移除 */
+    private final InFlightTaskTransactionalRegistrar inFlightTaskTransactionalRegistrar;
+
+    /** 解析引擎能力契约（rag BC 实现）：上传前按当前引擎能力集合做格式准入校验 */
+    private final ParserCapabilityApi parserCapabilityApi;
+
     /**
      * 构造文档应用服务。
      *
@@ -228,6 +232,8 @@ public class DocumentApplicationService {
      * @param chunkPhysicalDeleteService   切片物理删除原语
      * @param documentCleanupTaskSubmitter 文档清退任务提交端口（跨 BC 端口，实现位于 rag BC）
      * @param inFlightTaskRegistry         在飞任务注册表（跨 BC 端口，实现位于 rag BC）
+     * @param inFlightTaskTransactionalRegistrar 在飞任务事务同步登记器（受理事务内登记）
+     * @param parserCapabilityApi          解析引擎能力契约（跨 BC 端口，实现位于 rag BC）
      */
     public DocumentApplicationService(DocumentRepository documentRepository,
                                       ChunkRepository chunkRepository,
@@ -241,7 +247,9 @@ public class DocumentApplicationService {
                                       IngestionTaskSubmitter ingestionTaskSubmitter,
                                       ChunkPhysicalDeleteService chunkPhysicalDeleteService,
                                       DocumentCleanupTaskSubmitter documentCleanupTaskSubmitter,
-                                      InFlightTaskRegistry inFlightTaskRegistry) {
+                                      InFlightTaskRegistry inFlightTaskRegistry,
+                                      InFlightTaskTransactionalRegistrar inFlightTaskTransactionalRegistrar,
+                                      ParserCapabilityApi parserCapabilityApi) {
         this.documentRepository = documentRepository;
         this.chunkRepository = chunkRepository;
         this.knowledgeBaseRepository = knowledgeBaseRepository;
@@ -255,6 +263,8 @@ public class DocumentApplicationService {
         this.chunkPhysicalDeleteService = chunkPhysicalDeleteService;
         this.documentCleanupTaskSubmitter = documentCleanupTaskSubmitter;
         this.inFlightTaskRegistry = inFlightTaskRegistry;
+        this.inFlightTaskTransactionalRegistrar = inFlightTaskTransactionalRegistrar;
+        this.parserCapabilityApi = parserCapabilityApi;
     }
 
     /**
@@ -281,14 +291,17 @@ public class DocumentApplicationService {
      * @param command 上传命令（携带文件字节）
      * @return 上传结果（新文档已登记，或命中重复被跳过并携带既有文档；覆盖换版路径携带旧文档快照列表）
      * @throws ResourceNotFoundException 知识库不存在（404）
-     * @throws DeepDataAgentException    文件内容为空 / 格式不支持 / 大小超限 / 文档级分块策略非法 /
-     *                                   知识库处于删除流程（400）
+     * @throws DeepDataAgentException    文件内容为空 / 格式不支持 / 当前解析引擎不支持该文件类型 /
+     *                                   大小超限 / 文档级分块策略非法 / 知识库处于删除流程（400）
      * @throws ResourceConflictException 命中重复且冲突动作为 REJECT（409，消息携带重复摘要）
      */
     public UploadDocumentResult upload(UploadDocumentCommand command) {
         KnowledgeBase knowledgeBase = requireOwnedKnowledgeBase(command.kbId());
         KnowledgeBaseValidator.validateNotDeleting(knowledgeBase);
         FileType fileType = DocumentValidator.validateFileType(command.fileType());
+        // 解析引擎能力准入：引擎不可处理的类型在上传响应中直接拒绝（零对象存储、零数据库写入），
+        // 与摄入侧 DefaultDocumentParserRegistry 的路由口径同源（LOCAL 含兜底可读类型，MINERU 严格）
+        parserCapabilityApi.ensureSupported(knowledgeBase.ragEngineConfig(), fileType);
         byte[] content = command.content();
         if (ObjectUtils.isEmpty(content)) {
             throw new DeepDataAgentException("上传文件内容不能为空");
@@ -360,20 +373,35 @@ public class DocumentApplicationService {
         DedupPolicyConfig policy = documentDedupService.resolvePolicy(locked);
         List<DedupHit> hits = documentDedupService.detect(command.kbId(), policy, command.fileName(), contentHash);
         if (CollectionUtils.isEmpty(hits)) {
-            return UploadDocumentResult.registered(
-                    documentRepository.save(newDocument(command, fileType, stored, contentHash)));
+            return registerNewDocument(command, fileType, stored, contentHash);
         }
         DedupConflictAction conflictAction = ObjectUtils.isEmpty(policy) ? null : policy.conflictAction();
         if (ObjectUtils.isEmpty(conflictAction)) {
             log.warn("命中库内重复但知识库去重策略未给出处置动作，按登记放行，kbId={}", command.kbId());
-            return UploadDocumentResult.registered(
-                    documentRepository.save(newDocument(command, fileType, stored, contentHash)));
+            return registerNewDocument(command, fileType, stored, contentHash);
         }
         return switch (conflictAction) {
             case REJECT -> throw new ResourceConflictException(documentDedupService.describeHits(hits));
             case SKIP -> UploadDocumentResult.skipped(hits.get(0).document());
             case OVERWRITE -> overwriteDuplicates(command, fileType, stored, contentHash, hits);
         };
+    }
+
+    /**
+     * 保存新文档并在同一受理事务内登记摄入任务。
+     * <p>登记失败即抛出任务登记异常，事务整体回滚（文档不落库）；调用方 MUST 处于受理事务内。</p>
+     *
+     * @param command     上传命令
+     * @param fileType    已解析校验的文件格式
+     * @param stored      已写入对象存储的源文件引用
+     * @param contentHash 判重内容轴
+     * @return 登记成功结果
+     */
+    private UploadDocumentResult registerNewDocument(UploadDocumentCommand command, FileType fileType,
+                                                     S3File stored, String contentHash) {
+        Document saved = documentRepository.save(newDocument(command, fileType, stored, contentHash));
+        inFlightTaskTransactionalRegistrar.register(InFlightTaskType.DOC_INGESTION, saved.id());
+        return UploadDocumentResult.registered(saved);
     }
 
     /**
@@ -486,9 +514,11 @@ public class DocumentApplicationService {
                                                      String contentHash, List<DedupHit> hits) {
         List<Document> accepted = new ArrayList<>(hits.size());
         for (DedupHit hit : hits) {
+            // 复用删除受理：同一事务内推入 DELETING 并登记文档清退任务
             accepted.add(acceptDelete(hit.document().id()));
         }
         Document registered = documentRepository.save(newDocument(command, fileType, stored, contentHash));
+        inFlightTaskTransactionalRegistrar.register(InFlightTaskType.DOC_INGESTION, registered.id());
         log.info("覆盖换版受理, kbId={}, newDocId={}, staleDocIds={}",
                 command.kbId(), registered.id(), accepted.stream().map(Document::id).toList());
         return UploadDocumentResult.registeredWithOverwritten(registered, accepted);
@@ -720,12 +750,14 @@ public class DocumentApplicationService {
         boolean transited = documentRepository.transitStatus(documentId, DELETE_ACCEPT_FROM_STATUSES,
                 DocumentStatus.DELETING, null);
         if (transited) {
+            inFlightTaskTransactionalRegistrar.register(InFlightTaskType.DOC_CLEANUP, documentId);
             return document.withStatus(DocumentStatus.DELETING).withErrorMessage(null);
         }
         if (document.status() == DocumentStatus.DELETING) {
             // 已在飞：提交端口去重挡下（幂等）；崩溃遗留（线程已失）：提交端口重触发续跑——两种均受理
             log.info("文档已处于 DELETING，按受理继续（在飞幂等 / 崩溃遗留重触发由提交端口裁决）, documentId={}",
                     documentId);
+            inFlightTaskTransactionalRegistrar.register(InFlightTaskType.DOC_CLEANUP, documentId);
             return document;
         }
         throw new ResourceConflictException("文档状态已变更，请重新发起删除：" + document.status());
@@ -733,23 +765,14 @@ public class DocumentApplicationService {
 
     /**
      * 受理事务提交后投递文档清退任务（fire-and-forget）。
-     * <p>时序：登记先于投递——先在飞注册表登记 {@link InFlightTaskType#DOC_CLEANUP} 凭据，
-     * 再投递清退任务；登记与投递均为纯内存操作，MUST 处于事务之外，仅在受理短事务提交
-     * （transactionTemplate 返回）后调用。登记失败（注册表不可用）按失败兜底置 DELETE_FAILED 留痕，
-     * MUST NOT 静默放行；投递返回 {@code false}＝该文档清退任务已在飞（重删双击等），按幂等受理不另处理；
+     * <p>在飞登记已随受理事务完成（见 {@link #acceptDelete}），本方法只在事务提交后负责投递，
+     * MUST NOT 再次登记。投递返回 {@code false}＝该文档清退任务已在飞（重删双击等），按幂等受理不另处理；
      * 投递抛异常（停机拒收 {@code IllegalStateException} 等）仅 ERROR 留痕、不改写对外响应且
      * <b>保留在飞成员</b>——文档停留 DELETING，由用户重删或本实例启动恢复按状态一致性校验收敛。</p>
      *
      * @param documentId 已受理为 DELETING 的文档主键
      */
     private void submitDocumentCleanupAfterCommit(Long documentId) {
-        try {
-            inFlightTaskRegistry.register(InFlightTaskType.DOC_CLEANUP, documentId);
-        } catch (RuntimeException e) {
-            log.error("文档清退任务在飞登记失败，按失败兜底置 DELETE_FAILED, documentId={}", documentId, e);
-            markDeleteFailed(documentId, DELETE_STEP_REGISTER, List.of(), e);
-            return;
-        }
         boolean submitted;
         try {
             submitted = documentCleanupTaskSubmitter.submit(documentId, () -> runCleanupChain(documentId));
@@ -985,7 +1008,12 @@ public class DocumentApplicationService {
                     .withStatus(DocumentStatus.PENDING)
                     .withChunkCount(0)
                     .withErrorMessage(null);
-            return documentRepository.update(pending);
+            Document updated = documentRepository.update(pending);
+            if (ObjectUtils.isNotEmpty(updated)) {
+                // 与受理同事务登记：登记失败即回滚，文档保持受理前状态
+                inFlightTaskTransactionalRegistrar.register(InFlightTaskType.DOC_INGESTION, updated.id());
+            }
+            return updated;
         });
         // 事务已提交：重新解析回到 PENDING（已入队语义）后立即提交解析任务
         if (ObjectUtils.isNotEmpty(reset)) {
@@ -1004,22 +1032,14 @@ public class DocumentApplicationService {
      * 契约返回值语义已收紧为「该文档后续确实会被处理」（真实入队，或去重命中时队列已登记
      * 待补投、由对应任务收尾补投——见 {@link IngestionTaskSubmitter#submit(Long)}）：
      * 「不会被处理」的情形不再以成功值返回，本兜底判定与之天然一致，签名与调用点均不变。</p>
-     * <p>在飞注册表时序（均处于事务外）：登记先于投递——投递失败（含停机窗口拒收）也留有残留凭据，
-     * 由本实例启动恢复按状态一致性校验收敛；登记写入失败 MUST NOT 静默放行，直接按失败兜底回写 FAILED；
-     * 投递失败时仅在回写结果确认「状态已收敛」后才移除在飞成员——命中置 {@code FAILED} 与未命中
-     * （行已不存在或状态已被并发推进）均属已收敛，回写异常时保留成员待启动恢复重试。</p>
+     * <p>在飞注册表时序：登记已在受理事务内完成（见 {@link #registerNewDocument} 与
+     * {@link #reparse}），本方法只负责事务提交后的投递；投递失败时仅在回写结果确认
+     * 「状态已收敛」后才移除在飞成员——命中置 {@code FAILED} 与未命中（行已不存在或状态已被并发推进）
+     * 均属已收敛，回写异常时保留成员待启动恢复重试。</p>
      *
      * @param documentId 已落库为 PENDING 的文档ID
      */
     private void submitIngestionTask(Long documentId) {
-        // 登记先于投递：投递失败（含停机窗口拒收）也留有残留凭据，由本实例启动恢复收敛
-        try {
-            inFlightTaskRegistry.register(InFlightTaskType.DOC_INGESTION, documentId);
-        } catch (RuntimeException e) {
-            log.error("解析任务在飞登记失败，按失败兜底回写 FAILED, documentId={}", documentId, e);
-            revertPendingToFailed(documentId);
-            return;
-        }
         boolean submitted;
         try {
             submitted = ingestionTaskSubmitter.submit(documentId);
@@ -1037,8 +1057,9 @@ public class DocumentApplicationService {
     }
 
     /**
-     * 解析任务在飞登记失败或投递失败后的失败兜底回写：以 PENDING → FAILED 的条件流转
+     * 解析任务投递失败后的失败兜底回写：以 PENDING → FAILED 的条件流转
      * 写入 {@value #INGESTION_SUBMIT_FAILED_MESSAGE}，闭合「状态 PENDING 但队列无对应任务」的孤儿窗口。
+     * <p>登记失败不再进入本方法——登记已随受理事务回滚，不会留下 PENDING 行。</p>
      * <p>「未命中」意味着数据行已不存在、或状态已被并发推进（例如用户并发发起删除置 {@code DELETING}）——
      * 两种情况都说明该文档已不再是本实例的在飞解析任务，既无需置态、也无须继续保留在飞凭据，
      * 故与命中同属「状态已收敛」；仅回写异常（状态是否收敛未知）才保留在飞成员。</p>

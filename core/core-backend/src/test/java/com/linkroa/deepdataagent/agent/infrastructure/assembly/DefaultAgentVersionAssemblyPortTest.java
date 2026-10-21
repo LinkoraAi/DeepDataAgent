@@ -723,7 +723,7 @@ class DefaultAgentVersionAssemblyPortTest {
         return ModelProfile.create(
                 "p-1", "指令模型", null, apiFormat, "https://api.example.com/v1",
                 modelName, encryptedCredential, null, null, null,
-                10, ModelType.CHAT, null, ownerId);
+                10, ModelType.CHAT_LLM, null, ownerId);
     }
 }
 

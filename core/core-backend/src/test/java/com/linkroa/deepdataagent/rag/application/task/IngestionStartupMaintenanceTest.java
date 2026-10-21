@@ -13,12 +13,13 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * {@link IngestionStartupMaintenance} 启动恢复单测（实例限定收敛）。
- * <p>覆盖：就绪后按本实例键一次性收敛崩溃残留（有残留 / 无残留两态同一入口）、
- * 收敛异常仅 ERROR 留痕不阻断应用启动、就绪时序严格早于摄入消费线程启动。</p>
+ * {@link IngestionStartupMaintenance} 启动恢复单测。
+ * <p>恢复范围严格限定为本实例在飞注册表键：只按本实例标识读取成员并逐个做数据库状态一致性校验，
+ * 不再存在全库非终态扫描；并验证异常不阻断启动、就绪时序早于消费线程。</p>
  *
  * @author DeepDataAgent
  */
@@ -39,48 +40,64 @@ class IngestionStartupMaintenanceTest {
     @InjectMocks
     private IngestionStartupMaintenance maintenance;
 
+    /**
+     * 场景：本实例注册表有残留。
+     * 预期：按本实例键收敛，且不再触发任何全库扫描能力。
+     */
     @Test
-    void should_convergeInstanceResidueOnce_when_convergeCrashResidueOnReady_given_residualRows() {
-        // given：本实例崩溃重启后残留 2 篇在飞文档
+    void should_convergeOwnInstanceResidue_when_convergeCrashResidueOnReady_given_registryResidue() {
+        // given
         when(inFlightTaskConverger.convergeAllOfType(InFlightTaskType.DOC_INGESTION, STARTUP_ERROR_MESSAGE))
                 .thenReturn(2);
 
         // when
         maintenance.convergeCrashResidueOnReady();
 
-        // then：以固定文案按本实例键一次性收敛（不重建队列、不自动重跑）
+        // then
         verify(inFlightTaskConverger).convergeAllOfType(InFlightTaskType.DOC_INGESTION, STARTUP_ERROR_MESSAGE);
+        verifyNoMoreInteractions(inFlightTaskConverger);
     }
 
+    /**
+     * 场景：本实例注册表无残留。
+     * 预期：幂等空转，不抛异常。
+     */
     @Test
-    void should_completeSilently_when_convergeCrashResidueOnReady_given_noResidualRows() {
-        // given：正常重启无残留，在飞注册表无未完成文档（收敛数 0，天然幂等）
+    void should_completeSilently_when_convergeCrashResidueOnReady_given_noResidue() {
+        // given
         when(inFlightTaskConverger.convergeAllOfType(InFlightTaskType.DOC_INGESTION, STARTUP_ERROR_MESSAGE))
                 .thenReturn(0);
 
-        // when // then：不抛异常即通过，仍恰好收敛一次
+        // when / then
         assertDoesNotThrow(() -> maintenance.convergeCrashResidueOnReady());
         verify(inFlightTaskConverger).convergeAllOfType(InFlightTaskType.DOC_INGESTION, STARTUP_ERROR_MESSAGE);
     }
 
+    /**
+     * 场景：本实例注册表读取或收敛抛异常（如缓存不可用）。
+     * 预期：异常仅留痕、不阻断启动。
+     */
     @Test
-    void should_notBlockStartup_when_convergeCrashResidueOnReady_given_convergenceThrows() {
-        // given：收敛阶段 DB / 注册表异常
-        doThrow(new RuntimeException("DB 不可达")).when(inFlightTaskConverger)
+    void should_notBlockStartup_when_convergeCrashResidueOnReady_given_registryThrows() {
+        // given
+        doThrow(new RuntimeException("注册表不可用")).when(inFlightTaskConverger)
                 .convergeAllOfType(InFlightTaskType.DOC_INGESTION, STARTUP_ERROR_MESSAGE);
 
-        // when // then：异常仅 ERROR 留痕，绝不阻断应用启动
+        // when / then
         assertDoesNotThrow(() -> maintenance.convergeCrashResidueOnReady());
-        verify(inFlightTaskConverger).convergeAllOfType(InFlightTaskType.DOC_INGESTION, STARTUP_ERROR_MESSAGE);
     }
 
+    /**
+     * 场景：就绪事件处理方法的时序注解。
+     * 预期：严格早于摄入消费线程启动（@Order(200)），保证「先恢复、后消费」。
+     */
     @Test
     void should_runBeforeIngestionConsumers_when_annotated_given_readyEvent() throws NoSuchMethodException {
         // given
         Order order = IngestionStartupMaintenance.class
                 .getMethod("convergeCrashResidueOnReady").getAnnotation(Order.class);
 
-        // then：启动恢复严格早于摄入消费线程启动，保证「先恢复、后消费」
+        // then
         assertNotNull(order);
         assertTrue(order.value() < INGESTION_CONSUMER_ORDER, "摄入启动恢复必须早于摄入消费线程启动时序");
     }

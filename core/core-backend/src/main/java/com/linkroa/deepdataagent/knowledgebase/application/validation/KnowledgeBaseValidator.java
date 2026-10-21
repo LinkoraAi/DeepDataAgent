@@ -60,9 +60,9 @@ public final class KnowledgeBaseValidator {
      * 校验知识库语言入参（语言真相源收敛回
      * {@code knowledge_base.language} 列，校验语义自原 {@code RagEngineConfigValidator} 的
      * language 键校验迁移而来）。
-     * <p>口径与原键值校验一致：空白 = 未配置放行（创建缺省落 Chinese、更新保持原值）；
-     * 命中 {@link KbLanguage} 十一全名值域（trim、大小写不敏感）放行，原文落库、读取端归一；
-     * 值域外（含历史裸语言码 {@code ja} 与未收录语言 {@code Portuguese}）拒绝并提示全部合法值域，
+     * <p>口径：空白 = 未配置放行（创建缺省落 Chinese、更新保持原值）；
+     * 命中 {@link KbLanguage} 两个全名值域（trim、大小写不敏感）放行，原文落库、读取端归一；
+     * 值域外（含历史裸语言码 {@code ja} 与历史 11 值域中的其它语言）拒绝并提示全部合法值域，
      * 禁止静默回落。</p>
      *
      * @param language 语言入参，可为空白（未配置）
@@ -77,7 +77,7 @@ public final class KnowledgeBaseValidator {
                     .map(KbLanguage::name)
                     .collect(Collectors.joining(", "));
             throw new DeepDataAgentException("知识库语言配置非法：当前值=" + language
-                    + "，合法值为 11 个语言全名（" + legalValues + "），缺省视同 Chinese");
+                    + "，合法值为 " + legalValues + "，缺省视同 Chinese");
         }
     }
 

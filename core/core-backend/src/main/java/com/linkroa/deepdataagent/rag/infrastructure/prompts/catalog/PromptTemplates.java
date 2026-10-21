@@ -5,7 +5,7 @@ import java.util.Set;
 /**
  * Prompt 模板名与抽取协议分隔符集中常量。
  * <p>本类是全部 Prompt 资产标识符的<b>唯一权威定义处</b>：模板正文由
- * {@link ZhPromptCatalog}/{@link EnPromptCatalog} 编译期静态目录承载，
+ * {@link EnPromptCatalog} 编译期静态目录承载，
  * 目录类的注册表键必须与本类常量逐字一致（由目录测试对账）；各消费服务不得再
  * 自行定义模板名字面量（仅允许保留指向本类的别名），消除双副本漂移风险。</p>
  * <p>收录范围：32 个既有模板名（25 摄入 + 7 检索）与

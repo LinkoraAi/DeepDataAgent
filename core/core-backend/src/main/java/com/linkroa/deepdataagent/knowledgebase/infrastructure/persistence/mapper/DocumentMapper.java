@@ -163,6 +163,32 @@ public interface DocumentMapper extends BaseMapper<DocumentEntity> {
     }
 
     /**
+     * 整库删除受理：把知识库内命中允许集合的文档批量置为删除中（单条 UPDATE）。
+     * <p>用途：知识库删除受理时与知识库 {@code ACTIVE → DELETING} 同事务执行，
+     * 使库内排队中/解析中的摄入任务在状态检查处立即自灭，避免清退与摄入并发导致
+     * 「删库后又写回图谱」。wrapper 更新不触发 {@code MetaObjectHandler}，
+     * 显式补齐 updated_at / updated_by（口径统一取 {@link KbAuditFieldUtils}）。</p>
+     *
+     * @param kbId            知识库ID
+     * @param fromStatusNames 允许的当前状态名集合（通常为 PENDING / PROCESSING）
+     * @param toStatusName    目标状态名（删除受理为 DELETING）
+     * @return 受影响行数
+     */
+    default int transitNonTerminalByKbId(Long kbId, Collection<String> fromStatusNames, String toStatusName) {
+        if (ObjectUtils.isEmpty(kbId) || ObjectUtils.isEmpty(fromStatusNames) || StringUtils.isBlank(toStatusName)) {
+            return 0;
+        }
+        OffsetDateTime now = KbAuditFieldUtils.now();
+        return update(null, Wrappers.<DocumentEntity>lambdaUpdate()
+                .eq(DocumentEntity::getKbId, kbId)
+                .in(DocumentEntity::getStatus, fromStatusNames)
+                .set(DocumentEntity::getStatus, toStatusName)
+                .set(DocumentEntity::getErrorMessage, null)
+                .set(DocumentEntity::getUpdatedAt, now)
+                .set(DocumentEntity::getUpdatedBy, KbAuditFieldUtils.DEFAULT_OPERATOR));
+    }
+
+    /**
      * 物理删除知识库内全部文档（无 @TableLogic，delete(wrapper) 即 DELETE FROM）。
      *
      * @param kbId 知识库ID
@@ -228,33 +254,6 @@ public interface DocumentMapper extends BaseMapper<DocumentEntity> {
         OffsetDateTime now = KbAuditFieldUtils.now();
         return update(null, Wrappers.<DocumentEntity>lambdaUpdate()
                 .eq(DocumentEntity::getId, id)
-                .in(DocumentEntity::getStatus, fromStatusNames)
-                .set(DocumentEntity::getStatus, toStatusName)
-                .set(DocumentEntity::getErrorMessage, errorMessage)
-                .set(DocumentEntity::getUpdatedAt, now)
-                .set(DocumentEntity::getUpdatedBy, KbAuditFieldUtils.DEFAULT_OPERATOR));
-    }
-
-    /**
-     * 非终态批量 CAS 条件更新（保留能力；启动恢复链路已改为按本实例在飞注册表键逐条一致性校验收敛，
-     * 本方法当前无生产调用点）：
-     * 单条 UPDATE 把「状态命中允许集合」的全部行置为目标状态并回写失败原因。
-     * <p>彻底物理删体系：已删文档行物理不存在，天然不参与收敛；天然幂等——二次执行状态已
-     * 脱离允许集合，影响 0 行。wrapper 更新不触发 {@code MetaObjectHandler}，
-     * 显式补齐 updated_at / updated_by（口径统一取 {@link KbAuditFieldUtils}）。</p>
-     *
-     * @param fromStatusNames 允许的非终态状态名集合（CAS 前置条件，空集合返回 0）
-     * @param toStatusName    目标状态名（清理场景为 FAILED）
-     * @param errorMessage    失败原因（写入 error_message），空白返回 0
-     * @return 受影响行数
-     */
-    default int failNonTerminal(Collection<String> fromStatusNames, String toStatusName, String errorMessage) {
-        if (ObjectUtils.isEmpty(fromStatusNames) || StringUtils.isBlank(toStatusName)
-                || StringUtils.isBlank(errorMessage)) {
-            return 0;
-        }
-        OffsetDateTime now = KbAuditFieldUtils.now();
-        return update(null, Wrappers.<DocumentEntity>lambdaUpdate()
                 .in(DocumentEntity::getStatus, fromStatusNames)
                 .set(DocumentEntity::getStatus, toStatusName)
                 .set(DocumentEntity::getErrorMessage, errorMessage)

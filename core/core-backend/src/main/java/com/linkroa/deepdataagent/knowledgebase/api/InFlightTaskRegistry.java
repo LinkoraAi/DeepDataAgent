@@ -22,15 +22,16 @@ public interface InFlightTaskRegistry {
 
     /**
      * 登记一个在飞任务（幂等：同一任务重复登记不产生重复成员）。
-     * <p>调用时机 MUST 由调用方保证在「受理事务提交之后、任务投递之前」——
-     * 登记先于投递，使投递失败（含停机窗口拒收）也留有残留凭据；且 MUST NOT 位于数据库事务内
-     * （事务内禁止远程调用）。</p>
+     * <p>调用时机 MUST 与任务受理处于同一事务生命周期：登记在受理事务提交前完成，
+     * 登记失败即受理整体回滚，MUST NOT 以「受理成功但任务失败」的方式收敛；事务最终未提交时，
+     * 调用方 MUST 补偿移除已登记的成员。任务投递仍 MUST 在事务提交之后执行（登记先于投递），
+     * 使投递失败（含停机窗口拒收）也留有残留凭据。</p>
      *
      * @param taskType 任务类型，必填
      * @param taskId   任务主体主键（文档ID 或 知识库ID），必填
      * @throws IllegalArgumentException 任务类型或任务ID为空
-     * @throws RuntimeException         注册表不可用（写入失败）；调用方 SHALL 走各自链的既有失败兜底
-     *                                  （解析置 FAILED / 清退置 DELETE_FAILED），MUST NOT 静默放行
+     * @throws com.linkroa.deepdataagent.shared.exception.TaskRegistrationException
+     *                                  登记失败（缓存不可用 / 超时）；调用方所在受理事务 MUST 回滚
      */
     void register(InFlightTaskType taskType, Long taskId);
 

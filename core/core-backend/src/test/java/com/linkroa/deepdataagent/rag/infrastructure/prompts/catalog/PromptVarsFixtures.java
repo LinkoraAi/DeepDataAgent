@@ -13,6 +13,7 @@ final class PromptVarsFixtures {
     /** 多模态用户模板 {@code generic_prompt} 变量表（旧 PromptLoaderTest 夹具） */
     static final Map<String, String> GENERIC_PROMPT_VARS = Map.of(
             "content_type", "PDF",
+            "language", "English",
             "entity_name", "DeepData",
             "content", "Chapter 1");
 
@@ -21,7 +22,7 @@ final class PromptVarsFixtures {
      * summarize（summary_length/description_type/description_name/description_list）、
      * keywords（examples/query）、rag_response（response_type/user_prompt/context_data）、
      * naive_rag_response（content_data），公共 language 一份取值同时注入双套渲染。
-     * 值不含花括号，避免触发残留占位符误报。
+     * 值不含花括号：保持夹具取值与模板占位符形态可区分（渲染器已把外部值按字面量透传）。
      */
     static final Map<String, String> LIGHTRAG_SUPERSET_VARS = Map.ofEntries(
             Map.entry("language", "English"),
@@ -65,7 +66,7 @@ final class PromptVarsFixtures {
 
     /**
      * 全部已知占位符变量名的代表取值（目录渲染冒烟按占位符名套用；
-     * 值统一不含花括号，避免注入后触发残留占位符误报）。
+     * 值统一不含花括号，保持夹具取值与模板占位符形态可区分——渲染器已把外部值按字面量透传）。
      */
     static final Map<String, String> KNOWN_VARS = Map.ofEntries(
             Map.entry("content_type", "PDF"),

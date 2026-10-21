@@ -5,6 +5,7 @@ import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskRegistry;
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskType;
 import com.linkroa.deepdataagent.knowledgebase.api.IngestionCancellationApi;
 import com.linkroa.deepdataagent.knowledgebase.api.IngestionTaskSubmitter;
+import com.linkroa.deepdataagent.knowledgebase.api.ParserCapabilityApi;
 import com.linkroa.deepdataagent.knowledgebase.application.command.DeleteDocumentCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.ReparseDocumentCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.UploadDocumentCommand;
@@ -30,6 +31,7 @@ import com.linkroa.deepdataagent.knowledgebase.domain.repository.KnowledgeBaseRe
 import com.linkroa.deepdataagent.shared.exception.DeepDataAgentException;
 import com.linkroa.deepdataagent.shared.exception.ResourceConflictException;
 import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
+import com.linkroa.deepdataagent.shared.exception.TaskRegistrationException;
 import com.linkroa.deepdataagent.shared.security.AuthContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -150,6 +152,10 @@ class DocumentApplicationServiceTest {
     private DocumentCleanupTaskSubmitter documentCleanupTaskSubmitter;
     @Mock
     private InFlightTaskRegistry inFlightTaskRegistry;
+    @Mock
+    private InFlightTaskTransactionalRegistrar inFlightTaskTransactionalRegistrar;
+    @Mock
+    private ParserCapabilityApi parserCapabilityApi;
 
     @InjectMocks
     private DocumentApplicationService service;
@@ -1878,68 +1884,39 @@ class DocumentApplicationServiceTest {
         service.upload(uploadCommand("PDF"));
 
         // then：先在飞登记、后投递解析任务——登记先于投递，投递失败也留有残留凭据
-        InOrder inOrder = inOrder(inFlightTaskRegistry, ingestionTaskSubmitter);
-        inOrder.verify(inFlightTaskRegistry).register(InFlightTaskType.DOC_INGESTION, DOC_ID);
+        InOrder inOrder = inOrder(inFlightTaskTransactionalRegistrar, ingestionTaskSubmitter);
+        inOrder.verify(inFlightTaskTransactionalRegistrar).register(InFlightTaskType.DOC_INGESTION, DOC_ID);
         inOrder.verify(ingestionTaskSubmitter).submit(DOC_ID);
     }
 
     @Test
-    void should_revertToFailedWithoutSubmit_when_submitIngestionTask_given_registerThrows() {
-        // given：在飞注册表不可用（登记抛异常）
+    void should_rollbackAcceptance_when_upload_given_registerThrows() {
+        // given：在飞登记在受理事务内失败
         stubUploadPremises(buildKb(LifecycleStatus.ACTIVE));
         when(documentRepository.save(any())).thenReturn(buildDocument(DocumentStatus.PENDING, 0));
-        doThrow(new RuntimeException("在飞注册表不可用"))
-                .when(inFlightTaskRegistry).register(InFlightTaskType.DOC_INGESTION, DOC_ID);
-        when(documentRepository.transitStatus(DOC_ID, Set.of(DocumentStatus.PENDING),
-                DocumentStatus.FAILED, "解析任务提交失败")).thenReturn(true);
+        doThrow(new TaskRegistrationException("操作失败，请稍后重试", new RuntimeException("在飞注册表不可用")))
+                .when(inFlightTaskTransactionalRegistrar).register(InFlightTaskType.DOC_INGESTION, DOC_ID);
 
-        // when
-        UploadDocumentResult result = service.upload(uploadCommand("PDF"));
-
-        // then：登记失败 MUST NOT 静默放行——不入队、直接回写 FAILED 闭合孤儿窗口
-        assertFalse(result.skipped());
+        // when / then：异常上抛由受理事务回滚，不投递、不写 FAILED
+        assertThrows(TaskRegistrationException.class, () -> service.upload(uploadCommand("PDF")));
         verify(ingestionTaskSubmitter, never()).submit(any());
-        verify(documentRepository).transitStatus(DOC_ID, Set.of(DocumentStatus.PENDING),
-                DocumentStatus.FAILED, "解析任务提交失败");
-        verify(inFlightTaskRegistry, never()).unregister(any(), any());
+        verify(documentRepository, never()).transitStatus(any(), anySet(), any(), any());
     }
 
     @Test
-    void should_markDeleteFailedWithoutSubmit_when_submitDocumentCleanupAfterCommit_given_registerThrows() {
-        // given：受理 CAS 命中，但清退任务的在飞登记抛异常
+    void should_rollbackDelete_when_delete_given_registerThrows() {
+        // given：受理 CAS 命中，但清退任务的在飞登记在事务内抛异常
         when(documentRepository.findByIdForUpdate(DOC_ID))
                 .thenReturn(Optional.of(buildDocument(DocumentStatus.PROCESSED, 3)));
         when(documentRepository.transitStatus(eq(DOC_ID), anySet(), eq(DocumentStatus.DELETING), isNull()))
                 .thenReturn(true);
-        doThrow(new RuntimeException("在飞注册表不可用"))
-                .when(inFlightTaskRegistry).register(InFlightTaskType.DOC_CLEANUP, DOC_ID);
+        doThrow(new TaskRegistrationException("操作失败，请稍后重试", new RuntimeException("在飞注册表不可用")))
+                .when(inFlightTaskTransactionalRegistrar).register(InFlightTaskType.DOC_CLEANUP, DOC_ID);
 
-        // when
-        Document accepted = service.delete(new DeleteDocumentCommand(DOC_ID));
-
-        // then：受理不回滚、不投递清退任务，按失败兜底留痕 step=in_flight_register
-        assertEquals(DocumentStatus.DELETING, accepted.status());
+        // when / then：异常上抛由受理事务回滚，不投递清退任务、不写 DELETE_FAILED
+        assertThrows(TaskRegistrationException.class, () -> service.delete(new DeleteDocumentCommand(DOC_ID)));
         verify(documentCleanupTaskSubmitter, never()).submit(any(), any());
-        verify(documentRepository).markFailed(eq(DOC_ID), startsWith("[DELETE-FAILED] step=in_flight_register"));
-    }
-
-    /**
-     * 场景：登记调用点位于数据库事务提交之后。
-     * 预期：事务体外才登记——事务提交（{@code transactionTemplate.execute} 返回）先于在飞登记。
-     */
-    @Test
-    void should_registerAfterTransactionCommit_when_submitIngestionTask_given_normalUpload() {
-        // given：登记成功返回带 ID 的 PENDING 文档，投递契约默认入队成功（setUp 桩）
-        stubUploadPremises(buildKb(LifecycleStatus.ACTIVE));
-        when(documentRepository.save(any())).thenReturn(buildDocument(DocumentStatus.PENDING, 0));
-
-        // when
-        service.upload(uploadCommand("PDF"));
-
-        // then：在飞登记（事务外动作）严格晚于数据库事务提交，事务体内不得出现登记调用
-        InOrder inOrder = inOrder(transactionTemplate, inFlightTaskRegistry);
-        inOrder.verify(transactionTemplate).execute(any());
-        inOrder.verify(inFlightTaskRegistry).register(InFlightTaskType.DOC_INGESTION, DOC_ID);
+        verify(documentRepository, never()).markFailed(any(), any());
     }
 
     /**
@@ -1960,8 +1937,9 @@ class DocumentApplicationServiceTest {
 
         // then：残留凭据已留（可被本实例启动恢复收敛），且次序为
         // 登记 → 投递 → FAILED 回写 → 移除成员
-        InOrder inOrder = inOrder(inFlightTaskRegistry, ingestionTaskSubmitter, documentRepository);
-        inOrder.verify(inFlightTaskRegistry).register(InFlightTaskType.DOC_INGESTION, DOC_ID);
+        InOrder inOrder = inOrder(inFlightTaskTransactionalRegistrar, inFlightTaskRegistry,
+                ingestionTaskSubmitter, documentRepository);
+        inOrder.verify(inFlightTaskTransactionalRegistrar).register(InFlightTaskType.DOC_INGESTION, DOC_ID);
         inOrder.verify(ingestionTaskSubmitter).submit(DOC_ID);
         inOrder.verify(documentRepository).transitStatus(DOC_ID, Set.of(DocumentStatus.PENDING),
                 DocumentStatus.FAILED, "解析任务提交失败");
@@ -1986,7 +1964,7 @@ class DocumentApplicationServiceTest {
         service.upload(uploadCommand("PDF"));
 
         // then：登记已发生（凭据曾留），且回写未命中即判已收敛 → 成员被移除
-        verify(inFlightTaskRegistry).register(InFlightTaskType.DOC_INGESTION, DOC_ID);
+        verify(inFlightTaskTransactionalRegistrar).register(InFlightTaskType.DOC_INGESTION, DOC_ID);
         verify(inFlightTaskRegistry).unregister(InFlightTaskType.DOC_INGESTION, DOC_ID);
     }
 
@@ -2007,7 +1985,7 @@ class DocumentApplicationServiceTest {
         service.upload(uploadCommand("PDF"));
 
         // then：状态未确认收敛 → 成员保留，MUST NOT 移除
-        verify(inFlightTaskRegistry).register(InFlightTaskType.DOC_INGESTION, DOC_ID);
+        verify(inFlightTaskTransactionalRegistrar).register(InFlightTaskType.DOC_INGESTION, DOC_ID);
         verify(inFlightTaskRegistry, never()).unregister(any(), any());
     }
 
@@ -2029,7 +2007,7 @@ class DocumentApplicationServiceTest {
         service.delete(new DeleteDocumentCommand(DOC_ID));
 
         // then：登记先于投递，投递失败亦留有残留凭据且成员不被移除
-        verify(inFlightTaskRegistry).register(InFlightTaskType.DOC_CLEANUP, DOC_ID);
+        verify(inFlightTaskTransactionalRegistrar).register(InFlightTaskType.DOC_CLEANUP, DOC_ID);
         verify(inFlightTaskRegistry, never()).unregister(any(), any());
         verify(documentRepository, never()).markFailed(any(), any());
     }

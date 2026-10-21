@@ -6,6 +6,8 @@ import com.linkroa.deepdataagent.rag.domain.enums.CacheType;
 import com.linkroa.deepdataagent.rag.domain.model.ContentBlockVO;
 import com.linkroa.deepdataagent.rag.domain.model.MediaDescriptionVO;
 import com.linkroa.deepdataagent.rag.domain.port.LlmCacheKeyProvider;
+import com.linkroa.deepdataagent.rag.domain.port.LlmCallContext;
+import com.linkroa.deepdataagent.rag.domain.port.LlmCallException;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatRequest;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatResult;
 import com.linkroa.deepdataagent.rag.domain.port.LlmClient;
@@ -96,6 +98,8 @@ public class MediaDescriptorService {
     /** 系统模板：公式分析 */
     static final String SYSTEM_EQUATION_ANALYSIS = PromptTemplates.EQUATION_ANALYSIS_SYSTEM;
 
+    /** 占位符变量名：输出语言（知识库语言全名） */
+    private static final String VAR_LANGUAGE = "language";
     /** 占位符变量名：主实体名 */
     private static final String VAR_ENTITY_NAME = "entity_name";
     /** 占位符变量名：章节路径 */
@@ -245,7 +249,7 @@ public class MediaDescriptorService {
         // 实际附图解析提前到系统模板选择之前，
         // 模板跟随真实载荷（读失败/超限降级为 null 时选无图 fallback 系），同一请求内不再重复读对象
         LlmImage describedImage = resolveDescribedImage(block);
-        Map<String, String> vars = buildPromptVars(type, block, neighborText);
+        Map<String, String> vars = buildPromptVars(type, block, neighborText, language);
         String userPrompt = PromptCatalog.render(selectUserTemplate(type, neighborText), language, vars);
         String systemPrompt = PromptCatalog.render(selectSystemTemplate(type, describedImage), language, Map.of());
         return describeViaLlm(kbId, modelProfileId, type, block, systemPrompt, userPrompt, describedImage,
@@ -280,14 +284,16 @@ public class MediaDescriptorService {
             captureCacheKey(request, cacheKeyRef);
             result = llmClient.chat(request);
         } catch (RuntimeException e) {
-            log.warn("媒体描述 LLM 调用失败，走确定性兜底：type=[{}] msg=[{}]", type, e.getMessage());
+            log.warn("describe.degraded | type={} reason={} msg={}", type,
+                    e instanceof LlmCallException callException ? callException.kind() : "UNKNOWN",
+                    e.getMessage());
             return deterministicFallbackDescription(type, block);
         }
         if (ObjectUtils.isNotEmpty(result) && result.cacheHit() && ObjectUtils.isNotEmpty(llmCacheHits)) {
             llmCacheHits.incrementAndGet();
         }
         if (ObjectUtils.isEmpty(result) || StringUtils.isBlank(result.text())) {
-            log.warn("媒体描述 LLM 返回空，走确定性兜底：type=[{}]", type);
+            log.warn("describe.degraded | type={} reason=EMPTY_RESPONSE", type);
             return deterministicFallbackDescription(type, block);
         }
         return toDescription(type, block, result.text());
@@ -325,12 +331,14 @@ public class MediaDescriptorService {
      */
     private LlmChatRequest buildChatRequest(Long kbId, String modelProfileId, String systemPrompt,
                                             String userPrompt, LlmImage image) {
+        LlmCallContext callContext = LlmCallContext.of(LlmCallContext.STAGE_DESCRIBE);
         if (ObjectUtils.isEmpty(image)) {
-            return new LlmChatRequest(kbId, modelProfileId, systemPrompt, userPrompt, null, CacheType.EXTRACT);
+            return new LlmChatRequest(kbId, modelProfileId, systemPrompt, userPrompt, null, CacheType.EXTRACT,
+                    List.of(), null, callContext);
         }
         // 单次描述至多携带 1 图（MultimodalConstraints.MAX_IMAGES_PER_DESCRIBE_REQUEST），避免描述归属互串
         return new LlmChatRequest(kbId, modelProfileId, systemPrompt, userPrompt, null, CacheType.EXTRACT,
-                List.of(image));
+                List.of(image), null, callContext);
     }
 
     /**
@@ -402,7 +410,7 @@ public class MediaDescriptorService {
     private MediaDescriptionVO toDescription(String type, ContentBlockVO block, String rawText) {
         Optional<JsonNode> parsed = MultimodalJsonParser.parse(rawText);
         if (parsed.isEmpty()) {
-            log.warn("媒体描述 JSON 容错解析失败，整段文本保留为详描：type=[{}]", type);
+            log.warn("describe.degraded | type={} reason=JSON_PARSE（保留原文为详描）", type);
             // 解析失败仍走命名定形链：兜底派生名同样带内容类型后缀
             return new MediaDescriptionVO(applyTypeSuffix(type, deriveEntityName(type, block)),
                     typeLabel(type), StringUtils.EMPTY, rawText, true);
@@ -441,10 +449,13 @@ public class MediaDescriptorService {
      * @param type        块类型
      * @param block       内容块
      * @param neighborText 邻近文本（可空）
+     * @param language    输出语言（知识库语言全名，已在前置校验保证非空白）
      * @return 模板变量表
      */
-    private Map<String, String> buildPromptVars(String type, ContentBlockVO block, String neighborText) {
+    private Map<String, String> buildPromptVars(String type, ContentBlockVO block, String neighborText,
+                                                String language) {
         Map<String, String> vars = new HashMap<>();
+        putVar(vars, VAR_LANGUAGE, language);
         putVar(vars, VAR_ENTITY_NAME, deriveEntityName(type, block));
         putVar(vars, VAR_SECTION_PATH,
                 MultimodalMetaKeys.metaString(block, MultimodalMetaKeys.META_KEY_SECTION_PATH));

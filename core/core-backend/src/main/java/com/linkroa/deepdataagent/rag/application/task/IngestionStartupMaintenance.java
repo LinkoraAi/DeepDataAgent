@@ -18,11 +18,8 @@ import org.springframework.stereotype.Component;
  * 读取只命中本实例的键，MUST NOT 触碰其他实例的在飞任务；<b>不重建队列、不自动重跑</b>，
  * 失败任务的后续处置仅由用户手动重新解析触发。</p>
  *
- * <p>历史方案（全表收敛 + 可关闭开关）已移除：原实现经
- * {@code ChunkBatchWriter#failNonTerminal(String)} 把全表 {@code PENDING/PROCESSING} 一次性置
- * {@code FAILED}，并由 {@code app.rag.ingestion.startup.fail-non-terminal} 开关控制启停。
- * 全表收敛在多实例下会误伤其他实例正在执行的在飞任务，故改为实例限定恢复后开关失去意义，
- * 该配置项已从 {@code application.yaml} 下线、本组件不再读取。</p>
+ * <p><b>不做全库扫描</b>：多实例部署下任何实例都可能持有其他实例正在执行的任务，按全库非终态
+ * 批量置失败会误杀其他实例；恢复范围严格限定为本实例登记的在飞成员。</p>
  *
  * <p>时序与幂等：{@code @Order(100)} 先于 {@link IngestionTaskQueue#startConsumers()}
  * （{@code @Order(200)}）执行，保证「先恢复、后消费」；即便与就绪后新上传存在竞态，
@@ -52,7 +49,9 @@ public class IngestionStartupMaintenance {
     }
 
     /**
-     * 应用就绪钩子：收敛本实例崩溃残留的在飞文档为 FAILED；异常不改动剩余状态、不阻断启动。
+     * 应用就绪钩子：按本实例标识收敛摄入崩溃残留。
+     * <p>只读取本实例在飞键，逐个做数据库权威状态一致性校验后条件置 {@code FAILED}；
+     * 不重建队列、不自动重跑，失败文档的后续处置仅由用户手动重新解析触发。</p>
      */
     @EventListener(ApplicationReadyEvent.class)
     @Order(100)
@@ -60,16 +59,9 @@ public class IngestionStartupMaintenance {
         try {
             int converged = inFlightTaskConverger.convergeAllOfType(
                     InFlightTaskType.DOC_INGESTION, STARTUP_ERROR_MESSAGE);
-            if (converged > 0) {
-                log.info("[IngestionStartupMaintenance] recovered: {} crash-residue in-flight documents from this "
-                        + "instance set to FAILED (manual re-parse required)", converged);
-            } else {
-                log.info("[IngestionStartupMaintenance] recovered: no crash residue for this instance "
-                        + "(no unfinished document in the in-flight registry)");
-            }
+            log.info("[摄入启动恢复] 完成：本实例注册表收敛={} 篇（均置 FAILED，需手动重新解析）", converged);
         } catch (Exception e) {
-            log.error("[IngestionStartupMaintenance] recovery failed, application startup not blocked "
-                    + "(residual credentials kept in the registry, handled by next startup retry or user re-parse)", e);
+            log.error("[摄入启动恢复] 本实例注册表残留收敛失败（残留由下次启动重试或用户重新解析处置）", e);
         }
     }
 }

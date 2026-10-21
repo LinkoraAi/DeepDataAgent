@@ -446,22 +446,23 @@ public class AgentApplicationService {
         // 直接绑定：模型 id 即内部 profile_id（智能体绑定的模型配置），发布期固化进版本快照
         ModelProfile direct = modelProfileRepository.findByProfileId(modelRef.id()).orElse(null);
         if (direct != null) {
-            ModelProfileValidator.validateReferable(direct);
+            // 归属先行（404 折叠），类型校验仅限归属确认后（400），避免以类型错误探测他人资源
             if (!Objects.equals(direct.ownerId(), ownerId)) {
                 throw new ResourceNotFoundException("模型配置不存在");
             }
+            ModelProfileValidator.validateReferable(direct, ModelProfileValidator.AGENT_MODEL_TYPES);
             return direct.profileId();
         }
         modelCatalogService.validateModel(modelRef);
         String profileId = modelCatalogService.resolveProfileId(modelRef.id(), ownerId);
         if (profileId != null) {
             ModelProfile profile = modelProfileRepository.findByProfileId(profileId).orElse(null);
-            ModelProfileValidator.validateReferable(profile);
             // 归属校验（fail-fast，落库前完成）：模型配置须归属当前请求 owner，
             // 与装配期 DefaultAgentVersionAssemblyPort.requireOwner 语义一致，不匹配统一 404。
-            if (!Objects.equals(profile.ownerId(), ownerId)) {
+            if (!Objects.equals(profile == null ? null : profile.ownerId(), ownerId)) {
                 throw new ResourceNotFoundException("模型配置不存在");
             }
+            ModelProfileValidator.validateReferable(profile, ModelProfileValidator.AGENT_MODEL_TYPES);
         }
         return profileId;
     }

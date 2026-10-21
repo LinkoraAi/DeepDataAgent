@@ -4,6 +4,7 @@ import type { QueryImageDraft, RetrievalDraft } from './retrievalDraft';
 import {
   DEFAULT_CHANNEL_WEIGHTS,
   DEFAULT_RESULT_CHUNK_COUNT,
+  DEFAULT_RERANK_TOP_K,
   DEFAULT_RRF_K,
   MAX_QUERY_IMAGE_BYTES,
   MAX_QUERY_IMAGES,
@@ -44,7 +45,7 @@ describe('defaultRetrievalConfig', () => {
     expect(config.rewriteQuestion).toBe(false);
     expect(config.resultChunkCount).toBe(DEFAULT_RESULT_CHUNK_COUNT);
     expect(config.similarThreshold).toBe(0);
-    expect(config.rerankConfig).toEqual({ enabled: false, modelProfileId: '', topK: undefined });
+    expect(config.rerankConfig).toEqual({ enabled: false, modelProfileId: '', topK: DEFAULT_RERANK_TOP_K });
     expect(config.fusionConfig?.fusionType).toBe('RRF');
     expect(config.fusionConfig?.rrfK).toBe(DEFAULT_RRF_K);
     expect(config.fusionConfig?.channelDenseWeight).toEqual({ VECTOR: 0.7, BM25: 0.2, GRAPH: 0.1 });
@@ -195,7 +196,7 @@ describe('parseStrategyJson 回显', () => {
     expect(parsed.rewriteQuestion).toBe(false);
     expect(parsed.resultChunkCount).toBe(DEFAULT_RESULT_CHUNK_COUNT);
     expect(parsed.similarThreshold).toBe(0);
-    expect(parsed.rerankConfig).toEqual({ enabled: true, modelProfileId: '', topK: undefined });
+    expect(parsed.rerankConfig).toEqual({ enabled: true, modelProfileId: '', topK: DEFAULT_RERANK_TOP_K });
     expect(parsed.fusionConfig?.rrfK).toBe(DEFAULT_RRF_K);
     expect(parsed.fusionConfig?.channelDenseWeight).toEqual({ VECTOR: 0.7, BM25: 0.2, GRAPH: 0.1 });
   });

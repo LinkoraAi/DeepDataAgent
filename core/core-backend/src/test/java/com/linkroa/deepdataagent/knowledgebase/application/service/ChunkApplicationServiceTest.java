@@ -1384,41 +1384,6 @@ class ChunkApplicationServiceTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
-    void should_coverBothNonTerminalStatuses_when_failNonTerminal_given_startupCleanup() {
-        // given：启动清理一次性把 PENDING/PROCESSING 收敛为 FAILED，返回影响行数
-        when(documentRepository.failNonTerminal(anySet(), eq(DocumentStatus.FAILED),
-                eq("[STARTUP] 服务重启中断，请重新解析"))).thenReturn(3);
-
-        // when
-        int failed = service.failNonTerminal("[STARTUP] 服务重启中断，请重新解析");
-
-        // then：源状态集合锁定为两非终态，目标态与原因原样透传
-        assertEquals(3, failed);
-        ArgumentCaptor<Set<DocumentStatus>> statusCaptor = ArgumentCaptor.forClass(Set.class);
-        verify(documentRepository).failNonTerminal(statusCaptor.capture(), eq(DocumentStatus.FAILED),
-                eq("[STARTUP] 服务重启中断，请重新解析"));
-        assertEquals(Set.of(DocumentStatus.PENDING, DocumentStatus.PROCESSING), statusCaptor.getValue());
-    }
-
-    @Test
-    void should_returnZero_when_failNonTerminal_given_noResidualRows() {
-        // given：无崩溃残留时批量 UPDATE 天然影响 0 行（幂等）
-        when(documentRepository.failNonTerminal(anySet(), eq(DocumentStatus.FAILED), any()))
-                .thenReturn(0);
-
-        // when // then
-        assertEquals(0, service.failNonTerminal("[STARTUP] 服务重启中断，请重新解析"));
-    }
-
-    @Test
-    void should_throwBadRequest_when_failNonTerminal_given_blankErrorMessage() {
-        // when // then
-        assertThrows(DeepDataAgentException.class, () -> service.failNonTerminal("  "));
-        verify(documentRepository, never()).failNonTerminal(anySet(), any(), any());
-    }
-
-    @Test
     void should_transitToFailedWithReason_when_markFailed_given_processingDocument() {
         // given
         when(documentRepository.transitStatus(DOC_ID, Set.of(DocumentStatus.PROCESSING),

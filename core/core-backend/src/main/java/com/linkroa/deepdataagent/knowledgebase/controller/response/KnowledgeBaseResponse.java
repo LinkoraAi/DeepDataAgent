@@ -10,7 +10,7 @@ import java.time.OffsetDateTime;
  * @param name              知识库名称
  * @param description       描述
  * @param language          知识库语言（{@code knowledge_base.language} 列原值回显——语言唯一真相源；
- *                          值域为 KbLanguage 十一语言全名，存量大小写变体按列原样回显）
+ *                          值域为 KbLanguage 的 Chinese/English，存量大小写变体按列原样回显）
  * @param lifecycleStatus   生命周期状态（ACTIVE/DELETING/DELETE_FAILED；已删除库行物理缺失，不再对外暴露）
  * @param errorMessage      删除失败留痕（{@code knowledge_base.error_message} 列原值）：仅 DELETE_FAILED 态
  *                          携带清退失败步骤摘要（形如 {@code [KB-CLEANUP] step=…}），供前端提示

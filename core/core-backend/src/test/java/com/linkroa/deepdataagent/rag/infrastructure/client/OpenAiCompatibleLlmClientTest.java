@@ -5,6 +5,7 @@ import com.linkroa.deepdataagent.rag.domain.enums.CacheType;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatRequest;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatResult;
 import com.linkroa.deepdataagent.rag.domain.port.LlmImage;
+import com.linkroa.deepdataagent.rag.domain.port.LlmStreamDelta;
 import io.agentscope.core.message.Base64Source;
 import io.agentscope.core.message.ContentBlock;
 import io.agentscope.core.message.ImageBlock;
@@ -32,10 +33,12 @@ import reactor.core.publisher.Flux;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -50,8 +53,9 @@ import static org.mockito.Mockito.when;
  * <p>报文形态断言基线由「逐字节 JSON」迁移为「框架消息/选项对象」：
  * ① {@code buildMessages} 钉死 system/user 角色、无图文本形态、有图时
  * 「文本块在前、图片块按序追加」且 base64 与 mediaType 正确；
- * ② {@code buildOptions} 钉死 {@code stream=false}、温度仅显式给出时下发、
- * 超时 180s 且 {@code maxAttempts=1}（关闭重试）；
+ * ② {@code buildOptions} 钉死 {@code stream=true}（超时语义为分片间静默检测）、
+ * 恒定下发 {@code enable_thinking=false}（关闭思考模式）、
+ * 温度仅显式给出时下发、单次超时与尝试次数取自框架默认值（5 分钟 / 3 次）；
  * ③ {@code toChatResult} 钉死分片聚合与「最后一个非空 usage 记 token」语义。</p>
  * <p>远程真实 HTTP 不触达：常规用例 Mock {@link Model}；另有一例以真实
  * {@link OpenAIChatModel} + 捕获式 {@link HttpTransport} 钉死出站 OpenAI 报文
@@ -78,6 +82,12 @@ class OpenAiCompatibleLlmClientTest {
     private static final String CANNED_COMPLETION = "{\"id\":\"c1\",\"object\":\"chat.completion\","
             + "\"model\":\"" + MODEL_NAME + "\",\"choices\":[{\"index\":0,"
             + "\"message\":{\"role\":\"assistant\",\"content\":\"HELLO\"},\"finish_reason\":\"stop\"}],"
+            + "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"total_tokens\":7}}";
+
+    /** 真实模型流式出站断言用的 SSE 分片报文（delta 形态 + 末片 usage） */
+    private static final String CANNED_STREAM_CHUNK = "{\"id\":\"c1\",\"object\":\"chat.completion.chunk\","
+            + "\"model\":\"" + MODEL_NAME + "\",\"choices\":[{\"index\":0,"
+            + "\"delta\":{\"role\":\"assistant\",\"content\":\"HELLO\"},\"finish_reason\":\"stop\"}],"
             + "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"total_tokens\":7}}";
 
     /** 模型配置解析端口 Mock */
@@ -152,19 +162,85 @@ class OpenAiCompatibleLlmClientTest {
 
     /**
      * 场景：生成选项组装。
-     * 预期：固定非流式、超时 180s、maxAttempts=1（关闭重试）、温度仅显式给出时下发。
+     * 预期：固定流式（{@code Flux.timeout} 语义为分片间静默检测）、超时与尝试次数取自
+     * 框架默认值（5 分钟 / 3 次）不变、温度仅显式给出时下发。
      */
     @Test
-    void should_disableStreamAndRetry_when_buildOptions_given_explicitTemperature() {
+    void should_useFrameworkDefaults_when_buildOptions_given_explicitTemperature() {
         // given / when
         GenerateOptions options = OpenAiCompatibleLlmClient.buildOptions(request(SYSTEM_PROMPT, USER_PROMPT, 0.2));
 
         // then
-        assertEquals(Boolean.FALSE, options.getStream());
+        assertEquals(Boolean.TRUE, options.getStream());
         assertEquals(Double.valueOf(0.2), options.getTemperature());
         ExecutionConfig executionConfig = options.getExecutionConfig();
-        assertEquals(Duration.ofSeconds(180), executionConfig.getTimeout());
-        assertEquals(Integer.valueOf(1), executionConfig.getMaxAttempts());
+        assertEquals(Duration.ofMinutes(5), executionConfig.getTimeout());
+        assertEquals(Integer.valueOf(3), executionConfig.getMaxAttempts());
+        assertEquals(Duration.ofSeconds(2), executionConfig.getInitialBackoff());
+        assertEquals(Duration.ofSeconds(30), executionConfig.getMaxBackoff());
+    }
+
+    /**
+     * 场景：生成选项组装（思考模式）。
+     * 预期：无论温度是否显式给出，均经 additionalBodyParams 恒定下发
+     * {@code enable_thinking=false}（qwen3 系端点默认开启思考，为分钟级耗时根因）。
+     */
+    @Test
+    void should_disableThinking_when_buildOptions_given_anyRequest() {
+        // when：温度显式与缺省两种形态
+        GenerateOptions withTemp = OpenAiCompatibleLlmClient.buildOptions(request(SYSTEM_PROMPT, USER_PROMPT, 0.2));
+        GenerateOptions withoutTemp = OpenAiCompatibleLlmClient.buildOptions(request(SYSTEM_PROMPT, USER_PROMPT, null));
+
+        // then：两种形态均恒定关闭思考
+        assertEquals(Boolean.FALSE, withTemp.getAdditionalBodyParams().get("enable_thinking"));
+        assertEquals(Boolean.FALSE, withoutTemp.getAdditionalBodyParams().get("enable_thinking"));
+    }
+
+    /**
+     * 场景：框架重试判定外挂计数。
+     * 预期：可重试错误使计数递增，不可重试错误不递增，且判定结果与框架默认一致。
+     */
+    @Test
+    void should_countRetryOnlyForRetryableError_when_buildOptions_given_retryCounter() {
+        // given
+        AtomicInteger retryCount = new AtomicInteger();
+        GenerateOptions options = OpenAiCompatibleLlmClient.buildOptions(
+                request(SYSTEM_PROMPT, USER_PROMPT, null), retryCount);
+        ExecutionConfig executionConfig = options.getExecutionConfig();
+
+        // when：超时（可重试）
+        boolean retryable = executionConfig.getRetryOn().test(
+                new java.util.concurrent.TimeoutException("timeout"));
+
+        // then
+        assertTrue(retryable);
+        assertEquals(1, retryCount.get());
+
+        // when：普通业务异常（不可重试）
+        boolean unknownRetryable = executionConfig.getRetryOn().test(new ModelException("bad request"));
+
+        // then
+        assertFalse(unknownRetryable);
+        assertEquals(1, retryCount.get(), "不可重试错误不得递增重试计数");
+
+        // when：400 参数非法（不可重试）与 503 服务端错误（可重试）
+        boolean badRequestRetryable = executionConfig.getRetryOn().test(
+                new io.agentscope.extensions.model.openai.exception.OpenAIException("bad", 400, "{}"));
+        boolean unavailableRetryable = executionConfig.getRetryOn().test(
+                new io.agentscope.extensions.model.openai.exception.OpenAIException("busy", 503, "{}"));
+
+        // then：仅 5xx 计入重试
+        assertFalse(badRequestRetryable, "400 不得重试");
+        assertTrue(unavailableRetryable, "503 应重试");
+        assertEquals(2, retryCount.get());
+
+        // when：框架自身的超时（Flux.timeout 产出 ModelException，默认判定不含）
+        boolean frameworkTimeoutRetryable = executionConfig.getRetryOn().test(
+                new ModelException("Model request timeout after PT5M", MODEL_NAME, "openai"));
+
+        // then：超时兜底判定使其可重试
+        assertTrue(frameworkTimeoutRetryable, "框架超时应可重试");
+        assertEquals(3, retryCount.get());
     }
 
     /**
@@ -247,7 +323,7 @@ class OpenAiCompatibleLlmClientTest {
         ArgumentCaptor<GenerateOptions> optionsCaptor = ArgumentCaptor.forClass(GenerateOptions.class);
         verify(model).stream(messagesCaptor.capture(), anyList(), optionsCaptor.capture());
         assertEquals(MsgRole.SYSTEM, messagesCaptor.getValue().get(0).getRole());
-        assertEquals(Boolean.FALSE, optionsCaptor.getValue().getStream());
+        assertEquals(Boolean.TRUE, optionsCaptor.getValue().getStream());
     }
 
     /**
@@ -269,6 +345,96 @@ class OpenAiCompatibleLlmClientTest {
         // then
         assertTrue(exception.getMessage().startsWith("模型接口调用失败: "),
                 "异常消息需保持既有前缀: " + exception.getMessage());
+    }
+
+    /**
+     * 场景：流式端口收到多个分片。
+     * 预期：分片按到达顺序逐个映射为增量，不聚合、不丢片。
+     */
+    @Test
+    void should_emitEachDeltaInOrder_when_stream_given_multiChunkResponses() {
+        // given
+        when(modelProfileAccess.resolve(PROFILE_ID)).thenReturn(endpoint());
+        when(model.stream(anyList(), anyList(), any(GenerateOptions.class)))
+                .thenReturn(Flux.just(chatResponse("AB", null), chatResponse("CD", null), chatResponse("EF", null)));
+        OpenAiCompatibleLlmClient client = newClient();
+
+        // when
+        List<LlmStreamDelta> deltas = client.stream(request(SYSTEM_PROMPT, USER_PROMPT, null))
+                .collectList()
+                .block();
+
+        // then
+        assertNotNull(deltas);
+        assertEquals(List.of("AB", "CD", "EF"), deltas.stream().map(LlmStreamDelta::text).toList());
+    }
+
+    /**
+     * 场景：流式分片中仅末片携带 usage。
+     * 预期：携带 usage 的增量透传 totalTokens，其余增量为空；聚合结果与同步口径一致。
+     */
+    @Test
+    void should_carryUsageOnlyOnUsageChunk_when_stream_given_usageOnLastChunk() {
+        // given
+        when(modelProfileAccess.resolve(PROFILE_ID)).thenReturn(endpoint());
+        when(model.stream(anyList(), anyList(), any(GenerateOptions.class)))
+                .thenReturn(Flux.just(chatResponse("HEL", null),
+                        chatResponse("LO", new ChatUsage(5, 2, 0.0))));
+        OpenAiCompatibleLlmClient client = newClient();
+
+        // when
+        List<LlmStreamDelta> deltas = client.stream(request(SYSTEM_PROMPT, USER_PROMPT, null))
+                .collectList()
+                .block();
+
+        // then
+        assertNotNull(deltas);
+        assertEquals(2, deltas.size());
+        assertNull(deltas.get(0).totalTokens(), "非 usage 分片不携带 token 用量");
+        assertEquals(Integer.valueOf(7), deltas.get(1).totalTokens());
+        assertEquals("HELLO", deltas.stream().map(LlmStreamDelta::text).reduce("", String::concat));
+    }
+
+    /**
+     * 场景：流式调用中框架模型以异常终止。
+     * 预期：异常折算为既有口径 {@code LlmCallException}，消息前缀与聚合调用一致。
+     */
+    @Test
+    void should_wrapErrorWithLegacyPrefix_when_stream_given_modelStreamFails() {
+        // given
+        when(modelProfileAccess.resolve(PROFILE_ID)).thenReturn(endpoint());
+        when(model.stream(anyList(), anyList(), any(GenerateOptions.class)))
+                .thenReturn(Flux.error(new ModelException("provider exploded", MODEL_NAME, "openai")));
+        OpenAiCompatibleLlmClient client = newClient();
+
+        // when
+        RuntimeException exception = assertThrows(RuntimeException.class,
+                () -> client.stream(request(null, USER_PROMPT, null)).collectList().block());
+
+        // then
+        assertTrue(exception.getMessage().startsWith("模型接口调用失败: "),
+                "流式异常消息需保持既有前缀: " + exception.getMessage());
+    }
+
+    /**
+     * 场景：框架返回空响应流。
+     * 预期：流式端口正常结束且不产出任何增量，由调用方决定降级口径（不在此层抛异常）。
+     */
+    @Test
+    void should_completeWithoutDelta_when_stream_given_emptyResponseStream() {
+        // given
+        when(modelProfileAccess.resolve(PROFILE_ID)).thenReturn(endpoint());
+        when(model.stream(anyList(), anyList(), any(GenerateOptions.class))).thenReturn(Flux.empty());
+        OpenAiCompatibleLlmClient client = newClient();
+
+        // when
+        List<LlmStreamDelta> deltas = client.stream(request(null, USER_PROMPT, null))
+                .collectList()
+                .block();
+
+        // then
+        assertNotNull(deltas);
+        assertTrue(deltas.isEmpty(), "空响应流不得产出任何增量");
     }
 
     /**
@@ -323,12 +489,13 @@ class OpenAiCompatibleLlmClientTest {
     }
 
     /**
-     * 场景（钉死点）：真实 {@link OpenAIChatModel} + 捕获式框架传输发起带图对话。
+     * 场景（钉死点）：真实 {@link OpenAIChatModel} + 捕获式框架传输发起带图流式对话。
      * 预期：出站 URL 为版本化 base 去重拼接的 chat/completions，请求体含
-     * {@code image_url} data URI 形态与文本分片；响应聚合为 HELLO / 7 tokens。
+     * {@code image_url} data URI 形态、{@code stream=true} 与 {@code stream_options.include_usage}；
+     * SSE 分片聚合为 HELLO / 7 tokens（末片 usage 记账）。
      */
     @Test
-    void should_produceOpenAiWireBodyWithImageUrl_when_chat_given_realChatModel() {
+    void should_produceStreamingWireBodyWithImageUrlAndUsageOption_when_chat_given_realChatModel() {
         // given
         CapturingHttpTransport capturingTransport = new CapturingHttpTransport(
                 HttpResponse.builder().statusCode(200).body(CANNED_COMPLETION).build());
@@ -336,7 +503,6 @@ class OpenAiCompatibleLlmClientTest {
                 .apiKey("sk-x")
                 .baseUrl("https://api.example/v1")
                 .modelName(MODEL_NAME)
-                .stream(false)
                 .httpTransport(capturingTransport)
                 .build();
         when(modelProfileAccess.resolve(PROFILE_ID)).thenReturn(endpoint());
@@ -356,7 +522,11 @@ class OpenAiCompatibleLlmClientTest {
                 "图片以 data URI 内联 base64");
         assertFalse(httpRequest.getBody().contains("\"user\":"), "不得下发破坏确定性的 user 字段");
         assertFalse(httpRequest.getBody().contains("\"n\":"), "不得下发破坏确定性的 n 字段");
-        assertFalse(httpRequest.getBody().contains("\"stream\":true"), "非流式请求不得声明 stream=true");
+        assertTrue(httpRequest.getBody().contains("\"stream\":true"), "对话请求必须声明 stream=true");
+        assertTrue(httpRequest.getBody().contains("\"include_usage\":true"),
+                "流式请求必须携带 stream_options.include_usage");
+        assertTrue(httpRequest.getBody().contains("\"enable_thinking\":false"),
+                "出站报文必须携带关闭思考模式的 enable_thinking=false");
         assertEquals("HELLO", result.text());
         assertEquals(7, result.totalTokens());
     }
@@ -472,7 +642,8 @@ class OpenAiCompatibleLlmClientTest {
         @Override
         public Flux<String> stream(HttpRequest request) {
             this.captured = request;
-            return Flux.empty();
+            // 模拟 SSE 载荷：一条 delta 分片（含末片 usage）+ 终止标记
+            return Flux.just(CANNED_STREAM_CHUNK, "[DONE]");
         }
 
         @Override

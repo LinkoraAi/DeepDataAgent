@@ -2,6 +2,7 @@ package com.linkroa.deepdataagent.rag.application.service;
 
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskRegistry;
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskType;
+import com.linkroa.deepdataagent.knowledgebase.api.IngestionCancellationApi;
 import com.linkroa.deepdataagent.knowledgebase.api.KbCacheCleanupApi;
 import com.linkroa.deepdataagent.knowledgebase.api.KbCleanupWriter;
 import com.linkroa.deepdataagent.knowledgebase.api.KnowledgeBaseApi;
@@ -9,6 +10,7 @@ import com.linkroa.deepdataagent.rag.domain.repository.EntityInfoVectorRepositor
 import com.linkroa.deepdataagent.rag.domain.repository.EntityNodeGraphRepository;
 import com.linkroa.deepdataagent.rag.domain.repository.RelationEdgeGraphRepository;
 import com.linkroa.deepdataagent.rag.domain.repository.RelationInfoVectorRepository;
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -16,11 +18,17 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.util.List;
+
 /**
  * 整库清退编排服务（RAG 消费方唯一编排）。
  * <p>由 {@code DeletionCleanupTaskExecutor} 的<b>删除清退虚拟线程</b>在单个清退任务内按序驱动
  * （原 {@code KbCleanupTaskQueue} 内存有界队列 + 单消费者机器已退役）：</p>
  * <ol>
+ *   <li>{@code CANCEL_INGESTION}（关键）：按文档等待库内在飞摄入任务收口——
+ *       知识库受理删除时已把非终态文档置 {@code DELETING}，worker 在阶段边界自灭；
+ *       本步只做有界等待，MUST NOT 中断在飞线程（中断会破坏其 JDBC 连接）；</li>
  *   <li>{@code ASSETS}（关键）：Storage 先删——经 {@link KbCleanupWriter#cleanupAssetsByKnowledgeBase(Long)}
  *       一步完成「桶发现（读该库文档行 {@code s3_file} 引用）→ 整库前缀 {@code rag/{kbId}/} 清完」，
  *       远程 IO 全程事务外，「对象不存在」视为成功，天然幂等可重入；</li>
@@ -63,6 +71,9 @@ public class KbCleanupOrchestrationService {
     /** 步骤名：文件资产回收（桶发现 + 整库前缀清完，关键）。 */
     static final String STEP_ASSETS = "ASSETS";
 
+    /** 步骤名：取消并等待库内在飞摄入任务收口（关键）。 */
+    static final String STEP_CANCEL_INGESTION = "CANCEL_INGESTION";
+
     /** 步骤名：派生数据（切片 + 1:1 表示）分批清退（关键）。 */
     static final String STEP_DERIVED_DATA = "DERIVED_DATA";
 
@@ -88,6 +99,10 @@ public class KbCleanupOrchestrationService {
     @Value("${app.rag.cleanup.batch-size:500}")
     private int batchSize = DEFAULT_BATCH_SIZE;
 
+    /** 单文档取消等待上限（秒）：只等待收尾闩归零，不中断在飞线程。 */
+    @Value("${app.rag.cleanup.cancel-wait-timeout-seconds:30}")
+    private long cancelWaitTimeoutSeconds = 30L;
+
     private final KbCleanupWriter kbCleanupWriter;
 
     private final EntityNodeGraphRepository entityNodeGraphRepository;
@@ -102,6 +117,9 @@ public class KbCleanupOrchestrationService {
 
     private final KnowledgeBaseApi knowledgeBaseApi;
 
+    /** 摄入取消契约：按文档有界等待在飞任务收口（与文档删除链同一语义）。 */
+    private final IngestionCancellationApi ingestionCancellationApi;
+
     /** 在飞任务注册表（rag BC 实现）：清退收尾（成功收口或失败留痕已收敛）时移除本实例的在飞成员 */
     private final InFlightTaskRegistry inFlightTaskRegistry;
 
@@ -115,6 +133,7 @@ public class KbCleanupOrchestrationService {
      * @param relationInfoVectorRepository 关系向量仓储（rag 自有，按 kbId 物理批删）
      * @param kbCacheCleanupApi          LLM 缓存按库整清契约（非关键步骤）
      * @param knowledgeBaseApi           知识库契约（清退完成后经条件 DELETE 收口物理删行 / 失败留痕）
+     * @param ingestionCancellationApi   摄入取消契约（清退前有界等待库内在飞任务收口）
      * @param inFlightTaskRegistry       在飞任务注册表（清退收尾时移除本实例的整库清退在飞成员）
      */
     public KbCleanupOrchestrationService(KbCleanupWriter kbCleanupWriter,
@@ -124,6 +143,7 @@ public class KbCleanupOrchestrationService {
                                          RelationInfoVectorRepository relationInfoVectorRepository,
                                          KbCacheCleanupApi kbCacheCleanupApi,
                                          KnowledgeBaseApi knowledgeBaseApi,
+                                         IngestionCancellationApi ingestionCancellationApi,
                                          InFlightTaskRegistry inFlightTaskRegistry) {
         this.kbCleanupWriter = kbCleanupWriter;
         this.entityNodeGraphRepository = entityNodeGraphRepository;
@@ -132,6 +152,7 @@ public class KbCleanupOrchestrationService {
         this.relationInfoVectorRepository = relationInfoVectorRepository;
         this.kbCacheCleanupApi = kbCacheCleanupApi;
         this.knowledgeBaseApi = knowledgeBaseApi;
+        this.ingestionCancellationApi = ingestionCancellationApi;
         this.inFlightTaskRegistry = inFlightTaskRegistry;
     }
 
@@ -152,6 +173,9 @@ public class KbCleanupOrchestrationService {
         }
         long startedAt = System.currentTimeMillis();
         log.info("[KB-CLEANUP] kbId={} 清退任务开始", kbId);
+        if (!runCriticalStep(kbId, STEP_CANCEL_INGESTION, () -> cancelIngestion(kbId))) {
+            return;
+        }
         if (!runCriticalStep(kbId, STEP_ASSETS, () -> kbCleanupWriter.cleanupAssetsByKnowledgeBase(kbId))) {
             return;
         }
@@ -172,6 +196,36 @@ public class KbCleanupOrchestrationService {
                 kbId, System.currentTimeMillis() - startedAt);
         // 收口完成（行已物理删除，或条件 DELETE 零行命中＝已收口）→ 状态已收敛，移除在飞成员
         unregisterQuietly(kbId);
+    }
+
+    /**
+     * 等待库内全部在飞摄入任务收口（清退第一关键步）。
+     * <p>知识库受理删除时已把库内非终态文档置 {@code DELETING}；本步按文档逐个调用
+     * {@link IngestionCancellationApi#awaitTermination(Long, Duration)} 做有界等待。
+     * MUST NOT 中断在飞线程：中断会破坏该线程上的 JDBC 连接，并使 worker 的取消状态
+     * 读取失败、误走失败回写。超时仅 WARN 留痕后继续——残留写入由图合并的取消闸门兜底
+     * （文档已 DELETING，任何后续写回都会被拒绝）。</p>
+     *
+     * @param kbId 知识库主键
+     */
+    private void cancelIngestion(Long kbId) {
+        List<Long> documentIds = kbCleanupWriter.listDocumentIds(kbId);
+        if (CollectionUtils.isEmpty(documentIds)) {
+            return;
+        }
+        int terminated = 0;
+        for (Long documentId : documentIds) {
+            if (ingestionCancellationApi.awaitTermination(documentId,
+                    Duration.ofSeconds(cancelWaitTimeoutSeconds))) {
+                terminated++;
+            } else {
+                log.warn("[KB-CLEANUP] kbId={} 文档在飞任务取消等待超时（{}s），"
+                                + "继续清退；残留写入由图合并取消闸门拦截, documentId={}",
+                        kbId, cancelWaitTimeoutSeconds, documentId);
+            }
+        }
+        log.info("[KB-CLEANUP] kbId={} step={} 已确认终止文档数={}/{}",
+                kbId, STEP_CANCEL_INGESTION, terminated, documentIds.size());
     }
 
     /**

@@ -73,13 +73,13 @@ public record RetrievalQuery(
     public static final int DEFAULT_TOP_K = 20;
 
     /** 上下文总 token 预算默认值 */
-    public static final int DEFAULT_MAX_TOTAL_TOKENS = 4096;
+    public static final int DEFAULT_MAX_TOTAL_TOKENS = 30000;
 
     /** 实体上下文 token 预算默认值 */
-    public static final int DEFAULT_MAX_ENTITY_TOKENS = 2000;
+    public static final int DEFAULT_MAX_ENTITY_TOKENS = 6000;
 
     /** 关系上下文 token 预算默认值 */
-    public static final int DEFAULT_MAX_RELATION_TOKENS = 3000;
+    public static final int DEFAULT_MAX_RELATION_TOKENS = 8000;
 
     /**
      * 紧凑构造器：非空合理性校验 + Integer 字段 null 归默认值 + 多模态开关 null 归全开默认。

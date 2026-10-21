@@ -2,7 +2,6 @@ package com.linkroa.deepdataagent.rag.controller.convert;
 
 import com.linkroa.deepdataagent.rag.application.contract.RetrievalChunkView;
 import com.linkroa.deepdataagent.rag.controller.response.ChunkReferenceResponse;
-import com.linkroa.deepdataagent.rag.controller.response.RetrievalAnswerResponse;
 import com.linkroa.deepdataagent.rag.controller.response.RetrievalChunksResponse;
 import org.junit.jupiter.api.Test;
 
@@ -20,46 +19,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link RetrievalResponseConvert} 单元测试。
- * <p>覆盖：① 答案形态只投影 answer（降级 null 原样透传）；② 切片形态按相关性序投影明细，
- * 含正文全量、来源文件与多模态资源路径；③ 明细 null / 空表归一为空表非 null；
- * ④ 文本切片无媒体引用时 modalFile 为 null；⑤ 对象键（含中文与空格特殊字符）不外泄——
- * modalFile 仅按切片 ID 构造知识库预览端点（桶概念已退役，旧存储预览 URL 编码口径随之消失）；
- * ⑥ 契约面断言：两个响应 record 组件集合恰为约定字段，不含 references/degraded/
- * contextData/rawData 等不外露分量。</p>
+ * <p>覆盖：① 切片形态按相关性序投影明细，含正文全量、来源文件与多模态资源路径；
+ * ② 明细 null / 空表归一为空表非 null；③ 文本切片无媒体引用时 modalFile 为 null；
+ * ④ 对象键（含中文与空格特殊字符）不外泄——modalFile 仅按切片 ID 构造知识库预览端点
+ * （桶概念已退役，旧存储预览 URL 编码口径随之消失）；
+ * ⑤ 契约面断言：响应 record 组件集合恰为约定字段，不含 references/degraded/
+ * contextData/rawData 等不外露分量。答案端点已改为 SSE，答案形态不再由本类投影。</p>
  *
  * @author DeepDataAgent
  */
 class RetrievalResponseConvertTest {
 
-    /** 测试答案文本 */
-    private static final String ANSWER = "按平台规则第 8 条处理";
-
     /** 多模态资源预览端点模板（modalFile 期望值：切片媒体在线预览，仅暴露切片 ID） */
     private static final String PREVIEW_URL_TEMPLATE = "/api/v1/knowledge-base/chunks/%s/media";
-
-    /**
-     * ① 答案形态：answer 原样透传。
-     */
-    @Test
-    void should_carryAnswerOnly_when_toAnswerResponse_given_answerText() {
-        // given // when
-        RetrievalAnswerResponse response = RetrievalResponseConvert.INSTANCE.toAnswerResponse(ANSWER);
-
-        // then
-        assertEquals(ANSWER, response.answer());
-    }
-
-    /**
-     * ① 答案生成降级（answer=null）：形态原样透传 null，不改写为空串。
-     */
-    @Test
-    void should_keepNullAnswer_when_toAnswerResponse_given_stage5Degraded() {
-        // given // when
-        RetrievalAnswerResponse response = RetrievalResponseConvert.INSTANCE.toAnswerResponse(null);
-
-        // then
-        assertNull(response.answer());
-    }
 
     /**
      * ② 切片形态：明细按相关性序逐条投影（正文全量、来源文件、资源路径、分值）。
@@ -161,15 +133,12 @@ class RetrievalResponseConvertTest {
     }
 
     /**
-     * ⑥ 契约面断言：两个响应 record 组件集合恰为约定的单字段形态，
+     * ⑤ 契约面断言：响应 record 组件集合恰为约定的单字段形态，
      * 引用列表、降级标记与内部结构（contextData / rawData）一律不在对外组件中。
      */
     @Test
-    void should_exposeOnlyAgreedComponents_when_inspectBothResponseRecordComponents() {
+    void should_exposeOnlyAgreedComponents_when_inspectChunkResponseRecordComponents() {
         // given // when
-        Set<String> answerNames = Arrays.stream(RetrievalAnswerResponse.class.getRecordComponents())
-                .map(RecordComponent::getName)
-                .collect(Collectors.toSet());
         Set<String> chunksNames = Arrays.stream(RetrievalChunksResponse.class.getRecordComponents())
                 .map(RecordComponent::getName)
                 .collect(Collectors.toSet());
@@ -178,7 +147,6 @@ class RetrievalResponseConvertTest {
                 .collect(Collectors.toSet());
 
         // then
-        assertEquals(Set.of("answer"), answerNames);
         assertEquals(Set.of("chunks"), chunksNames);
         assertEquals(Set.of("chunkId", "chunkContent", "sourceFile", "modalFile", "score"), chunkNames);
     }

@@ -142,21 +142,18 @@ describe('DocReaderDialog', () => {
       expect(previewTextMock).not.toHaveBeenCalled();
     });
 
-    it.each(['XLS', 'XLSX'])(
-      'should 渲染 excel 组件且不再调用文本提取_when 打开 %s 文档_given 正常文档',
-      async (type) => {
-        // given
-        fetchBlobMock.mockResolvedValue(fakeBlob());
+    it('should 渲染 excel 组件且不再调用文本提取_when 打开 XLSX 文档_given 正常文档', async () => {
+      // given
+      fetchBlobMock.mockResolvedValue(fakeBlob());
 
-        // when
-        const wrapper = await openWith(makeDoc(type));
+      // when
+      const wrapper = await openWith(makeDoc('XLSX'));
 
-        // then
-        expect(page().find('.stub-excel').exists()).toBe(true);
-        expect(fetchBlobMock).toHaveBeenCalledWith(documentContentPath(1));
-        expect(previewTextMock).not.toHaveBeenCalled();
-      },
-    );
+      // then
+      expect(page().find('.stub-excel').exists()).toBe(true);
+      expect(fetchBlobMock).toHaveBeenCalledWith(documentContentPath(1));
+      expect(previewTextMock).not.toHaveBeenCalled();
+    });
 
     it('should 渲染 pptx 组件_when 打开 PPTX 文档_given 正常文档', async () => {
       // given
@@ -218,6 +215,20 @@ describe('DocReaderDialog', () => {
       expect(findButton('下载').exists()).toBe(true);
       expect(fetchBlobMock).not.toHaveBeenCalled();
       expect(previewTextMock).not.toHaveBeenCalled();
+    });
+
+    it('should 提示下载且不走 excel 渲染_when 打开老二进制 XLS 文档', async () => {
+      // given（@vue-office/excel 内置 exceljs 仅支持 xlsx，老 BIFF 格式必须引导下载而非报错）
+
+      // when
+      const wrapper = await openWith(makeDoc('XLS'));
+
+      // then
+      expect(page().text()).toContain('该格式不支持在线预览');
+      expect(page().find('.stub-excel').exists()).toBe(false);
+      expect(fetchBlobMock).not.toHaveBeenCalled();
+      expect(previewTextMock).not.toHaveBeenCalled();
+      expect(findButton('下载').exists()).toBe(true);
     });
 
     it('should 提示超限并保留下载_when 打开超过 50MB 的文档_given 大文件', async () => {

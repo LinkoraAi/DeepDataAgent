@@ -20,6 +20,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,9 +42,10 @@ import java.util.stream.Collectors;
  *     渲染后的真实 token 数（即先为图谱实体/关系与模板骨架预留份额），下限钳制为 0；</li>
  *     <li>{@code processChunksUnified}：按输入顺序逐 chunk 累加正文 token（复用
  *     {@link TokenCounter} 真实编码），超预算即停、仅保留之前已装入的 chunk；</li>
- *     <li>{@code generateReferenceList}：保留 chunk 的来源文件按首次出现序去重分配
- *     {@code reference_id}，引用列表格式 {@code [n] 来源文件名}，
- *     最多 {@link RetrievalConstants#REFERENCE_MAX_COUNT} 条；</li>
+ *     <li>{@code generateReferenceList}：按来源在装入切片中出现的<b>频次降序、同频次按首次出现序</b>
+ *     分配 {@code reference_id}（从 1 连续递增），引用列表格式 {@code [n] 来源文件名}，
+ *     <b>不施加条数上限</b>（对齐 LightRAG，凡被编号的来源全部列入）；无来源文件信息的切片
+ *     不参与编号、不进入列表；</li>
  *     <li>{@code renderChunksContext}：每条保留 chunk 渲染为含 {@code reference_id}
  *     与 {@code content} 的单行 JSON（ObjectMapper 序列化，等价
  *     {@code json.dumps(ensure_ascii=False)}）。</li>
@@ -137,9 +139,6 @@ public class DefaultContextBuilder implements ContextBuilder {
     /** 逐行 JSON 记录之间的连接符 */
     private static final String LINE_JOINER = "\n";
 
-    /** 来源文件名缺失时的引用占位名 */
-    private static final String UNKNOWN_SOURCE_FILE = "unknown";
-
     /** Token 计数器（真实 encode，预算累加、框架空算与回答模板空算的唯一口径） */
     private final TokenCounter tokenCounter;
 
@@ -209,8 +208,9 @@ public class DefaultContextBuilder implements ContextBuilder {
         int availableTokens = resolveAvailableTokens(profile, entitiesStr, relationsStr, budget);
         Map<Long, Chunk> chunkById = fetchChunkById(kbId, safeChunks);
         List<RetainedChunk> retained = processChunksUnified(safeChunks, chunkById, availableTokens);
+        Map<String, String> fileNameByKey = assignReferenceEntries(retained);
         Map<String, Integer> referenceIdBySource = assignReferenceIds(retained);
-        List<String> referenceList = buildReferenceList(referenceIdBySource);
+        List<String> referenceList = buildReferenceList(referenceIdBySource, fileNameByKey);
         String textChunksStr = renderChunksContext(retained, referenceIdBySource);
 
         Map<String, String> vars = new LinkedHashMap<>();
@@ -315,42 +315,95 @@ public class DefaultContextBuilder implements ContextBuilder {
                 break;
             }
             usedTokens += chunkTokens;
+            // 无来源文件信息时保持空串（不回落占位名）：此类切片不参与引用编号
             String sourceFile = StringUtils.defaultIfBlank(chunk.sourceFileName(), ranked.sourceFile());
             // chunkId 为装入条目的固有身份：与 content/sourceFile 同步携带至出口
             retained.add(new RetainedChunk(chunk.id(), chunk.chunkContent(),
-                    StringUtils.defaultIfBlank(sourceFile, UNKNOWN_SOURCE_FILE)));
+                    StringUtils.defaultString(sourceFile), chunk.documentId()));
         }
         return retained;
     }
 
     /**
-     * 为保留 chunk 的来源文件按首次出现序去重分配 reference_id（从 1 起）。
+     * 为保留 chunk 的来源**文档**去重收集文件名。
+     * <p>去重键优先取文档主键 {@code documentId}（同一文档的多个切片共享一条来源），
+     * 主键缺失时回落为来源文件名；两者皆缺的切片不参与编号，直接跳过。
+     * 返回的有序映射只服务引用列表的文件名取值。</p>
      *
      * @param retained 预算内保留的 chunk 列表
-     * @return 来源文件名 → 引用编号的有序映射
+     * @return 去重键 → 来源文件名 的有序映射（不含有无来源的切片）
      */
-    private Map<String, Integer> assignReferenceIds(List<RetainedChunk> retained) {
-        Map<String, Integer> idBySource = new LinkedHashMap<>();
+    private Map<String, String> assignReferenceEntries(List<RetainedChunk> retained) {
+        Map<String, String> fileNameByKey = new LinkedHashMap<>();
         for (RetainedChunk chunk : retained) {
-            idBySource.putIfAbsent(chunk.sourceFile(), idBySource.size() + 1);
+            String key = referenceKey(chunk);
+            if (StringUtils.isEmpty(key)) {
+                continue;
+            }
+            fileNameByKey.putIfAbsent(key, chunk.sourceFile());
         }
-        return idBySource;
+        return fileNameByKey;
     }
 
     /**
-     * 生成引用列表：格式 {@code [n] 来源文件名}，
-     * 最多 {@link RetrievalConstants#REFERENCE_MAX_COUNT} 条。
+     * 计算去重键：文档主键优先，缺失时回落文件名。
+     * <p>引用列表只呈现来源文件名，故<b>来源文件名为空白时不参与编号</b>，返回空串
+     * （对齐 LightRAG 对 {@code unknown_source} 的处理）。</p>
      *
-     * @param idBySource 来源文件名 → 引用编号映射
+     * @param chunk 保留切片
+     * @return 去重键；无来源文件信息时为空串
+     */
+    private static String referenceKey(RetainedChunk chunk) {
+        if (StringUtils.isBlank(chunk.sourceFile())) {
+            return StringUtils.EMPTY;
+        }
+        return ObjectUtils.isNotEmpty(chunk.documentId())
+                ? "doc:" + chunk.documentId() : "file:" + chunk.sourceFile();
+    }
+
+    /**
+     * 为来源文档分配 reference_id（从 1 起连续递增）。
+     * <p>编号顺序对齐 LightRAG：同一来源在装入切片中出现的<b>次数降序</b>，
+     * 次数相同则按<b>首次出现顺序</b>升序；无来源信息的切片不参与编号。</p>
+     *
+     * @param retained 预算内保留的 chunk 列表（保持上下文序）
+     * @return 去重键 → 引用编号的有序映射
+     */
+    private Map<String, Integer> assignReferenceIds(List<RetainedChunk> retained) {
+        Map<String, Integer> occurrenceCount = new LinkedHashMap<>();
+        Map<String, Integer> firstIndex = new LinkedHashMap<>();
+        for (int index = 0; index < retained.size(); index++) {
+            String key = referenceKey(retained.get(index));
+            if (StringUtils.isEmpty(key)) {
+                continue;
+            }
+            occurrenceCount.merge(key, 1, Integer::sum);
+            firstIndex.putIfAbsent(key, index);
+        }
+        List<String> orderedKeys = occurrenceCount.keySet().stream()
+                .sorted(Comparator.comparingInt((String key) -> occurrenceCount.get(key)).reversed()
+                        .thenComparingInt(firstIndex::get))
+                .toList();
+        Map<String, Integer> idByKey = new LinkedHashMap<>();
+        for (String key : orderedKeys) {
+            idByKey.put(key, idByKey.size() + 1);
+        }
+        return idByKey;
+    }
+
+    /**
+     * 生成引用列表：格式 {@code [n] 来源文件名}，<b>不施加条数上限</b>
+     * （凡被编号的来源全部列入，保证切片上下文中的编号都能在列表中找到）。
+     *
+     * @param idByKey        去重键 → 引用编号映射（按编号升序）
+     * @param fileNameByKey  去重键 → 来源文件名映射
      * @return 引用列表（有序，可能为空）
      */
-    private List<String> buildReferenceList(Map<String, Integer> idBySource) {
+    private List<String> buildReferenceList(Map<String, Integer> idByKey, Map<String, String> fileNameByKey) {
         List<String> referenceList = new ArrayList<>();
-        for (Map.Entry<String, Integer> entry : idBySource.entrySet()) {
-            if (referenceList.size() >= RetrievalConstants.REFERENCE_MAX_COUNT) {
-                break;
-            }
-            referenceList.add(String.format(REFERENCE_ENTRY_FORMAT, entry.getValue(), entry.getKey()));
+        for (Map.Entry<String, Integer> entry : idByKey.entrySet()) {
+            referenceList.add(String.format(REFERENCE_ENTRY_FORMAT, entry.getValue(),
+                    StringUtils.defaultString(fileNameByKey.get(entry.getKey()))));
         }
         return referenceList;
     }
@@ -358,17 +411,20 @@ public class DefaultContextBuilder implements ContextBuilder {
     /**
      * 渲染文档切片上下文（renderChunksContext）：每条保留 chunk 输出
      * {@code {"reference_id": n, "content": "..."}} 单行 JSON，逐行以换行符连接；
+     * 无来源信息的切片 {@code reference_id} 输出空串（不写 {@code "null"}）；
      * 序列化失败的行记录 WARN 并跳过。
      *
-     * @param retained     预算内保留的 chunk 列表
-     * @param idBySource   来源文件名 → 引用编号映射
+     * @param retained   预算内保留的 chunk 列表
+     * @param idBySource 来源去重键 → 引用编号映射
      * @return 逐行 JSON 拼接的切片文本（无保留项时为空串）
      */
     private String renderChunksContext(List<RetainedChunk> retained, Map<String, Integer> idBySource) {
         List<String> lines = new ArrayList<>();
         for (RetainedChunk chunk : retained) {
             Map<String, String> record = new LinkedHashMap<>();
-            record.put(FIELD_REFERENCE_ID, String.valueOf(idBySource.get(chunk.sourceFile())));
+            Integer referenceId = idBySource.get(referenceKey(chunk));
+            record.put(FIELD_REFERENCE_ID, ObjectUtils.isEmpty(referenceId)
+                    ? StringUtils.EMPTY : String.valueOf(referenceId));
             record.put(FIELD_CONTENT, chunk.content());
             String line = tryWriteValueAsString(record);
             if (ObjectUtils.isNotEmpty(line)) {
@@ -611,12 +667,13 @@ public class DefaultContextBuilder implements ContextBuilder {
     }
 
     /**
-     * 预算内保留的 chunk 渲染中间态（chunkId + 正文 + 已兜底非空的来源文件名）。
+     * 预算内保留的切片条目（携带来源文档主键，供按文档去重）。
      *
-     * @param chunkId    切片主键（装入序导出 {@code retainedChunkIds} 的身份来源，回取索引保证非空）
+     * @param chunkId    切片主键
      * @param content    切片正文
-     * @param sourceFile 来源文件名（缺失时已归一为占位名）
+     * @param sourceFile 来源文件名（缺失时为空串，该切片不参与引用编号）
+     * @param documentId 所属文档主键（可为空）
      */
-    private record RetainedChunk(Long chunkId, String content, String sourceFile) {
+    private record RetainedChunk(Long chunkId, String content, String sourceFile, Long documentId) {
     }
 }

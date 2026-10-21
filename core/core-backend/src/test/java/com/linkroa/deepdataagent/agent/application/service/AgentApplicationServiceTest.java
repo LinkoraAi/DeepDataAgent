@@ -117,7 +117,7 @@ class AgentApplicationServiceTest {
     private ModelProfile profileWithOwner(Long ownerId) {
         return ModelProfile.create("profile-1", "指令模型", null, ApiFormat.OPENAI,
                 "https://api.example.com/v1", "gpt-4", "enc-cred", null, null, null,
-                10, ModelType.CHAT, null, ownerId);
+                10, ModelType.CHAT_LLM, null, ownerId);
     }
 
     @Test

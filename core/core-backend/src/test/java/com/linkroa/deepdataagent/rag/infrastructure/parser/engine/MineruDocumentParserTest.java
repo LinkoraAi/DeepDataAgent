@@ -318,7 +318,7 @@ class MineruDocumentParserTest {
 
     /**
      * 场景：查询 MinerU 引擎声明的支持类型集合。
-     * 预期：集合含办公文档 + 图片类型，不含 TXT / MD / CSV / XLS 等文本类。
+     * 预期：集合含办公文档（含 XLS / XLSX 表格）+ 图片类型，不含 TXT / MD / CSV 等纯文本类。
      */
     @Test
     void should_declareOfficeAndImageTypes_when_supportedTypes_given_mineruEngine() {
@@ -330,10 +330,12 @@ class MineruDocumentParserTest {
         assertTrue(supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.PDF));
         assertTrue(supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.PNG));
         assertTrue(supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.JPEG));
+        assertTrue(supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.XLS),
+                "MINERU 支持 XLS（实测可解析，避免走二进制直读退化为占位块）");
+        assertTrue(supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.XLSX),
+                "MINERU 支持 XLSX（实测可解析，避免走二进制直读退化为占位块）");
         assertTrue(!supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.TXT),
                 "MINERU 不支持 TXT（应走本地直读兜底）");
-        assertTrue(!supported.contains(com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FileType.XLS),
-                "MINERU 不支持 XLS");
     }
 
     /**

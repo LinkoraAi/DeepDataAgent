@@ -1,21 +1,27 @@
 package com.linkroa.deepdataagent.rag.controller.rest;
 
+import com.linkroa.deepdataagent.knowledgebase.domain.model.RetrievalStrategyConfig;
+import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.RetrievalStrategyType;
+import com.linkroa.deepdataagent.rag.application.contract.AnswerStream;
 import com.linkroa.deepdataagent.rag.application.contract.QueryImageDTO;
 import com.linkroa.deepdataagent.rag.application.contract.RetrievalChunkView;
 import com.linkroa.deepdataagent.rag.application.contract.RetrievalQuery;
 import com.linkroa.deepdataagent.rag.application.service.RetrievalApplicationService;
 import com.linkroa.deepdataagent.rag.controller.request.RetrievalRequest;
-import com.linkroa.deepdataagent.rag.controller.response.RetrievalAnswerResponse;
 import com.linkroa.deepdataagent.rag.controller.response.RetrievalChunksResponse;
 import com.linkroa.deepdataagent.rag.domain.port.LlmImage;
+import com.linkroa.deepdataagent.rag.infrastructure.config.RetrievalStreamProperties;
 import com.linkroa.deepdataagent.shared.exception.InvalidQueryImageException;
+import com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException;
 import com.linkroa.deepdataagent.shared.result.ApiResponse;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import reactor.core.publisher.Flux;
 
 import java.util.Base64;
 import java.util.List;
@@ -23,10 +29,13 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -34,13 +43,15 @@ import static org.mockito.Mockito.when;
 
 /**
  * {@link RetrievalController} 单元测试。
- * <p>对齐仓库纯 Mockito 直调先例（无 MockMvc）：{@code @Mock} 应用服务 +
- * {@code @InjectMocks} controller。附图校验器为静态纯函数，直接以真实合法/非法数据驱动
- * （无需静态 mock）。覆盖：① 两端点各自的 DTO→契约组装口径一致（开关缺省归一 true、
- * 附图归空表、可选字段透传）；② 显式开关原样下传；③ 合法附图解码进契约；
- * ④ 非法附图抛 {@link InvalidQueryImageException} 且零服务交互（校验先于检索链路，两端点同规则）；
- * ⑤ 答案端点只投影 answer 且走 {@code generateAnswer}（不触碰切片与完整形态入口）；
- * ⑥ 切片端点只投影 chunks 且走 {@code retrieveChunks}（不触碰答案入口）。</p>
+ * <p>对齐仓库纯 Mockito 直调先例（无 MockMvc）：{@code @Mock} 应用服务 + 同步执行器直构
+ * controller（答案端点在专用线程执行，测试以 {@code Runnable::run} 内联执行便于断言）。
+ * 附图校验器为静态纯函数，直接以真实合法/非法数据驱动（无需静态 mock）。覆盖：</p>
+ * <ul>
+ *   <li>答案端点：建流前闸门先于建流（越权抛 404 且不创建流）、DTO→契约组装口径
+ *       （开关缺省归一 true、附图归空表、可选字段透传）、非法附图整请求拒绝；</li>
+ *   <li>切片端点：只投影 chunks 且走 {@code retrieveChunks}；</li>
+ *   <li>端点隔离：答案端点不触碰切片与完整形态入口。</li>
+ * </ul>
  *
  * @author DeepDataAgent
  */
@@ -53,9 +64,6 @@ class RetrievalControllerTest {
     /** 测试问题 */
     private static final String QUERY = "订单发货超时的处理规则是什么";
 
-    /** 测试答案 */
-    private static final String ANSWER = "按平台规则第 8 条处理";
-
     /** PNG 魔数 + 载荷（校验器合法样本） */
     private static final byte[] PNG_BYTES = {
             (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01, 0x02};
@@ -63,11 +71,22 @@ class RetrievalControllerTest {
     /** 多模态资源预览端点模板（modalFile 期望值：仅暴露切片 ID，桶概念已退役） */
     private static final String PREVIEW_URL_TEMPLATE = "/api/v1/knowledge-base/chunks/%s/media";
 
+    /** 检索编排应用服务 Mock */
     @Mock
     private RetrievalApplicationService retrievalApplicationService;
 
-    @InjectMocks
+    /** 被测控制器（同步执行器：答案流在调用线程内联执行） */
     private RetrievalController controller;
+
+    /**
+     * 每个用例重建控制器，并打桩「知识库可检索」这一夹具前置条件。
+     */
+    @BeforeEach
+    void setUp() {
+        controller = new RetrievalController(retrievalApplicationService, new RetrievalStreamProperties(),
+                Runnable::run);
+        lenient().when(retrievalApplicationService.assertRetrievable(KB_ID)).thenReturn(nearestStrategyConfig());
+    }
 
     /**
      * 构造仅含必填字段的纯文本请求体。
@@ -91,12 +110,31 @@ class RetrievalControllerTest {
                 new RetrievalChunkView(101L, "发货流程说明", "manual.pdf", null, 0.61D));
     }
 
+    /**
+     * 构造流式答案桩（单增量 + 非降级）。
+     *
+     * @return 答案流
+     */
+    private AnswerStream answerStream() {
+        return new AnswerStream(Flux.just("按平台规则第 8 条处理"));
+    }
+
+    /**
+     * 构造库级策略快照（NAIVE、无重排与融合配置）。
+     *
+     * @return 策略配置
+     */
+    private static RetrievalStrategyConfig nearestStrategyConfig() {
+        return new RetrievalStrategyConfig(RetrievalStrategyType.NAIVE, Boolean.FALSE, 5, 0.2F, null, null);
+    }
+
     // ==================== 答案端点 ====================
 
     @Test
     void should_defaultSwitchesToTrueAndEmptyImages_when_retrieveAnswer_given_textOnlyRequest() {
         // given：请求体缺省全部可选字段（含两开关）
-        when(retrievalApplicationService.generateAnswer(any(RetrievalQuery.class))).thenReturn(ANSWER);
+        when(retrievalApplicationService.generateAnswerStream(any(RetrievalQuery.class), any()))
+                .thenReturn(answerStream());
 
         // when
         controller.retrieveAnswer(textOnlyRequest());
@@ -111,29 +149,30 @@ class RetrievalControllerTest {
     }
 
     @Test
-    void should_carryAnswerOnly_when_retrieveAnswer_given_successResult() {
+    void should_createSseEmitterAndStartStream_when_retrieveAnswer_given_successRequest() {
         // given
-        when(retrievalApplicationService.generateAnswer(any(RetrievalQuery.class))).thenReturn(ANSWER);
+        when(retrievalApplicationService.generateAnswerStream(any(RetrievalQuery.class), any()))
+                .thenReturn(answerStream());
 
         // when
-        ApiResponse<RetrievalAnswerResponse> response = controller.retrieveAnswer(textOnlyRequest());
+        SseEmitter emitter = controller.retrieveAnswer(textOnlyRequest());
 
-        // then：统一包装成功，数据体只含答案
-        assertTrue(response.success());
-        assertEquals(ANSWER, response.data().answer());
+        // then：返回 SSE 连接，流式入口被调用一次（不触碰同步答案入口）
+        assertNotNull(emitter);
+        verify(retrievalApplicationService).generateAnswerStream(any(RetrievalQuery.class),
+                eq(nearestStrategyConfig()));
+        verify(retrievalApplicationService, never()).generateAnswer(any(RetrievalQuery.class));
     }
 
     @Test
-    void should_returnNullAnswerWithoutThrowing_when_retrieveAnswer_given_answerGenerationDegraded() {
-        // given：答案生成降级（编排层返回 null）
-        when(retrievalApplicationService.generateAnswer(any(RetrievalQuery.class))).thenReturn(null);
+    void should_rejectBeforeCreatingStream_when_retrieveAnswer_given_notOwner() {
+        // given：建流前闸门判定越权（与不存在折叠为同一 404）
+        when(retrievalApplicationService.assertRetrievable(KB_ID))
+                .thenThrow(new ResourceNotFoundException("知识库不存在"));
 
-        // when
-        ApiResponse<RetrievalAnswerResponse> response = controller.retrieveAnswer(textOnlyRequest());
-
-        // then：响应仍成功，answer 为空
-        assertTrue(response.success());
-        assertNull(response.data().answer());
+        // when & then：异常直接抛出（由全局异常处理映射真实 HTTP 404），流与检索链路均未创建
+        assertThrows(ResourceNotFoundException.class, () -> controller.retrieveAnswer(textOnlyRequest()));
+        verify(retrievalApplicationService, never()).generateAnswerStream(any(RetrievalQuery.class), any());
     }
 
     @Test
@@ -141,7 +180,8 @@ class RetrievalControllerTest {
         // given：显式 queryImageTranscribe=false、answerImageDirectRead 缺省
         RetrievalRequest request = new RetrievalRequest(KB_ID, QUERY, null, null, null, null, null, null, null,
                 null, Boolean.FALSE, null);
-        when(retrievalApplicationService.generateAnswer(any(RetrievalQuery.class))).thenReturn(ANSWER);
+        when(retrievalApplicationService.generateAnswerStream(any(RetrievalQuery.class), any()))
+                .thenReturn(answerStream());
 
         // when
         controller.retrieveAnswer(request);
@@ -159,7 +199,8 @@ class RetrievalControllerTest {
                 new QueryImageDTO("image/png", Base64.getEncoder().encodeToString(PNG_BYTES)));
         RetrievalRequest request = new RetrievalRequest(KB_ID, QUERY, List.of("发货"), List.of("订单"),
                 15, 8, 6000, 2500, 3500, images, Boolean.TRUE, Boolean.FALSE);
-        when(retrievalApplicationService.generateAnswer(any(RetrievalQuery.class))).thenReturn(ANSWER);
+        when(retrievalApplicationService.generateAnswerStream(any(RetrievalQuery.class), any()))
+                .thenReturn(answerStream());
 
         // when
         controller.retrieveAnswer(request);
@@ -255,7 +296,8 @@ class RetrievalControllerTest {
     @Test
     void should_notTouchOtherShapeEntry_when_retrieveAnswer_given_successRequest() {
         // given：答案端点成功路径
-        when(retrievalApplicationService.generateAnswer(any(RetrievalQuery.class))).thenReturn(ANSWER);
+        when(retrievalApplicationService.generateAnswerStream(any(RetrievalQuery.class), any()))
+                .thenReturn(answerStream());
 
         // when
         controller.retrieveAnswer(textOnlyRequest());
@@ -274,7 +316,7 @@ class RetrievalControllerTest {
         controller.retrieveChunks(textOnlyRequest());
 
         // then：不触发答案形态与既有完整形态入口（上下文构建与作答被裁剪）
-        verify(retrievalApplicationService, never()).generateAnswer(any(RetrievalQuery.class));
+        verify(retrievalApplicationService, never()).generateAnswerStream(any(RetrievalQuery.class), any());
         verify(retrievalApplicationService, never()).search(any(RetrievalQuery.class));
     }
 
@@ -296,7 +338,7 @@ class RetrievalControllerTest {
      */
     private RetrievalQuery captureAnswerQuery() {
         ArgumentCaptor<RetrievalQuery> captor = ArgumentCaptor.forClass(RetrievalQuery.class);
-        verify(retrievalApplicationService).generateAnswer(captor.capture());
+        verify(retrievalApplicationService).generateAnswerStream(captor.capture(), any());
         return captor.getValue();
     }
 }

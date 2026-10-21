@@ -59,6 +59,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
  *   <li>TooManyRequestsException: 限流，429 rate_limit_error</li>
  *   <li>RequestTooLargeException: 请求载荷超限，413 request_too_large_error</li>
  *   <li>MaxUploadSizeExceededException: multipart 上传超限（50MB），400 invalid_request_error</li>
+ *   <li>TaskRegistrationException: 在飞任务登记失败（受理回滚），500 api_error + 通用文案</li>
  *   <li>Exception: 其他未知异常，500 api_error</li>
  * </ul>
  *
@@ -428,6 +429,21 @@ public class GlobalExceptionHandler {
         log.warn("上传大小超限: {}", e.getMessage());
         return envelope(HttpStatus.BAD_REQUEST,
                 ErrorEnvelope.of(ErrorType.INVALID_REQUEST_ERROR, "上传文件超过 50MB 上限"));
+    }
+
+    /**
+     * 处理在飞任务登记失败异常（HTTP 500）。
+     * <p>登记运行在受理事务内，失败即受理回滚。对外只返回通用文案，完整底层异常
+     * （缓存连接、超时、命令执行等）仅记录服务端日志，MUST NOT 暴露实现细节。</p>
+     *
+     * @param e 在飞任务登记异常
+     * @return 500 api_error 错误信封
+     */
+    @ExceptionHandler(TaskRegistrationException.class)
+    public ResponseEntity<ErrorEnvelope> handleTaskRegistrationException(TaskRegistrationException e) {
+        log.error("在飞任务登记失败，受理事务已回滚", e);
+        return envelope(HttpStatus.INTERNAL_SERVER_ERROR,
+                ErrorEnvelope.of(ErrorType.API_ERROR, "操作失败，请稍后重试"));
     }
 
     /**

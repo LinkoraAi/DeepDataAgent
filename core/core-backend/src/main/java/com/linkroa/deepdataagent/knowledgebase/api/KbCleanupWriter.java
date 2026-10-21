@@ -53,4 +53,15 @@ public interface KbCleanupWriter {
      * @throws IllegalArgumentException kbId 为空或 batchSize 非法
      */
     int cleanupDocumentsBatch(Long kbId, int batchSize);
+
+    /**
+     * 列出知识库内全部文档主键（只读，供清退链在删除前逐文档取消在飞摄入任务）。
+     * <p>返回 id 升序；已收口文档行物理不存在，天然不参与。调用方 MUST 在
+     * {@link #cleanupDocumentsBatch} 之前使用，否则文档行已被清空、无法再取得取消目标。</p>
+     *
+     * @param kbId 知识库主键，必填
+     * @return 文档 ID 列表（升序）；无文档返回空列表
+     * @throws IllegalArgumentException kbId 为空
+     */
+    java.util.List<Long> listDocumentIds(Long kbId);
 }

@@ -6,7 +6,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -254,6 +253,37 @@ class IngestionTaskQueueTest {
         assertTrue(queue.awaitTermination(DOC_ID, Duration.ZERO));
     }
 
+    @Test
+    void should_notInterruptRunningWorker_when_awaitTermination_given_blockedTask() throws Exception {
+        // given：worker 阻塞在可中断等待上，任务处于在飞
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicReference<Boolean> interrupted = new AtomicReference<>(Boolean.FALSE);
+        doAnswer(invocation -> {
+            try {
+                release.await(ASYNC_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                interrupted.set(Boolean.TRUE);
+                Thread.currentThread().interrupt();
+            }
+            return null;
+        }).when(ingestionWorker).execute(DOC_ID);
+        queue.startConsumers();
+        queue.submit(DOC_ID);
+        awaitInFlightRegistered();
+
+        // when：删除链等待终止（短超时）
+        boolean terminated = queue.awaitTermination(DOC_ID, Duration.ofMillis(50L));
+
+        // then：等待超时返回 false，且 MUST NOT 中断 worker 线程（中断会破坏其 JDBC 连接）
+        assertFalse(terminated);
+        assertFalse(Boolean.TRUE.equals(interrupted.get()), "删除链不得中断在飞线程");
+
+        // 收尾：放行 worker，确认正常退出
+        release.countDown();
+        verify(ingestionWorker, timeout(ASYNC_TIMEOUT_MILLIS)).execute(DOC_ID);
+        awaitCleanup();
+    }
+
     /**
      * 场景（3.5）：生效消费者数 = 配置 {@code app.rag.ingestion.max-inflight}=2，投 3 篇文档。
      * 预期：同时消费的消费者数恰为生效配置值 2（第 3 篇因超上限排队），消费者经命名虚拟线程承载、
@@ -297,15 +327,16 @@ class IngestionTaskQueueTest {
     }
 
     @Test
-    void should_clearRegistryFirst_when_shutdown_given_inFlightTasks() {
+    void should_notClearRegistryInDestroyChain_when_shutdown_given_inFlightTasks() {
         // given：未启动消费者，任务停留在队列中
         queue.submit(DOC_ID);
 
         // when：停机（在飞集合为空，宽限等待立即结束，不真实等待 30 秒）
         queue.shutdown();
 
-        // then：停机第一时间清空本实例全部注册表键（消除滚动发布期间新旧进程并存的误判）
-        verify(inFlightTaskConverger, atLeastOnce()).clearInstanceRegistryQuietly();
+        // then：注册表键清空已迁出销毁回调（该时点缓存生命周期已停止），
+        // 由 InFlightTaskConverger.onContextClosed 在容器关闭事件时点承载——停机链不得再自行调用
+        verify(inFlightTaskConverger, never()).clearInstanceRegistryQuietly();
     }
 
     @Test
@@ -323,22 +354,6 @@ class IngestionTaskQueueTest {
     }
 
     @Test
-    void should_clearRegistryBeforeGraceWaitAndConvergence_when_shutdown_given_queuedResidue() {
-        // given：任务停留在队列中（不启动消费线程 → 在飞集合为空，宽限循环条件立即为假，不真实等待 30 秒）
-        queue.submit(DOC_ID);
-
-        // when
-        queue.shutdown();
-
-        // then：清空本实例键是停机链首个动作，先于宽限等待及其后的显式收敛；
-        // 在飞集合为空时宽限循环立即结束，故本 InOrder 即证明「清空键先于宽限等待开始」
-        InOrder inOrder = inOrder(inFlightTaskConverger);
-        inOrder.verify(inFlightTaskConverger).clearInstanceRegistryQuietly();
-        inOrder.verify(inFlightTaskConverger)
-                .converge(InFlightTaskType.DOC_INGESTION, DOC_ID, SHUTDOWN_ERROR_MESSAGE);
-    }
-
-    @Test
     void should_notConvergeTask_when_shutdown_given_taskFinishedWithinGrace() throws Exception {
         // given：worker 执行阻塞，任务处于在飞（消费线程持有其收尾闩）
         CountDownLatch release = new CountDownLatch(1);
@@ -350,13 +365,13 @@ class IngestionTaskQueueTest {
         queue.submit(DOC_ID);
         awaitInFlightRegistered();
 
-        // when：另一线程发起停机——停机链首动作清空本实例键后进入宽限等待
-        //      （此处手动起线程仅为测试侧停机触发器：停机须在独立线程推进，令主测试线程可观测其在飞
-        //      阻塞期间的中间态；生产代码建线程已收敛至受管执行器，见类内 startConsumers）
+        // when：另一线程发起停机——等停机标志生效即视为已进入停机推进
+        //      （键清空已迁出停机链至容器关闭事件；此处手动起线程仅为测试侧停机触发器：
+        //      停机须在独立线程推进，令主测试线程可观测其在飞阻塞期间的中间态）
         Thread shutdownThread = Thread.ofVirtual().start(queue::shutdown);
-        verify(inFlightTaskConverger, timeout(ASYNC_TIMEOUT_MILLIS)).clearInstanceRegistryQuietly();
+        awaitShutdownFlag();
 
-        // then①：键已清空而任务仍在飞，停机停在宽限等待中，尚未对任何任务做置失败收敛
+        // then①：任务仍在飞，停机停在宽限等待中，尚未对任何任务做置失败收敛
         assertTrue(shutdownThread.isAlive(), "停机应在宽限内等待在飞任务自然结束");
         verify(inFlightTaskConverger, never())
                 .converge(eq(InFlightTaskType.DOC_INGESTION), eq(DOC_ID), any());
@@ -416,7 +431,7 @@ class IngestionTaskQueueTest {
 
         // when：另一线程发起停机（执行器仅 shutdown、不打断在飞），随后在宽限内放行任务自然结束
         Thread shutdownThread = Thread.ofVirtual().start(queue::shutdown);
-        verify(inFlightTaskConverger, timeout(ASYNC_TIMEOUT_MILLIS)).clearInstanceRegistryQuietly();
+        awaitShutdownFlag();
         release.countDown();
         shutdownThread.join(ASYNC_TIMEOUT_MILLIS);
 
@@ -527,10 +542,10 @@ class IngestionTaskQueueTest {
         awaitInFlightRegistered();
         queue.submit(43L);
 
-        // when：另一线程停机；清空注册表键后进入宽限等待，
+        // when：另一线程停机；停机推进即进入宽限等待，
         // 测试侧中断宽限循环——复现「宽限期满仍有在飞」的收敛时点（不真实等待 30 秒）
         Thread shutdownThread = Thread.ofVirtual().start(queue::shutdown);
-        verify(inFlightTaskConverger, timeout(ASYNC_TIMEOUT_MILLIS)).clearInstanceRegistryQuietly();
+        awaitShutdownFlag();
         shutdownThread.interrupt();
 
         // then：在飞（表项未清理）与排队两个文档 ID 均进入残留快照并被显式收敛
@@ -542,6 +557,20 @@ class IngestionTaskQueueTest {
         // 收尾放行，消费循环自然退出，停机链走有界确认
         release.countDown();
         shutdownThread.join(ASYNC_TIMEOUT_MILLIS);
+    }
+
+    /**
+     * 自旋等待停机标志生效（键清空迁出停机链后的同步点：标志置起即证明停机链已进入推进）。
+     */
+    private void awaitShutdownFlag() {
+        long deadline = System.currentTimeMillis() + ASYNC_TIMEOUT_MILLIS;
+        while (System.currentTimeMillis() < deadline) {
+            if (Boolean.TRUE.equals(readField("shutdown"))) {
+                return;
+            }
+            Thread.onSpinWait();
+        }
+        fail("停机标志未在超时内生效：停机链未推进");
     }
 
     /**

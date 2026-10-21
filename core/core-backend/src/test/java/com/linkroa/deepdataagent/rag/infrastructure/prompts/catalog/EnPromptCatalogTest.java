@@ -36,7 +36,7 @@ class EnPromptCatalogTest {
     private static final Set<String> SYSTEM_PLACEHOLDER_KEYS =
             Set.of("tuple_delimiter", "completion_delimiter");
 
-    /** 最小变量表的占位取值（不含花括号，避免触发残留占位符误报） */
+    /** 最小变量表的占位取值（不含花括号：夹具与模板占位符形态保持可区分） */
     private static final String MINIMAL_VAR_VALUE = "TEST_VALUE";
 
     /**
@@ -81,7 +81,7 @@ class EnPromptCatalogTest {
         String body = EnPromptCatalog.TEMPLATES.get(templateName);
         Map<String, Object> vars = buildVarsFor(body);
 
-        // when：门面 render 自身对残留占位符 fail-fast，正常返回即无残留
+        // when：夹具取值不含花括号，渲染返回即代表模板占位符全部处理完毕
         String rendered = PromptCatalog.render(templateName, "English", vars);
 
         // then
@@ -140,6 +140,70 @@ class EnPromptCatalogTest {
             names.add(matcher.group(1));
         }
         return names;
+    }
+
+    /**
+     * 场景：多模态 user 模板需要按知识库语言控制输出语言。
+     * 预期：8 个 LLM 指令模板均含 {@code {language}} 占位符；切片拼装模板不含该占位符。
+     */
+    @Test
+    void should_containLanguagePlaceholder_when_inspectMultimodalUserTemplates() {
+        // given
+        String[] llmTemplates = {
+                PromptTemplates.VISION_PROMPT,
+                PromptTemplates.VISION_PROMPT_WITH_CONTEXT,
+                PromptTemplates.TABLE_PROMPT,
+                PromptTemplates.TABLE_PROMPT_WITH_CONTEXT,
+                PromptTemplates.EQUATION_PROMPT,
+                PromptTemplates.EQUATION_PROMPT_WITH_CONTEXT,
+                PromptTemplates.GENERIC_PROMPT,
+                PromptTemplates.GENERIC_PROMPT_WITH_CONTEXT};
+
+        // when / then：指令模板必须声明输出语言约束
+        for (String templateName : llmTemplates) {
+            String body = EnPromptCatalog.TEMPLATES.get(templateName);
+            assertNotNull(body, "模板 [" + templateName + "] 应存在");
+            assertTrue(body.contains("{language}"),
+                    "多模态指令模板 [" + templateName + "] 必须包含 {language} 输出约束");
+        }
+
+        // 切片拼装模板不是 LLM 指令，不得引入语言占位符
+        String[] chunkTemplates = {
+                PromptTemplates.IMAGE_CHUNK,
+                PromptTemplates.TABLE_CHUNK,
+                PromptTemplates.EQUATION_CHUNK,
+                PromptTemplates.GENERIC_CHUNK};
+        for (String templateName : chunkTemplates) {
+            assertFalse(EnPromptCatalog.TEMPLATES.get(templateName).contains("{language}"),
+                    "切片拼装模板 [" + templateName + "] 不应包含 {language}");
+        }
+    }
+
+    /**
+     * 场景：MIX（{@code rag_response}）与 NAIVE（{@code naive_rag_response}）作答模板
+     * 需与 LightRAG 的引用意图一致。
+     * <p>预期：正文要求追踪 {@code reference_id}、按 {@code ### References} 标题输出引用段、
+     * 条目格式为 {@code * [n] Document Title}、最多 5 条、引用段之后不再生成内容；
+     * 且不再包含「禁止引用」表述。</p>
+     */
+    @Test
+    void should_carryLightRagCitationIntent_when_inspectAnswerTemplates() {
+        // given
+        String[] answerTemplates = {PromptTemplates.RAG_RESPONSE, PromptTemplates.NAIVE_RAG_RESPONSE};
+
+        // when / then：引用意图五要素齐备
+        for (String templateName : answerTemplates) {
+            String body = EnPromptCatalog.TEMPLATES.get(templateName);
+            assertNotNull(body, "模板 [" + templateName + "] 应存在");
+            assertTrue(body.contains("Track the reference_id"), "模板 [" + templateName + "] 应要求追踪 reference_id");
+            assertTrue(body.contains("### References"), "模板 [" + templateName + "] 应保留 References 段标题要求");
+            assertTrue(body.contains("* [n] Document Title"), "模板 [" + templateName + "] 应保留引用条目格式");
+            assertTrue(body.contains("maximum of 5"), "模板 [" + templateName + "] 应保留最多 5 条引用限制");
+            assertTrue(body.contains("Do not generate anything after the reference section"),
+                    "模板 [" + templateName + "] 应要求 References 段之后不再生成内容");
+            assertFalse(body.contains("Citations Are Prohibited"),
+                    "模板 [" + templateName + "] 不应保留禁止引用口径");
+        }
     }
 
     /**

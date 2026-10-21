@@ -186,6 +186,24 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void should_returnApiErrorWithoutDetails_when_handleTaskRegistrationException_given_cacheUnavailable() {
+        // given（登记失败由缓存不可用引起，底层异常文本不得外泄）
+        TaskRegistrationException e = new TaskRegistrationException("操作失败，请稍后重试",
+                new RuntimeException("Redis connection refused: 127.0.0.1:6379"));
+
+        // when
+        ResponseEntity<ErrorEnvelope> response = handler.handleTaskRegistrationException(e);
+
+        // then（500 api_error + 通用文案；异常类型 / 地址 / 堆栈不进入响应体）
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
+        assertEquals(MediaType.APPLICATION_JSON, response.getHeaders().getContentType());
+        ErrorEnvelope envelope = body(response);
+        assertEquals("api_error", envelope.error().type());
+        assertEquals("操作失败，请稍后重试", envelope.error().message());
+        assertTrue(!envelope.error().message().contains("Redis"));
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void should_returnInvalidRequestEnvelope_when_handleConstraintViolation_given_firstViolationMessage() {
         // given

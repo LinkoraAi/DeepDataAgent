@@ -9,6 +9,7 @@ import com.linkroa.deepdataagent.knowledgebase.domain.model.RetrievalStrategyCon
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FusionStrategyType;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.RetrievalChannel;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.RetrievalStrategyType;
+import com.linkroa.deepdataagent.rag.application.contract.AnswerStream;
 import com.linkroa.deepdataagent.rag.application.contract.RetrievalChunkView;
 import com.linkroa.deepdataagent.rag.application.contract.RetrievalQuery;
 import com.linkroa.deepdataagent.rag.application.contract.RetrievalResult;
@@ -35,6 +36,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -199,8 +201,8 @@ public class RetrievalApplicationService {
      * 通路 B 的 {@code answerImageDirectRead} 开关由 Stage 5 作答层自行消费）
      * → ⑦ 组装 {@link RetrievalResult}（references 与上下文引用列表一致，
      * rawData 由图谱结果展开 entities/relations/chunks，chunkViews 按上下文序回取
-     * 切片正文与多模态图片引用；回取失败仅置空明细，不影响主返回与 {@code degraded}）。</p>
-     * <p>各 Stage 异常按类注释降级矩阵兜底，仅以 {@code degraded} 标记，不向调用方抛出；
+     * 切片正文与多模态图片引用；回取失败仅置空明细，不影响主返回）。</p>
+     * <p>各 Stage 异常按类注释降级矩阵兜底，不向调用方抛出（降级状态仅写入收尾日志供排障）；
      * 唯一抛出的业务异常为知识库不可用（前置校验）。</p>
      *
      * @param q 检索内部执行请求（kbId 与 query 必填，预算字段由紧凑构造器归一，
@@ -211,14 +213,15 @@ public class RetrievalApplicationService {
      * @throws DeepDataAgentException 知识库不存在或不处于 ACTIVE 状态，拒绝检索
      */
     public RetrievalResult search(RetrievalQuery q) {
-        return doSearch(q, RetrievalOutputMode.FULL);
+        requireQuery(q);
+        RetrievalStrategyConfig cfg = assertRetrievable(q.kbId());
+        return completeResult(prepare(q, cfg, RetrievalOutputMode.FULL), q.kbId(), RetrievalOutputMode.FULL);
     }
 
     /**
-     * 执行一次检索并只产出 LLM 最终答案（REST 答案形态入口，Stage 0~5 全跑）。
-     * <p>与 {@link #search(RetrievalQuery)} 的链路行为逐字段一致，仅跳过响应外的旁路开销：
-     * 不回取切片明细（省下一次批量切片表查询）。各阶段降级仍按降级矩阵兜底，
-     * 答案生成异常时本方法返回 {@code null}，不向调用方抛出。</p>
+     * 执行一次检索并只产出 LLM 最终答案（同步聚合形态，进程内调用方使用）。
+     * <p>与 {@link #generateAnswerStream(RetrievalQuery, RetrievalStrategyConfig)} 等价，
+     * 只是等待全部增量结束后拼接为完整文本返回。</p>
      *
      * @param q 检索内部执行请求（kbId 与 query 必填，其余字段由紧凑构造器归一）
      * @return 最终答案文本；答案生成降级时为 {@code null}
@@ -226,7 +229,10 @@ public class RetrievalApplicationService {
      * @throws DeepDataAgentException   知识库不存在或不处于 ACTIVE 状态，拒绝检索
      */
     public String generateAnswer(RetrievalQuery q) {
-        return doSearch(q, RetrievalOutputMode.ANSWER_ONLY).answer();
+        requireQuery(q);
+        RetrievalStrategyConfig cfg = assertRetrievable(q.kbId());
+        return completeResult(prepare(q, cfg, RetrievalOutputMode.ANSWER_ONLY), q.kbId(),
+                RetrievalOutputMode.ANSWER_ONLY).answer();
     }
 
     /**
@@ -245,34 +251,87 @@ public class RetrievalApplicationService {
      * @throws DeepDataAgentException   知识库不存在或不处于 ACTIVE 状态，拒绝检索
      */
     public List<RetrievalChunkView> retrieveChunks(RetrievalQuery q) {
-        return doSearch(q, RetrievalOutputMode.CHUNKS_ONLY).chunkViews();
+        requireQuery(q);
+        RetrievalStrategyConfig cfg = assertRetrievable(q.kbId());
+        return completeResult(prepare(q, cfg, RetrievalOutputMode.CHUNKS_ONLY), q.kbId(),
+                RetrievalOutputMode.CHUNKS_ONLY).chunkViews();
     }
 
     /**
-     * 检索编排主实现（Stage 0~5，按输出形态裁剪尾部阶段）。
-     * <p>三种形态共用同一条骨干链路（前置校验 → 通路 A 转译 → Stage 0 → Stage 1~3），
-     * 形态差异集中于三处旁路：切片形态跳过 Stage 4~5、答案形态跳过明细回取、
-     * 切片明细的取数集合随形态切换；骨干链路本身与 {@code degraded} 累积口径
-     * 不随形态变化，故 {@link #search(RetrievalQuery)} 的既有行为零漂移。</p>
+     * 建流前同步闸门：归属校验 → ACTIVE 校验 → 库级检索策略快照读取。
+     * <p>供 SSE 端点在创建 {@code SseEmitter} 之前在主线程调用。本方法 MUST NOT 执行任何
+     * Stage 0~4 操作（那些是慢操作，属于建流后的异步阶段），也 MUST NOT 在异步线程中被调用
+     * （归属校验依赖请求线程的 {@code AuthContext}）。</p>
+     * <p>归属不符与知识库不存在折叠为同一 404 形态，且判定先于任何召回与模型调用。</p>
      *
-     * @param q    检索内部执行请求
-     * @param mode 输出形态（决定尾部阶段裁剪与切片取数口径）
-     * @return 检索结果（形态未产出的分量为空值：答案形态明细为空表、切片形态 answer 为空）
+     * @param kbId 知识库主键
+     * @return 库级检索策略快照（未配置时按 NAIVE 默认策略兜底），永不为 {@code null}
+     * @throws com.linkroa.deepdataagent.shared.exception.ResourceNotFoundException 知识库非本人归属或不存在
+     * @throws DeepDataAgentException 知识库存在但未处于 ACTIVE 状态
      */
-    private RetrievalResult doSearch(RetrievalQuery q, RetrievalOutputMode mode) {
+    public RetrievalStrategyConfig assertRetrievable(Long kbId) {
+        if (!knowledgeBaseApi.isOwnedBy(kbId, AuthContext.requireUserId())) {
+            throw new ResourceNotFoundException("知识库不存在");
+        }
+        if (!knowledgeBaseApi.isActive(kbId)) {
+            throw new DeepDataAgentException("知识库不存在或不可用，拒绝检索: kbId=" + kbId);
+        }
+        return resolveStrategyConfig(kbId);
+    }
+
+    /**
+     * 执行一次检索并流式产出答案增量（REST 答案形态入口，Stage 0~5 全跑）。
+     * <p>调用方 MUST 已通过 {@link #assertRetrievable(Long)} 完成归属与可用性校验，
+     * 并把其返回的策略快照传入本方法——流式执行发生在异步线程，不能再读取
+     * {@code AuthContext}，故归属校验不在本方法内重复执行。</p>
+     *
+     * @param q   检索内部执行请求（kbId 与 query 必填，其余字段由紧凑构造器归一）
+     * @param cfg 已校验的库级检索策略快照
+     * @return 答案增量流（冷流，订阅时才真正执行 Stage 0~5）
+     * @throws IllegalArgumentException 请求对象为空
+     */
+    public AnswerStream generateAnswerStream(RetrievalQuery q, RetrievalStrategyConfig cfg) {
+        requireQuery(q);
+        AtomicInteger answerChars = new AtomicInteger();
+        // Stage 0~4 延迟到订阅时执行：控制器需先下发 answer.started 并启动保活，
+        // 再进入可能长达十几秒的准备阶段（冷缓存时 Stage 0 改写尤甚）。
+        return new AnswerStream(Flux.defer(() -> {
+            RetrievalPreparation prep = prepare(q, cfg, RetrievalOutputMode.ANSWER_ONLY);
+            long stageMark = System.nanoTime();
+            return answerGenerator.generateStream(prep.answerQuery(), prep.kgContext(), prep.cfg(),
+                            prep.effective(), prep.cacheHits())
+                    .doOnNext(delta -> answerChars.addAndGet(StringUtils.length(delta)))
+                    .doOnComplete(() -> logSummary(prep, elapsedMillis(stageMark), 0, answerChars.get(), true))
+                    .doOnCancel(() -> log.info("检索答案流被客户端取消 | kbId={} emittedChars={}",
+                            q.kbId(), answerChars.get()));
+        }));
+    }
+
+    /**
+     * 校验检索请求非空（三个公开入口共用的首行校验）。
+     *
+     * @param q 检索内部执行请求
+     * @throws IllegalArgumentException 请求对象为空
+     */
+    private static void requireQuery(RetrievalQuery q) {
         if (ObjectUtils.isEmpty(q)) {
             throw new IllegalArgumentException("检索请求不能为空");
         }
-        // 归属边界（MUST 先于任何召回 / 精排 / 模型调用，防时延与用量侧信道）：
-        // 非本人归属与不存在折叠为同一 404 形态，不泄露存在性
-        if (!knowledgeBaseApi.isOwnedBy(q.kbId(), AuthContext.requireUserId())) {
-            throw new ResourceNotFoundException("知识库不存在");
-        }
-        if (!knowledgeBaseApi.isActive(q.kbId())) {
-            throw new DeepDataAgentException("知识库不存在或不可用，拒绝检索: kbId=" + q.kbId());
-        }
-        RetrievalStrategyConfig cfg = resolveStrategyConfig(q.kbId());
+    }
 
+    /**
+     * 执行 Stage 0~4 并冻结为准备产物（同步与流式两条收尾路径共用的前半段）。
+     * <p>归属校验与 ACTIVE 闸门已由 {@link #assertRetrievable(Long)} 在调用前完成，
+     * 本方法不含任何归属判定（异步线程不可用 {@code AuthContext}）。</p>
+     * <p>三种输出形态共用同一条骨干链路（通路 A 转译 → Stage 0 → Stage 1~3 → 可选 Stage 4），
+     * 形态差异仅体现在 Stage 4 是否执行；{@code degraded} 累积口径不随形态变化。</p>
+     *
+     * @param q    检索内部执行请求（非空由调用方保证）
+     * @param cfg  已校验的库级检索策略快照
+     * @param mode 输出形态（决定是否执行 Stage 4）
+     * @return 准备产物（Stage 0~4 快照，供 Stage 5 与切片明细消费）
+     */
+    private RetrievalPreparation prepare(RetrievalQuery q, RetrievalStrategyConfig cfg, RetrievalOutputMode mode) {
         boolean degraded = false;
         // 收尾摘要观测量：Stage0~5 耗时、三通道候选数、LLM 缓存命中数
         AtomicInteger cacheHits = new AtomicInteger();
@@ -282,7 +341,6 @@ public class RetrievalApplicationService {
         long stage2Ms = 0L;
         long stage3Ms = 0L;
         long stage4Ms = 0L;
-        long stage5Ms = 0L;
         int vectorCount = 0;
         int bm25Count = 0;
         int graphCount = 0;
@@ -296,13 +354,11 @@ public class RetrievalApplicationService {
         // 开关为 true 时行为与基线逐字节一致。本开关与通路 B 开关互不感知、无交叉分支。
         String originalQuery = q.query();
         String understandQuery = originalQuery;
-        boolean imageEnhanced = false;
         if (CollectionUtils.isNotEmpty(q.images())) {
             if (q.multimodal().queryImageTranscribe()) {
                 String transcribed = queryImageTranscriber.transcribe(q.kbId(), originalQuery, q.images());
                 if (StringUtils.isNotBlank(transcribed) && !StringUtils.equals(transcribed, originalQuery)) {
                     understandQuery = transcribed;
-                    imageEnhanced = true;
                 }
             } else {
                 log.warn("queryImageTranscribe 开关关闭，忽略请求携带的 {} 张附图并按纯文本检索: kbId={}",
@@ -427,31 +483,62 @@ public class RetrievalApplicationService {
             stage4Ms = elapsedMillis(stageMark);
         }
 
-        // ---- Stage 5：答案生成（异常置 answer 为 null，主返回不中断）----
-        // 附图请求送入作答的问题文本维持原始 query（增强文本只服务检索链路，
-        // 作答的语言规则与引用仍锚定用户原话）；无附图请求沿用改写后 query，与基线逐字段一致。
-        stageMark = System.nanoTime();
-        String answerQuery = imageEnhanced ? originalQuery : rewritten;
+        // 作答始终锚定用户原始提问：改写文本只服务检索链路。
+        // 改写与关键词语言跟随知识库语言，而答案语言必须跟随用户提问语言（如英文提问→英文回答），
+        // 若把改写文本送入作答会把库语言“传染”给答案，违反问答语言边界。
+        String answerQuery = originalQuery;
+        return new RetrievalPreparation(mode, effective, cfg, kgContext, ranked, degraded, keywordFailed,
+                answerQuery, stage0Ms, stage1Ms, stage2Ms, stage3Ms, stage4Ms,
+                vectorCount, bm25Count, graphCount, cacheHits);
+    }
+
+    /**
+     * 按输出形态完成 Stage 5 并组装检索结果（同步收尾路径）。
+     * <p>切片形态跳过答案生成；其余形态答案异常时置 {@code answer} 为空并标记降级，
+     * 主返回不中断，与拆分前口径一致。</p>
+     *
+     * @param prep 准备产物（Stage 0~4 快照）
+     * @param kbId 知识库主键
+     * @param mode 输出形态（决定切片明细取数来源与是否作答）
+     * @return 检索结果
+     */
+    private RetrievalResult completeResult(RetrievalPreparation prep, Long kbId, RetrievalOutputMode mode) {
+        long stageMark = System.nanoTime();
         String answer = null;
         if (mode != RetrievalOutputMode.CHUNKS_ONLY) {
             try {
-                answer = answerGenerator.generate(answerQuery, kgContext, cfg, effective, cacheHits);
+                answer = answerGenerator.generate(prep.answerQuery(), prep.kgContext(), prep.cfg(),
+                        prep.effective(), prep.cacheHits());
             } catch (Exception e) {
-                degraded = true;
-                log.error("Stage 5 答案生成异常，返回检索产物（answer 为空）: kbId={}", q.kbId(), e);
+                log.error("Stage 5 答案生成异常，返回检索产物（answer 为空）: kbId={}", kbId, e);
             }
         }
-        stage5Ms = elapsedMillis(stageMark);
-        List<String> references = CollectionUtils.isEmpty(kgContext.referenceList())
-                ? List.of() : kgContext.referenceList();
-        List<RetrievalChunkView> chunkViews = resolveChunkViews(q.kbId(), mode, kgContext, ranked);
+        long stage5Ms = elapsedMillis(stageMark);
+        List<String> references = CollectionUtils.isEmpty(prep.kgContext().referenceList())
+                ? List.of() : prep.kgContext().referenceList();
+        List<RetrievalChunkView> chunkViews = resolveChunkViews(kbId, mode, prep.kgContext(), prep.ranked());
+        logSummary(prep, stage5Ms, chunkViews.size(), 0, false);
+        return new RetrievalResult(answer, prep.kgContext(), references,
+                toRawData(prep.kgContext().kgResult()), chunkViews);
+    }
+
+    /**
+     * 输出检索收尾摘要日志（同步与流式两个收尾路径共用同一字段口径）。
+     *
+     * @param prep        准备产物（耗时与候选计数来源）
+     * @param stage5Ms    Stage 5（作答）耗时毫秒
+     * @param chunkCount  切片明细条数
+     * @param answerChars 已产出答案字符数（仅流式路径观测）
+     * @param streaming   是否为流式收尾
+     */
+    private void logSummary(RetrievalPreparation prep, long stage5Ms, int chunkCount, int answerChars,
+                            boolean streaming) {
         log.info("检索摘要 | kbId={} mode={} stage0Ms={} stage1Ms={} stage2Ms={} stage3Ms={} stage4Ms={} "
-                        + "stage5Ms={} vectorCount={} bm25Count={} graphCount={} chunkCount={} degraded={} "
-                        + "llmCacheHits={}",
-                q.kbId(), mode, stage0Ms, stage1Ms, stage2Ms, stage3Ms, stage4Ms, stage5Ms,
-                vectorCount, bm25Count, graphCount, chunkViews.size(), degraded, cacheHits.get());
-        return new RetrievalResult(answer, kgContext, references, toRawData(kgContext.kgResult()),
-                chunkViews, degraded);
+                        + "stage5Ms={} vectorCount={} bm25Count={} graphCount={} chunkCount={} answerChars={} "
+                        + "degraded={} llmCacheHits={} streaming={}",
+                prep.effective().kbId(), prep.mode(), prep.stage0Ms(), prep.stage1Ms(), prep.stage2Ms(),
+                prep.stage3Ms(), prep.stage4Ms(), stage5Ms, prep.vectorCount(), prep.bm25Count(),
+                prep.graphCount(), chunkCount, answerChars, prep.degraded(), prep.cacheHits().get(), streaming);
     }
 
     /**
@@ -603,6 +690,50 @@ public class RetrievalApplicationService {
     private static String textValue(JsonNode root, String field) {
         JsonNode node = root.get(field);
         return ObjectUtils.isEmpty(node) || !node.isTextual() ? null : node.asText();
+    }
+
+    /**
+     * 检索准备产物（Stage 0~4 的执行快照，同步与流式两条收尾路径共用）。
+     * <p>{@code effective} 为 Stage 0 改写后重建的不可变请求，Stage 5 的缓存键与预算均消费它；
+     * {@code answerQuery} 为送入作答的用户原始提问（改写文本只服务检索链路，用于保证答案语言跟随提问）。</p>
+     *
+     * @param mode         输出形态（决定切片明细取数口径）
+     * @param effective    Stage 0 之后的执行请求
+     * @param cfg          库级检索策略快照
+     * @param kgContext    Stage 4 上下文产物（切片形态为空上下文承载图谱结果）
+     * @param ranked       Stage 3 精排结果
+     * @param degraded     Stage 0~4 是否发生降级
+     * @param keywordFailed 是否命中「关键词兜底失败」业务分支
+     * @param answerQuery  送入作答的问题文本
+     * @param stage0Ms     Stage 0 耗时毫秒
+     * @param stage1Ms     Stage 1 耗时毫秒
+     * @param stage2Ms     Stage 2 耗时毫秒
+     * @param stage3Ms     Stage 3 耗时毫秒
+     * @param stage4Ms     Stage 4 耗时毫秒
+     * @param vectorCount  VECTOR 通道候选数
+     * @param bm25Count    BM25 通道候选数
+     * @param graphCount   GRAPH 通道候选数
+     * @param cacheHits    LLM 缓存命中计数器
+     */
+    private record RetrievalPreparation(
+            RetrievalOutputMode mode,
+            RetrievalQuery effective,
+            RetrievalStrategyConfig cfg,
+            KgContext kgContext,
+            List<RankedChunk> ranked,
+            boolean degraded,
+            boolean keywordFailed,
+            String answerQuery,
+            long stage0Ms,
+            long stage1Ms,
+            long stage2Ms,
+            long stage3Ms,
+            long stage4Ms,
+            int vectorCount,
+            int bm25Count,
+            int graphCount,
+            AtomicInteger cacheHits
+    ) {
     }
 
     /**

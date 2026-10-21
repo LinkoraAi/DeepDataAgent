@@ -2,6 +2,7 @@ package com.linkroa.deepdataagent.rag.infrastructure;
 
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskType;
 import com.linkroa.deepdataagent.rag.infrastructure.config.AppInstanceProperties;
+import com.linkroa.deepdataagent.shared.exception.TaskRegistrationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -110,18 +111,19 @@ class RedisInFlightTaskRegistryTest {
     }
 
     @Test
-    void should_propagateException_when_register_given_redisUnavailable() {
+    void should_wrapException_when_register_given_redisUnavailable() {
         // given：缓存写入失败
         when(stringRedisTemplate.opsForSet()).thenReturn(setOperations);
         RuntimeException failure = new RuntimeException("redis down");
         doThrow(failure).when(setOperations).add(DOC_INGESTION_KEY, String.valueOf(TASK_ID));
 
         // when
-        RuntimeException thrown = assertThrows(RuntimeException.class,
+        TaskRegistrationException thrown = assertThrows(TaskRegistrationException.class,
                 () -> registry.register(InFlightTaskType.DOC_INGESTION, TASK_ID));
 
-        // then：异常上抛，由调用方走各自链的既有失败兜底，MUST NOT 静默放行
-        assertSame(failure, thrown);
+        // then：底层异常被包装为任务登记异常（原异常仅作 cause），不向调用方暴露缓存实现类型
+        assertSame(failure, thrown.getCause());
+        assertEquals("操作失败，请稍后重试", thrown.getMessage());
         verify(setOperations).add(DOC_INGESTION_KEY, String.valueOf(TASK_ID));
     }
 

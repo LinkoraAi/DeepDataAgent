@@ -37,14 +37,29 @@ public interface ModelProfileRepository {
     Optional<ModelProfile> findByDisplayName(String displayName);
 
     /**
-     * 分页查询（按 owner 隔离）
+     * 分页查询（按 owner 隔离；类型码列表为空表示不限类型）
+     *
+     * @param ownerId    归属用户 ID
+     * @param keyword    名称关键字（可空）
+     * @param status     状态过滤（可空）
+     * @param modelTypes 类型业务码列表（可空/空表示不限；多值并集）
+     * @param page       页码（1 起）
+     * @param size       每页条数
+     * @return 命中的模型配置
      */
-    List<ModelProfile> findByCondition(Long ownerId, String keyword, ModelProfileStatus status, int page, int size);
+    List<ModelProfile> findByCondition(Long ownerId, String keyword, ModelProfileStatus status,
+                                      List<Integer> modelTypes, int page, int size);
 
     /**
-     * 分页统计（按 owner 隔离）
+     * 分页统计（按 owner 隔离；类型码列表为空表示不限类型）
+     *
+     * @param ownerId    归属用户 ID
+     * @param keyword    名称关键字（可空）
+     * @param status     状态过滤（可空）
+     * @param modelTypes 类型业务码列表（可空/空表示不限；多值并集）
+     * @return 命中总数
      */
-    long countByCondition(Long ownerId, String keyword, ModelProfileStatus status);
+    long countByCondition(Long ownerId, String keyword, ModelProfileStatus status, List<Integer> modelTypes);
 
     /**
      * 更新状态（启用/禁用）

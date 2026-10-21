@@ -9,6 +9,7 @@ import {
   validateDraft,
 } from './kbDraft';
 import type { KbDraft } from './kbDraft';
+import { KB_LANGUAGES } from '@/shared/enums/dict';
 
 /** 用创建载荷 + 元数据拼一个线格式响应，供反解测试 */
 function wireFromPayload(draft: KbDraft, payload: ReturnType<typeof buildCreateRequest>): KnowledgeBaseWire {
@@ -293,5 +294,12 @@ describe('validateDraft 前置拦截', () => {
     draft.multiModelProfileId = 'm';
     draft.entityTypes = ['Metric', 'metric'];
     expect(validateDraft(draft).entityTypes).toContain('重复');
+  });
+});
+
+describe('知识库语言选项', () => {
+  it('should 仅提供中文与英文两项_when 读取下拉选项', () => {
+    expect(KB_LANGUAGES.map((item) => item.value)).toEqual(['Chinese', 'English']);
+    expect(defaultDraft().language).toBe('Chinese');
   });
 });

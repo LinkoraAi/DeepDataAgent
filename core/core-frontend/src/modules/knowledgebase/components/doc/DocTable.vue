@@ -9,6 +9,7 @@ import { errorMessage } from '@/shared/composables/useAsync';
 import { usePagePagination } from '@/shared/composables/usePagination';
 import { usePolling } from '@/shared/composables/usePolling';
 import { confirmDangerous } from '@/shared/composables/useConfirm';
+import { compactTime } from '@/shared/utils/time';
 import {
   deleteDocument,
   documentDownloadPath,
@@ -293,14 +294,6 @@ function humanSize(bytes: number | null): string {
   return `${bytes} B`;
 }
 
-/** 时间文本收敛到分钟（后端 ISO-8601 带时区串）。 */
-function toMinute(value: string | null): string {
-  if (!value) {
-    return '-';
-  }
-  return value.slice(0, 16).replace('T', ' ');
-}
-
 onMounted(() => {
   void refresh();
 });
@@ -372,7 +365,7 @@ onMounted(() => {
 
       <template #fileSize="{ row }">{{ humanSize(row.fileSize) }}</template>
       <template #fileType="{ row }">{{ row.fileType }}</template>
-      <template #createdAt="{ row }">{{ toMinute(row.createdAt) }}</template>
+      <template #createdAt="{ row }">{{ compactTime(row.createdAt) }}</template>
 
       <template #action="{ row }">
         <t-space size="small">

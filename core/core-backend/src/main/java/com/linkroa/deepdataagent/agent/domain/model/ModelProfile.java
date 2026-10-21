@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
  * @param contextWindowInput  输入上下文窗口大小
  * @param contextWindowOutput 输出上下文窗口大小
  * @param toolCallRounds      工具调用轮次上限
- * @param modelType           模型类型（CHAT / EMBEDDING）
+ * @param modelType           模型类型（CHAT_LLM / CHAT_VLM / EMBEDDING / RERANK）
  * @param vectorDimension     向量维度（EMBEDDING 类型必填）
  * @param status              状态
  * @param ownerId             归属用户 ID（数字）

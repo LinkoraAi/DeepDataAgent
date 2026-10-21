@@ -36,7 +36,7 @@ import java.util.Map;
  *
  * <p>不变量：本方法在事务外调用（远程/耗时计算与 DB 操作分离）；向量化远程调用
  * 在本方法内、事务外<b>预趟分批</b>完成（单批条数 {@code app.rag.ingestion.embed.batch-size}，
- * 缺省 32，配置小于 1 时按 1 即逐条）——本类即产出 pgvector 字面量并随草案一并落库，
+ * 缺省 16，配置小于 1 时按 1 即逐条）——本类即产出 pgvector 字面量并随草案一并落库，
  * 不再交由后续 Stage 计算回写。全文表示（tsvector）自起由知识库
  * 落库 SQL 内 {@code to_tsvector} 对草案原文现算，本服务不再传递预分词字面量。
  * {@code embeddingModelProfileId} 为空白时降级：跳过向量化远程调用、向量字面量置 null
@@ -64,8 +64,8 @@ public class ChunkPersistenceService {
     /** 向量计算端口（事务外分批调用 embedBatch 产出 pgvector 字面量）。 */
     private final EmbeddingClient embeddingClient;
 
-    /** 向量化远程调用单批条数（{@code app.rag.ingestion.embed.batch-size}，缺省 32；小于 1 时按 1 即逐条）。 */
-    @Value("${app.rag.ingestion.embed.batch-size:32}")
+    /** 向量化远程调用单批条数（{@code app.rag.ingestion.embed.batch-size}，缺省 16；小于 1 时按 1 即逐条）。 */
+    @Value("${app.rag.ingestion.embed.batch-size:16}")
     private int embedBatchSize;
 
     /**

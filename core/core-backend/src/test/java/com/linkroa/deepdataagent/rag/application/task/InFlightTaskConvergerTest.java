@@ -175,4 +175,31 @@ class InFlightTaskConvergerTest {
         assertDoesNotThrow(() -> converger.clearInstanceRegistryQuietly());
         verify(inFlightTaskRegistry).clearInstanceRegistry();
     }
+
+    /**
+     * 场景：容器关闭事件（ContextClosed）抵达——停机「首个动作」的正式时点（缓存生命周期尚未停止）。
+     * 预期：事件钩子委托清空本实例全部注册表键。
+     */
+    @Test
+    void should_delegateClear_when_onContextClosed_given_registryHealthy() {
+        // when
+        converger.onContextClosed();
+
+        // then
+        verify(inFlightTaskRegistry).clearInstanceRegistry();
+    }
+
+    /**
+     * 场景：容器关闭事件时缓存恰好不可用。
+     * 预期：清空失败仅留痕、不上抛，MUST NOT 影响容器关闭链。
+     */
+    @Test
+    void should_swallowException_when_onContextClosed_given_registryFailure() {
+        // given
+        doThrow(new RuntimeException("注册表不可用")).when(inFlightTaskRegistry).clearInstanceRegistry();
+
+        // when // then
+        assertDoesNotThrow(() -> converger.onContextClosed());
+        verify(inFlightTaskRegistry).clearInstanceRegistry();
+    }
 }

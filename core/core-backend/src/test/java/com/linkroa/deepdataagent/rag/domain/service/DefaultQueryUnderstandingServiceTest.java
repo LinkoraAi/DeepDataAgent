@@ -277,9 +277,9 @@ class DefaultQueryUnderstandingServiceTest {
         assertEquals(KB_ID, requestCaptor.getValue().kbId());
         assertEquals(PROFILE_ID, requestCaptor.getValue().modelProfileId());
         String renderedPrompt = requestCaptor.getValue().userPrompt();
-        assertTrue(renderedPrompt.contains("问题改写专家"), "缺省语言 Chinese 应渲染中文模板套");
+        assertTrue(renderedPrompt.contains("expert query rewriter"), "单套英文目录应渲染英文指令正文");
         assertTrue(renderedPrompt.contains("User Query: " + QUERY), "{query} 应注入用户问题原文");
-        assertTrue(renderedPrompt.contains("必须使用 Chinese"), "{language} 应注入生效语言全名");
+        assertTrue(renderedPrompt.contains("MUST be in Chinese"), "{language} 应注入生效语言全名");
         // then：按 QUERY_REWRITE 规格键回写，读写三元组一致（prompt 即实际发出的渲染产物）
         ArgumentCaptor<LlmCacheEntry> entryCaptor = ArgumentCaptor.forClass(LlmCacheEntry.class);
         verify(llmCacheRepository).saveIfAbsent(entryCaptor.capture());
@@ -604,10 +604,10 @@ class DefaultQueryUnderstandingServiceTest {
     // ==================== 知识库语言同源 ====================
 
     @Test
-    void should_injectKbLanguageAndUseItInCacheKey_when_rewrite_given_kbLanguageJapanese() {
-        // given：日文库（只读投影返回 Japanese），缓存未命中
-        when(knowledgeBaseApi.findLanguageByKbId(KB_ID)).thenReturn("Japanese");
-        String japaneseCacheKey = cacheKey(QUERY, "Japanese");
+    void should_injectKbLanguageAndUseItInCacheKey_when_rewrite_given_kbLanguageEnglish() {
+        // given：日文库（只读投影返回 English），缓存未命中
+        when(knowledgeBaseApi.findLanguageByKbId(KB_ID)).thenReturn("English");
+        String japaneseCacheKey = cacheKey(QUERY, "English");
         when(llmCacheRepository.findByKbIdAndCacheKey(KB_ID, CacheType.QUERY_REWRITE, japaneseCacheKey))
                 .thenReturn(Optional.empty());
         when(llmClient.chat(any(LlmChatRequest.class)))
@@ -616,13 +616,13 @@ class DefaultQueryUnderstandingServiceTest {
         // when
         service.rewrite(QUERY, mixConfig(Boolean.TRUE), KB_ID);
 
-        // then：{language} 注入 Japanese 且模板套与语言同源（非 Chinese → 英文模板套实测渲染）
+        // then：{language} 注入 English 且模板套与语言同源（非 Chinese → 英文模板套实测渲染）
         ArgumentCaptor<LlmChatRequest> requestCaptor = ArgumentCaptor.forClass(LlmChatRequest.class);
         verify(llmClient).chat(requestCaptor.capture());
         String renderedPrompt = requestCaptor.getValue().userPrompt();
-        assertTrue(renderedPrompt.contains("expert query rewriter"), "Japanese 库应渲染英文模板套");
-        assertTrue(renderedPrompt.contains("MUST be in Japanese"), "{language} 应注入 Japanese");
-        // then：缓存键语言要素为 Japanese（读与写均按同键，独立复算键验证）
+        assertTrue(renderedPrompt.contains("expert query rewriter"), "English 库应渲染英文模板套");
+        assertTrue(renderedPrompt.contains("MUST be in English"), "{language} 应注入 English");
+        // then：缓存键语言要素为 English（读与写均按同键，独立复算键验证）
         verify(llmCacheRepository).findByKbIdAndCacheKey(KB_ID, CacheType.QUERY_REWRITE, japaneseCacheKey);
         ArgumentCaptor<LlmCacheEntry> entryCaptor = ArgumentCaptor.forClass(LlmCacheEntry.class);
         verify(llmCacheRepository).saveIfAbsent(entryCaptor.capture());
@@ -667,8 +667,8 @@ class DefaultQueryUnderstandingServiceTest {
         verify(knowledgeBaseApi).findLanguageByKbId(KB_ID);
         ArgumentCaptor<LlmChatRequest> requestCaptor = ArgumentCaptor.forClass(LlmChatRequest.class);
         verify(llmClient).chat(requestCaptor.capture());
-        assertTrue(requestCaptor.getValue().userPrompt().contains("问题改写专家"),
-                "缺省语言应回落 Chinese 并渲染中文模板套");
+        assertTrue(requestCaptor.getValue().userPrompt().contains("MUST be in Chinese"),
+                "缺省语言应回落 Chinese 并注入输出语言约束");
     }
 
     @Test
@@ -687,8 +687,8 @@ class DefaultQueryUnderstandingServiceTest {
         assertEquals("订单发货超时如何处理", rewritten);
         ArgumentCaptor<LlmChatRequest> requestCaptor = ArgumentCaptor.forClass(LlmChatRequest.class);
         verify(llmClient).chat(requestCaptor.capture());
-        assertTrue(requestCaptor.getValue().userPrompt().contains("必须使用 Chinese"),
-                "语言读取失败应回落 Chinese 并注入最终提示词");
+        assertTrue(requestCaptor.getValue().userPrompt().contains("MUST be in Chinese"),
+                "语言读取失败应回落 Chinese 并注入输出语言约束");
     }
 
     // ==================== 缓存命中计数 ====================

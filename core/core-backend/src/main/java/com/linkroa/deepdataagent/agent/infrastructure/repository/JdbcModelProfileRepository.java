@@ -62,11 +62,13 @@ public class JdbcModelProfileRepository implements ModelProfileRepository {
     }
 
     @Override
-    public List<ModelProfile> findByCondition(Long ownerId, String keyword, ModelProfileStatus status, int page, int size) {
+    public List<ModelProfile> findByCondition(Long ownerId, String keyword, ModelProfileStatus status,
+                                              List<Integer> modelTypes, int page, int size) {
         return mapper.selectByCondition(
                         ownerId,
                         keyword,
                         status != null ? status.name() : null,
+                        modelTypes,
                         (long) Math.max(0, page - 1) * size,
                         size)
                 .stream()
@@ -75,8 +77,9 @@ public class JdbcModelProfileRepository implements ModelProfileRepository {
     }
 
     @Override
-    public long countByCondition(Long ownerId, String keyword, ModelProfileStatus status) {
-        return mapper.countByCondition(ownerId, keyword, status != null ? status.name() : null);
+    public long countByCondition(Long ownerId, String keyword, ModelProfileStatus status,
+                                 List<Integer> modelTypes) {
+        return mapper.countByCondition(ownerId, keyword, status != null ? status.name() : null, modelTypes);
     }
 
     @Override

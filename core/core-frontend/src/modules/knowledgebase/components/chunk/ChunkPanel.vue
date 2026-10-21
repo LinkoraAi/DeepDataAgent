@@ -7,6 +7,7 @@ import { CHUNK_CONTENT_TYPES, CHUNK_SOURCES } from '@/shared/enums/dict';
 import { errorMessage } from '@/shared/composables/useAsync';
 import { usePagePagination } from '@/shared/composables/usePagination';
 import { confirmDangerous } from '@/shared/composables/useConfirm';
+import { compactTime } from '@/shared/utils/time';
 import { listDocuments } from '../../api/documents';
 import { batchDeleteChunks, deleteChunk, listChunks } from '../../api/chunks';
 import type { ChunkWire } from '../../api/chunks';
@@ -241,14 +242,6 @@ function abstract(text: string): string {
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 }
 
-/** 人性化时间到分钟。 */
-function toMinute(value: string | null): string {
-  if (!value) {
-    return '-';
-  }
-  return value.slice(0, 16).replace('T', ' ');
-}
-
 onMounted(() => {
   void loadDocuments();
   void refresh();
@@ -332,7 +325,7 @@ onMounted(() => {
           <StatusTag :code="row.sourceType" :dict="CHUNK_SOURCES" />
         </template>
         <template #tokens="{ row }">{{ row.tokens ?? '-' }}</template>
-        <template #updatedAt="{ row }">{{ toMinute(row.updatedAt) }}</template>
+        <template #updatedAt="{ row }">{{ compactTime(row.updatedAt) }}</template>
         <template #action="{ row }">
           <t-space size="small">
             <t-link theme="primary" hover="color" @click="onView(row)">查看</t-link>
@@ -362,7 +355,7 @@ onMounted(() => {
           <div class="chunk-card__foot">
             <span class="chunk-card__meta">来源：{{ chunk.sourceFileName || '-' }}</span>
             <span class="chunk-card__meta">tokens：{{ chunk.tokens ?? '-' }}</span>
-            <span class="chunk-card__meta">更新：{{ toMinute(chunk.updatedAt) }}</span>
+            <span class="chunk-card__meta">更新：{{ compactTime(chunk.updatedAt) }}</span>
           </div>
           <div class="chunk-card__ops">
             <t-button size="small" variant="text" theme="primary" @click="onView(chunk)">查看</t-button>

@@ -34,9 +34,9 @@ public interface ModelProfileResponseConvert {
     }
 
     /**
-     * 模型类型 → 业务码（1=对话 / 2=向量嵌入）。
-     * <p>显式映射：MapStruct 对 enum→Integer 默认取 {@code ordinal()}（CHAT=0 / EMBEDDING=1），
-     * 与请求契约「1=CHAT 2=EMBEDDING」错位，导致嵌入型配置回显为 1（集成测试 D5）。</p>
+     * 模型类型 → 业务码（1=对话LLM / 2=视觉对话 / 3=嵌入 / 4=重排）。
+     * <p>显式映射：MapStruct 对 enum→Integer 默认取 {@code ordinal()}（CHAT_LLM=0 / CHAT_VLM=1 /
+     * EMBEDDING=2 / RERANK=3），与请求契约业务码错位，必须走枚举自带的 {@code getCode()}。</p>
      *
      * @param modelType 模型类型枚举（可为空）
      * @return 业务码；入参为空时返回 null

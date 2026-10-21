@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { PARSE_PROVIDERS } from '@/shared/enums/dict';
 import type { GeneralChunkParams, MineruParams } from '../kbDraft';
+import { describeParseProviderTypes } from '../parseCapability';
 import ChunkModeFields from './chunk/ChunkModeFields.vue';
 import MinerUFields from './MinerUFields.vue';
 
@@ -39,6 +40,9 @@ const emit = defineEmits<{
 
 /** 是否使用 MinerU（展开 MinerU 参数区） */
 const isMineru = computed(() => props.parseProvider === 'MINERU');
+
+/** 当前引擎支持的文件类型提示（随引擎切换实时变化，未知引擎不展示） */
+const supportedTypesHint = computed(() => describeParseProviderTypes(props.parseProvider));
 </script>
 
 <template>
@@ -50,6 +54,8 @@ const isMineru = computed(() => props.parseProvider === 'MINERU');
         :options="PARSE_PROVIDERS"
         @update:value="(v: string) => emit('update:parseProvider', v)"
       />
+      <!-- 支持类型提示：与后端解析器声明集合对齐，切换引擎即时更新 -->
+      <p v-if="supportedTypesHint !== ''" class="kb-field__hint">{{ supportedTypesHint }}</p>
     </div>
 
     <MinerUFields
@@ -83,5 +89,12 @@ const isMineru = computed(() => props.parseProvider === 'MINERU');
   margin-bottom: 4px;
   font-size: 13px;
   color: var(--td-text-color-primary, rgba(0, 0, 0, 0.9));
+}
+
+.kb-field__hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--td-text-color-secondary, rgba(0, 0, 0, 0.6));
 }
 </style>

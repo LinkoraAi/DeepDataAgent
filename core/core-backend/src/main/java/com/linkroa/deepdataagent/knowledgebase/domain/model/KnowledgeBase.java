@@ -22,7 +22,7 @@ import java.time.ZoneId;
  * @param name               知识库名称（owner 内唯一，≤128 字符）
  * @param description        描述
  * @param language           知识库语言（唯一真相源 = {@code knowledge_base.language} 列；
- *                           值域为 {@link KbLanguage} 十一语言全名、大小写不敏感，创建缺省显式落
+ *                           值域为 {@link KbLanguage} 的 Chinese/English 两个全名、大小写不敏感，创建缺省显式落
  *                           {@code Chinese}；本聚合不重写值域样本，读取侧归一）
  * @param lifecycleStatus    生命周期状态（ACTIVE / DELETING / DELETE_FAILED 三态）
  * @param errorMessage       删除失败留痕（{@code knowledge_base.error_message} 列）：仅

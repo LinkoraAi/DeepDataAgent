@@ -13,10 +13,10 @@ import java.util.Set;
  * LOCAL → 本地 Tika 解析（{@code LocalTikaDocumentParser}），MINERU → 远程 MinerU 解析
  * （{@code MineruDocumentParser}）。注意：<b>无自动回退</b>——配置决定解析方式，
  * 解析失败时抛异常交由调用方将文档置为 FAILED，不得自动切换另一种解析引擎。</p>
- * <p><b>类型路由</b>：解析选择层先按 {@link #supportedTypes()} 判定文档类型是否属本引擎支持集合，
- * 支持才调用本引擎解析；不支持该类型时不调用引擎，改走本地直读兜底（见
- * {@code DefaultDocumentParserRegistry} 的类型路由）。类型路由与「解析失败回退」不同——前者是
- * 解析前的选型，后者仍然禁止。</p>
+ * <p><b>类型路由（按引擎分治）</b>：解析选择层先按 {@link #supportedTypes()} 判定文档类型是否属本引擎
+ * 支持集合，支持才调用本引擎解析；不支持该类型时 <b>LOCAL</b> 回落本地直读兜底（图片视觉直通 /
+ * 纯文本直读），<b>MINERU</b> 直接拒绝并如实上报（上传入口另经 {@code ParserCapabilityApi} 提前拦截）。
+ * 类型路由与「解析失败回退」不同——前者是解析前的选型，后者仍然禁止。</p>
  */
 public interface DocumentParser {
 
@@ -33,8 +33,8 @@ public interface DocumentParser {
 
     /**
      * 本解析引擎原生支持的文档类型集合。
-     * <p>用于解析选择层的<b>类型路由</b>：文档类型落在本集合内才调用本引擎解析，否则跳过引擎
-     * 改走本地直读兜底，MUST NOT 因「引擎不支持该类型」把文档置为 FAILED。</p>
+     * <p>用于解析选择层的<b>类型路由</b>：文档类型落在本集合内才调用本引擎解析；
+     * 不在集合内时 LOCAL 回落本地直读兜底、MINERU 直接拒绝。</p>
      *
      * @return 本引擎支持的文档类型集合（不可变、非 null）
      */

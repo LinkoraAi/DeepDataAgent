@@ -16,11 +16,13 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link DefaultDocumentParserRegistry} 单元测试。
- * <p>覆盖文档类型路由：类型在引擎支持集合内 → 返回该引擎；类型不在集合内（含未知类型 null）→
- * 返回本地直读兜底解析器；并验证 LOCAL 单例复用与 MINERU 按类型路由。</p>
+ * <p>覆盖文档类型按引擎分治的路由：LOCAL 引擎遇不支持类型（含 null）→ 返回本地直读兜底解析器
+ * （图片视觉直通 / 纯文本直读）；MINERU 引擎遇不支持类型 → 抛 {@link IllegalArgumentException}
+ * 并列出支持类型（严格模式，无兜底）；另验证 LOCAL 单例复用与表格类型（XLS/XLSX）已纳入 MinerU 能力集合。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class DefaultDocumentParserRegistryTest {
@@ -52,7 +54,7 @@ class DefaultDocumentParserRegistryTest {
 
     /**
      * 场景：LOCAL 引擎 + 不支持类型（PNG）。
-     * 预期：跳过引擎、返回本地直读兜底解析器。
+     * 预期：跳过 Tika、返回本地直读兜底解析器（LOCAL 的图片能力由视觉直通承载）。
      */
     @Test
     void should_returnFallback_when_resolve_given_localUnsupportedType() {
@@ -90,16 +92,33 @@ class DefaultDocumentParserRegistryTest {
     }
 
     /**
-     * 场景：MINERU 引擎 + 不支持类型（TXT）。
-     * 预期：跳过 MinerU 引擎、返回本地直读兜底解析器（即 PE-02-06「MinerU 遇 txt」的修复路径）。
+     * 场景：MINERU 引擎 + 表格类型（XLSX / XLS）。
+     * 预期：返回 MinerU 引擎解析器（表格已纳入声明集合，不再回落本地直读）。
      */
     @Test
-    void should_returnFallback_when_resolve_given_mineruUnsupportedType() {
+    void should_returnMineruEngine_when_resolve_given_mineruSpreadsheetType() {
         // when
-        DocumentParser parser = registry.resolve(mineruConfig(), FileType.TXT);
+        DocumentParser xlsxParser = registry.resolve(mineruConfig(), FileType.XLSX);
+        DocumentParser xlsParser = registry.resolve(mineruConfig(), FileType.XLS);
 
         // then
-        assertInstanceOf(LocalReadFallbackDocumentParser.class, parser);
+        assertInstanceOf(MineruDocumentParser.class, xlsxParser);
+        assertInstanceOf(MineruDocumentParser.class, xlsParser);
+    }
+
+    /**
+     * 场景：MINERU 引擎 + 不支持类型（TXT）。
+     * 预期：抛 {@link IllegalArgumentException}（严格路由，不回落本地直读），提示含支持清单。
+     */
+    @Test
+    void should_throwException_when_resolve_given_mineruUnsupportedType() {
+        // when
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> registry.resolve(mineruConfig(), FileType.TXT));
+
+        // then
+        assertTrue(exception.getMessage().contains("TXT"), "提示应含文件类型，实际: " + exception.getMessage());
+        assertTrue(exception.getMessage().contains("XLSX"), "提示应含支持类型清单，实际: " + exception.getMessage());
     }
 
     /**

@@ -27,7 +27,7 @@ public interface RetrievalApi {
     /**
      * 执行一次完整的知识库检索（Stage 0~5 全链路，同步返回检索结果）。
      * <p>前置：知识库须存在且处于 ACTIVE 状态，否则以业务异常拒绝；各阶段（召回到答案生成）
-     * 异常按编排层降级矩阵兜底，仅以 {@code RetrievalResult.degraded} 标记，不向调用方抛出。</p>
+     * 异常按编排层降级矩阵兜底，不向调用方抛出（降级状态仅写入服务端日志）。</p>
      * <p>附图（通路 A）：{@code query.images} 为<b>已校验解码</b>的内联图片，仅由查询理解前置阶段
      * 消费；跨 BC 进程内消费方如需附图检索，应在构造 {@link RetrievalQuery} 前完成解码。</p>
      *

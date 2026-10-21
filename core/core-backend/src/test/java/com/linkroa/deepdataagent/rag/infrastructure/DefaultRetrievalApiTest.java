@@ -52,7 +52,7 @@ class DefaultRetrievalApiTest {
         // given
         RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null,
                 null, null, null, null, null);
-        RetrievalResult expected = new RetrievalResult("答案", null, List.of(), Map.of(), List.of(), false);
+        RetrievalResult expected = new RetrievalResult("答案", null, List.of(), Map.of(), List.of());
         when(retrievalApplicationService.search(query)).thenReturn(expected);
 
         // when

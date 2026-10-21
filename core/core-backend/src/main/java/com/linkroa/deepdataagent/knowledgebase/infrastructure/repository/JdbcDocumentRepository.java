@@ -9,11 +9,9 @@ import com.linkroa.deepdataagent.knowledgebase.infrastructure.persistence.KbAudi
 import com.linkroa.deepdataagent.knowledgebase.infrastructure.persistence.entity.DocumentEntity;
 import com.linkroa.deepdataagent.knowledgebase.infrastructure.persistence.mapper.DocumentMapper;
 import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
-import org.springframework.util.CollectionUtils;
 
 import java.util.List;
 import java.util.Optional;
@@ -79,6 +77,16 @@ public class JdbcDocumentRepository implements DocumentRepository {
     public void deleteById(Long id) {
         // 彻底物理删体系：无 @TableLogic，deleteById 直接生成 DELETE FROM（行消失即已删除）
         mapper.deleteById(id);
+    }
+
+    @Override
+    public int markNonTerminalDeletingByKbId(Long kbId) {
+        if (ObjectUtils.isEmpty(kbId)) {
+            return 0;
+        }
+        return mapper.transitNonTerminalByKbId(kbId,
+                List.of(DocumentStatus.PENDING.name(), DocumentStatus.PROCESSING.name()),
+                DocumentStatus.DELETING.name());
     }
 
     @Override
@@ -158,16 +166,6 @@ public class JdbcDocumentRepository implements DocumentRepository {
         // 复用单条条件 UPDATE CAS：DELETING → DELETE_FAILED 同语句写入留痕，
         // 非源态零行命中（幂等空转），空入参防御由 transitStatus 统一承担
         return transitStatus(documentId, Set.of(DocumentStatus.DELETING), DocumentStatus.DELETE_FAILED, reason);
-    }
-
-    @Override
-    public int failNonTerminal(Set<DocumentStatus> fromStatuses, DocumentStatus toStatus, String errorMessage) {
-        if (CollectionUtils.isEmpty(fromStatuses) || ObjectUtils.isEmpty(toStatus)
-                || StringUtils.isBlank(errorMessage)) {
-            return 0;
-        }
-        List<String> fromNames = fromStatuses.stream().map(Enum::name).toList();
-        return mapper.failNonTerminal(fromNames, toStatus.name(), errorMessage);
     }
 
     private String statusName(DocumentStatus status) {

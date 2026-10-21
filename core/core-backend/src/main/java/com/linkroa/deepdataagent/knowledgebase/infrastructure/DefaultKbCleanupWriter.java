@@ -148,6 +148,15 @@ public class DefaultKbCleanupWriter implements KbCleanupWriter {
         return documentIds.size();
     }
 
+    @Override
+    public java.util.List<Long> listDocumentIds(Long kbId) {
+        if (ObjectUtils.isEmpty(kbId)) {
+            throw new IllegalArgumentException("知识库ID不能为空");
+        }
+        // 整库清退需在删除前枚举全部取消目标，单次只读查询；文档量级受库容量约束，可接受
+        return documentMapper.selectIdsByKbId(kbId, Integer.MAX_VALUE);
+    }
+
     /**
      * 解释批次上限：非法（&lt; 1）抛出参数异常，超过事务规范上限（{@value #MAX_BATCH_SIZE}）封顶截断。
      */

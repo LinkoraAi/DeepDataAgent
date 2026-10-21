@@ -3,6 +3,7 @@ package com.linkroa.deepdataagent.rag.infrastructure;
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskRegistry;
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskType;
 import com.linkroa.deepdataagent.rag.infrastructure.config.AppInstanceProperties;
+import com.linkroa.deepdataagent.shared.exception.TaskRegistrationException;
 import jakarta.annotation.PostConstruct;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.ObjectUtils;
@@ -30,10 +31,10 @@ import java.util.Set;
  * 且集合天然去重（重复登记不堆积）；集合为空时键由缓存自动消失，不存在空键残留。
  * 键不设 TTL：任务为分钟级，短 TTL 会把处理中的任务误判为残留。</p>
  *
- * <p>故障语义：登记（{@link #register}）写入失败时异常上抛，由调用方走各自链的既有失败兜底
- * （解析置 FAILED / 清退置 DELETE_FAILED），MUST NOT 静默放行——登记成功是「任务可被收敛」
- * 的前提。移除与读取失败仅 ERROR 留痕并降级（移除失败留下的成员可由下次启动的一致性校验清理；
- * 读取失败时启动恢复跳过本轮残留，属已登记的已知风险）。</p>
+ * <p>故障语义：登记（{@link #register}）写入失败时包装为任务登记异常上抛，由调用方所在受理事务
+ * 整体回滚（解析置 FAILED / 清退置 DELETE_FAILED 的旧兜底已退役）；底层缓存异常仅作为 cause
+ * 记录日志，MUST NOT 向客户端暴露。移除与读取失败仅 ERROR 留痕并降级（移除失败留下的成员可由
+ * 下次启动的一致性校验清理；读取失败时启动恢复跳过本轮残留，属已登记的已知风险）。</p>
  *
  * @author DeepDataAgent
  */
@@ -79,8 +80,12 @@ public class RedisInFlightTaskRegistry implements InFlightTaskRegistry {
     @Override
     public void register(InFlightTaskType taskType, Long taskId) {
         String key = requireKey(taskType, taskId);
-        // 写入失败（缓存不可用）异常上抛：调用方按各自链的既有失败兜底收敛，不得静默放行
-        stringRedisTemplate.opsForSet().add(key, String.valueOf(taskId));
+        try {
+            stringRedisTemplate.opsForSet().add(key, String.valueOf(taskId));
+        } catch (RuntimeException e) {
+            // 缓存异常统一在此收口：调用方只感知任务登记异常（受理事务随之回滚），不接触底层实现类型
+            throw new TaskRegistrationException("操作失败，请稍后重试", e);
+        }
         log.debug("[在飞任务注册表] 已登记在飞任务: key={}, taskId={}", key, taskId);
     }
 
