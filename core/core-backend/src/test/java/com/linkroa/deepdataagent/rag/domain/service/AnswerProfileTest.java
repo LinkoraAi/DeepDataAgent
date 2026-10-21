@@ -77,7 +77,7 @@ class AnswerProfileTest {
         assertEquals(AnswerProfile.DEFAULT_RESPONSE_TYPE, kgVars.get(AnswerProfile.VAR_RESPONSE_TYPE));
         assertEquals("Multiple Paragraphs", kgVars.get(AnswerProfile.VAR_RESPONSE_TYPE));
         assertEquals(AnswerProfile.DEFAULT_USER_PROMPT_ABSENT, kgVars.get(AnswerProfile.VAR_USER_PROMPT));
-        assertEquals("n/a", kgVars.get(AnswerProfile.VAR_USER_PROMPT));
+        assertEquals("", kgVars.get(AnswerProfile.VAR_USER_PROMPT));
         assertEquals(kgVars, naiveVars);
         // then：默认变量表不含内容槽（内容由 responseVars 单独注入，避免预算空算误计正文）
         assertFalse(kgVars.containsKey(AnswerProfile.KG.contentVarName()));

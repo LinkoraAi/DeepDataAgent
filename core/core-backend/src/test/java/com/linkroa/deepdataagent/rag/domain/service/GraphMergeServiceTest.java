@@ -272,7 +272,8 @@ public class GraphMergeServiceTest {
     private GraphMergeService graphMergeService;
 
     /**
-     * 公共桩：事务模板真实执行回调、执行器同步执行、truncate 恒等、embed 恒返固定向量。
+     * 公共桩：事务模板真实执行回调、执行器同步执行、truncate 恒等、
+     * embedBatch 恒返「与入参等长、逐槽固定向量」的列表（批量段下标契约形态）。
      *
      * <p>全部使用 lenient()：部分用例（空批次、短路跳过、异常分支）不触达这些端口，
      * 避免 Mockito 严格桩（STRICT_STUBS）误报 UnnecessaryStubbing；
@@ -287,7 +288,10 @@ public class GraphMergeServiceTest {
         }).when(ingestionExecutor).execute(any());
         lenient().when(tokenCounter.truncate(anyString(), anyInt()))
                 .thenAnswer(invocation -> invocation.getArgument(0));
-        lenient().when(embeddingClient.embed(anyString(), anyString())).thenReturn(EMBEDDING_VECTOR);
+        lenient().when(embeddingClient.embedBatch(anyString(), anyList())).thenAnswer(invocation -> {
+            List<String> texts = invocation.getArgument(1);
+            return texts.stream().map(text -> EMBEDDING_VECTOR).toList();
+        });
     }
 
     /**
@@ -609,6 +613,27 @@ public class GraphMergeServiceTest {
 
         // then：中止消息匹配且零图写入
         assertEquals("摄入已取消，图合并中止", thrown.getMessage(), "取消中止应给出明确消息");
+        verifyNoInteractions(entityNodeRepository, relationEdgeRepository, entityInfoVectorRepository,
+                relationInfoVectorRepository);
+    }
+
+    /**
+     * 条目级取消：入口检查通过、删除链在条目执行前置态，写回事务内闸门中止且零图写入。
+     */
+    @Test
+    public void should_abortWithoutWrite_when_mergeNodesAndEdges_given_cancelAfterEntry() {
+        // given：第一次检查（入口）放行，第二次检查（条目）命中取消
+        int[] checks = {0};
+        GraphMergeContext ctx = new GraphMergeContext(KB_ID, DOC_ID, SUMMARY_PROFILE, EMBED_PROFILE,
+                LANGUAGE_ZH, null, OPERATOR, () -> ++checks[0] > 1);
+
+        // when
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> graphMergeService.mergeNodesAndEdges(ctx,
+                        List.of(extractedEntity(ENTITY_ALICE, SOURCE_101)), List.of()));
+
+        // then：阶段失败且未触达任何图谱写入（三段式：条目入口闸门位于计算段）
+        assertEquals("实体合并-计算失败：摄入已取消，图合并中止", thrown.getMessage());
         verifyNoInteractions(entityNodeRepository, relationEdgeRepository, entityInfoVectorRepository,
                 relationInfoVectorRepository);
     }
@@ -942,7 +967,7 @@ public class GraphMergeServiceTest {
         assertEquals(new GraphMergeReport(0, 1, 0, 0, 0), report, "已覆盖来源应短路跳过实体写入");
         verify(entityNodeRepository, never()).upsert(any(EntityNode.class), any());
         verify(entityInfoVectorRepository, never()).upsert(any(EntityInfoVector.class), any());
-        verify(embeddingClient, never()).embed(anyString(), anyString());
+        verify(embeddingClient, never()).embedBatch(anyString(), anyList());
         verify(descriptionSummarizer, never()).summarize(any(), any(), any(), any());
     }
 
@@ -1288,7 +1313,7 @@ public class GraphMergeServiceTest {
         assertEquals(new GraphMergeReport(0, 1, 0, 0, 0), report, "上限满额且无有效新片段应短路跳过实体写入");
         verify(entityNodeRepository, never()).upsert(any(EntityNode.class), any());
         verify(entityInfoVectorRepository, never()).upsert(any(EntityInfoVector.class), any());
-        verify(embeddingClient, never()).embed(anyString(), anyString());
+        verify(embeddingClient, never()).embedBatch(anyString(), anyList());
         verify(descriptionSummarizer, never()).summarize(any(), any(), any(), any());
     }
 
@@ -1410,7 +1435,7 @@ public class GraphMergeServiceTest {
         ArgumentCaptor<EntityInfoVector> captor = ArgumentCaptor.captor();
         verify(entityInfoVectorRepository).upsert(captor.capture(), eq(OPERATOR));
         assertSame(OLD_VECTOR, captor.getValue().vector(), "内容未变应复用旧向量数组");
-        verify(embeddingClient, never()).embed(anyString(), anyString());
+        verify(embeddingClient, never()).embedBatch(anyString(), anyList());
     }
 
     /**
@@ -1439,7 +1464,7 @@ public class GraphMergeServiceTest {
         verify(relationEdgeRepository, never()).upsertAll(anyList(), any());
         verify(relationInfoVectorRepository, never()).upsertAll(anyList(), any());
         verify(descriptionSummarizer, never()).summarize(any(), any(), any(), any());
-        verify(embeddingClient, never()).embed(anyString(), anyString());
+        verify(embeddingClient, never()).embedBatch(anyString(), anyList());
     }
 
     /**
@@ -1520,15 +1545,16 @@ public class GraphMergeServiceTest {
         assertEquals(new GraphMergeReport(0, 0, 2, 0, 0), report, "两条边应各写回一次且不建端点节点");
         // then：实体图行与实体向量仓储全程零交互（既不 upsert 任何名字，也不读端点行）
         verifyNoInteractions(entityNodeRepository, entityInfoVectorRepository);
-        // then：embedding 只为两条边的 content 各发一次，不存在端点内容的向量化调用
-        ArgumentCaptor<String> contentCaptor = ArgumentCaptor.captor();
-        verify(embeddingClient, times(2)).embed(eq(EMBED_PROFILE), contentCaptor.capture());
+        // then：两条边的 content 一次批量提交（阶段内一次 embedBatch），不存在端点内容的向量化调用
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> contentCaptor = ArgumentCaptor.captor();
+        verify(embeddingClient, times(1)).embedBatch(eq(EMBED_PROFILE), contentCaptor.capture());
         assertEquals(List.of(
                         RelationInfoVector.buildContent(List.of("knows"), ENTITY_ALICE, ENTITY_GHOST,
                                 EDGE_DESC_NORMAL),
                         RelationInfoVector.buildContent(List.of("knows"), ENTITY_ALICE, ENTITY_GHOST2,
-                                EDGE_DESC_NORMAL)), contentCaptor.getAllValues(),
-                "MUST NOT 为缺失端点内容发起向量化调用");
+                                EDGE_DESC_NORMAL)), contentCaptor.getValue(),
+                "批量入参只含两条边内容、按条目顺序排列，MUST NOT 混入端点内容");
     }
 
     /**
@@ -1693,7 +1719,8 @@ public class GraphMergeServiceTest {
                                 EDGE_DESC_NORMAL, List.of("knows"), SOURCE_101))));
 
         // then：首异常为 Alice 失败，Bob 失败挂为 suppressed，关系仓储零触碰
-        assertEquals("实体合并失败：lock-fail-Alice", thrown.getMessage(), "异常消息应携带阶段名与首异常");
+        //（三段式：lockByKbIdAndNames 属写回段加锁读，阶段名带「-写回」后缀）
+        assertEquals("实体合并-写回失败：lock-fail-Alice", thrown.getMessage(), "异常消息应携带阶段名与首异常");
         RuntimeException first = (RuntimeException) thrown.getCause();
         assertEquals("lock-fail-Alice", first.getMessage(), "cause 应为首个失败异常");
         assertEquals(1, first.getSuppressed().length, "第二个失败应挂为 suppressed");
@@ -1702,12 +1729,13 @@ public class GraphMergeServiceTest {
     }
 
     /**
-     * 关系阶段异常上抛：embedding 远程失败时关系阶段整体失败且不落库。
+     * 关系阶段异常上抛：批量向量化远程失败时关系阶段整体失败且不落库（fail-fast，
+     * 失败批次条目 MUST NOT 降级为空向量写入）。
      */
     @Test
     public void should_throwIllegalStateException_when_mergeOneEdge_given_embeddingFailure() {
-        // given：边内容向量化恒失败（关系合并已不读取端点实体行，无需任何端点打桩）
-        when(embeddingClient.embed(anyString(), anyString())).thenThrow(new RuntimeException("embed down"));
+        // given：边内容批量向量化恒失败（关系合并已不读取端点实体行，无需任何端点打桩）
+        when(embeddingClient.embedBatch(anyString(), anyList())).thenThrow(new RuntimeException("embed down"));
 
         // when：执行合并
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
@@ -1715,10 +1743,128 @@ public class GraphMergeServiceTest {
                         List.of(extractedEdge(ENTITY_ALICE, ENTITY_BOB, DEFAULT_EDGE_WEIGHT,
                                 EDGE_DESC_NORMAL, List.of("knows"), SOURCE_101))));
 
-        // then：阶段消息含「关系合并失败」，边与关系向量均未写入
-        assertEquals("关系合并失败：embed down", thrown.getMessage(), "embedding 失败应上抛并标注阶段");
+        // then：阶段消息含「关系合并-批量向量化失败」，边与关系向量均未写入
+        assertEquals("关系合并-批量向量化失败：embed down", thrown.getMessage(),
+                "embedding 失败应上抛并标注阶段");
         verify(relationEdgeRepository, never()).upsertAll(anyList(), any());
         verify(relationInfoVectorRepository, never()).upsertAll(anyList(), any());
+    }
+
+    /**
+     * 批量往返收敛（spec Scenario）：70 个待嵌入实体仅触发一次 embedBatch 入参
+     * （批内切片由嵌入客户端负责），逐条目写回不受批粒度影响。
+     */
+    @Test
+    public void should_issueSingleBatchCall_when_mergeEntities_given_seventyPendingEntities() {
+        // given：70 个互不同名的新实体（全部需新向量）
+        List<EntityNode> batch = new ArrayList<>(70);
+        for (int i = 0; i < 70; i++) {
+            batch.add(extractedEntity("Person" + i, (long) (1000 + i)));
+        }
+
+        // when：执行合并
+        GraphMergeReport report = graphMergeService.mergeNodesAndEdges(defaultCtx(), batch, List.of());
+
+        // then：批量段一次调用、入参 70 条；写回仍逐条目 upsert 70 次
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> textsCaptor = ArgumentCaptor.captor();
+        verify(embeddingClient, times(1)).embedBatch(eq(EMBED_PROFILE), textsCaptor.capture());
+        assertEquals(70, textsCaptor.getValue().size(), "阶段内应一次收集全部待嵌入内容（客户端内部再按批切片）");
+        assertEquals(70, report.entitiesWritten(), "写回应保持逐条目粒度");
+        verify(entityInfoVectorRepository, times(70)).upsert(any(EntityInfoVector.class), eq(OPERATOR));
+    }
+
+    /**
+     * 下标一一对应不错位（spec Scenario）：批量桩以「向量首元=内容长度」的可识别形态返回，
+     * 断言每个实体向量行的向量与其自身内容配对——内容交换即串位，必被该断言捕获。
+     */
+    @Test
+    public void should_pairVectorWithOwnContent_when_mergeEntities_given_multiEntityBatch() {
+        // given：可辨识批量桩（每槽向量首元=该槽内容长度）+ 两个新实体
+        lenient().when(embeddingClient.embedBatch(anyString(), anyList())).thenAnswer(invocation -> {
+            List<String> texts = invocation.getArgument(1);
+            return texts.stream().map(text -> (float[]) new float[]{text.length()}).toList();
+        });
+
+        // when：执行合并
+        graphMergeService.mergeNodesAndEdges(defaultCtx(),
+                List.of(extractedEntity(ENTITY_ALICE, SOURCE_101), extractedEntity(ENTITY_BOB, SOURCE_102)),
+                List.of());
+
+        // then：每条向量行的首元恰为其自身内容长度（串位即失配）
+        ArgumentCaptor<EntityInfoVector> captor = ArgumentCaptor.captor();
+        verify(entityInfoVectorRepository, times(2)).upsert(captor.capture(), eq(OPERATOR));
+        for (EntityInfoVector row : captor.getAllValues()) {
+            assertEquals(row.content().length(), row.vector()[0],
+                    "批量向量与内容必须按入参下标一一对应，不得串位");
+        }
+    }
+
+    /**
+     * 下标契约破坏快速失败：批量结果与入参条数不一致时 MUST NOT 猜测回填，整阶段失败且不写回。
+     */
+    @Test
+    public void should_failPhaseWithoutWrite_when_fillPendingVectors_given_resultSizeMismatch() {
+        // given：端口违约——入参 1 条、结果 0 条
+        when(embeddingClient.embedBatch(anyString(), anyList())).thenReturn(List.of());
+
+        // when：执行合并
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> graphMergeService.mergeNodesAndEdges(defaultCtx(),
+                        List.of(extractedEntity(ENTITY_ALICE, SOURCE_101)), List.of()));
+
+        // then：契约违约信息上抛并标注阶段，无任何图谱写入
+        assertTrue(thrown.getMessage().contains("下标契约不符"),
+                "应报下标契约违约: " + thrown.getMessage());
+        verify(entityNodeRepository, never()).upsert(any(EntityNode.class), any());
+        verify(entityInfoVectorRepository, never()).upsert(any(EntityInfoVector.class), any());
+    }
+
+    /**
+     * 批量结果含空向量槽位：视为端口违约快速失败，MUST NOT 以 null 向量落库。
+     */
+    @Test
+    public void should_failPhase_given_nullVectorSlotInBatchResult() {
+        // given：结果条数正确但首槽为 null 向量
+        when(embeddingClient.embedBatch(anyString(), anyList())).thenAnswer(invocation -> {
+            List<float[]> oneNullSlot = new ArrayList<>();
+            oneNullSlot.add(null);
+            return oneNullSlot;
+        });
+
+        // when / then：空槽位违约上抛且不写回
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> graphMergeService.mergeNodesAndEdges(defaultCtx(),
+                        List.of(extractedEntity(ENTITY_ALICE, SOURCE_101)), List.of()));
+        assertTrue(thrown.getMessage().contains("为空向量"),
+                "应报空向量槽位违约: " + thrown.getMessage());
+        verify(entityInfoVectorRepository, never()).upsert(any(EntityInfoVector.class), any());
+    }
+
+    /**
+     * 取消阻断批量段（spec Scenario）：条目入口放行、删除链在批量发起前置态——
+     * 剩余批次不再发起，已收集结果不进入写回。
+     */
+    @Test
+    public void should_skipBatchEmbeddingAndWrite_when_fillPendingVectors_given_cancelBeforeBatch() {
+        // given：取消检查序——①合并入口、②条目计算入口放行；③批量前闸门命中
+        int[] checks = {0};
+        GraphMergeContext ctx = new GraphMergeContext(KB_ID, DOC_ID, SUMMARY_PROFILE, EMBED_PROFILE,
+                LANGUAGE_ZH, null, OPERATOR, () -> ++checks[0] > 2);
+
+        // when：执行合并（单条新实体：计算通过、批量前命中取消）
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> graphMergeService.mergeNodesAndEdges(ctx,
+                        List.of(extractedEntity(ENTITY_ALICE, SOURCE_101)), List.of()));
+
+        // then：批量调用未发起、写回未发生，取消消息按批量段口径上抛
+        assertTrue(thrown.getMessage().contains("批量向量化失败"),
+                "取消应经批量段闸门收敛: " + thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("摄入已取消，图合并中止"),
+                "取消消息应透传: " + thrown.getMessage());
+        verify(embeddingClient, never()).embedBatch(anyString(), anyList());
+        verify(entityNodeRepository, never()).upsert(any(EntityNode.class), any());
+        verify(entityInfoVectorRepository, never()).upsert(any(EntityInfoVector.class), any());
     }
 
     /**
@@ -1747,7 +1893,7 @@ public class GraphMergeServiceTest {
         RelationEdge stored = edgeStore.get(edgeKey(ENTITY_ALICE, ENTITY_BOB));
         assertEquals(DEFAULT_EDGE_WEIGHT, stored.properties().weight(), "重放后权重应保持 1.0 不膨胀");
         assertEquals(List.of(SOURCE_101), stored.properties().sourceIds(), "重放后来源不应重复累积");
-        verify(embeddingClient, times(1)).embed(eq(EMBED_PROFILE), anyString());
+        verify(embeddingClient, times(1)).embedBatch(eq(EMBED_PROFILE), anyList());
     }
 
     /**
@@ -1823,7 +1969,7 @@ public class GraphMergeServiceTest {
         verify(entityInfoVectorRepository, times(1)).upsert(any(EntityInfoVector.class), eq(OPERATOR));
         verify(transactionTemplate, times(2)).executeWithoutResult(any());
         verify(descriptionSummarizer, times(1)).summarize(any(), anyString(), anyString(), anyList());
-        verify(embeddingClient, times(1)).embed(anyString(), anyString());
+        verify(embeddingClient, times(1)).embedBatch(anyString(), anyList());
     }
 
     /**
@@ -1856,7 +2002,7 @@ public class GraphMergeServiceTest {
         verify(relationInfoVectorRepository, times(1)).upsertAll(anyList(), eq(OPERATOR));
         verify(transactionTemplate, times(2)).executeWithoutResult(any());
         verify(descriptionSummarizer, times(1)).summarize(any(), anyString(), anyString(), anyList());
-        verify(embeddingClient, times(1)).embed(anyString(), anyString());
+        verify(embeddingClient, times(1)).embedBatch(anyString(), anyList());
     }
 
     /**
@@ -1876,7 +2022,7 @@ public class GraphMergeServiceTest {
                         List.of(extractedEntity(ENTITY_ALICE, SOURCE_102)), List.of()));
 
         // then：写回事务恰好重试至上界后上抛，由阶段汇总为失败
-        assertEquals("实体合并失败：dup-key", thrown.getMessage(), "超出重试上界应按阶段失败处理");
+        assertEquals("实体合并-写回失败：dup-key", thrown.getMessage(), "超出重试上界应按阶段失败处理");
         assertInstanceOf(DuplicateKeyException.class, thrown.getCause(), "cause 应为唯一约束冲突异常");
         verify(transactionTemplate, times(3)).executeWithoutResult(any());
         verify(entityNodeRepository, times(3)).upsert(any(EntityNode.class), eq(OPERATOR));
@@ -1899,7 +2045,7 @@ public class GraphMergeServiceTest {
                         List.of(extractedEntity(ENTITY_ALICE, SOURCE_102)), List.of()));
 
         // then：写回事务体仅执行一次，异常原样上抛并由阶段汇总
-        assertEquals("实体合并失败：boom", thrown.getMessage(), "非冲突异常应按阶段失败原样上抛");
+        assertEquals("实体合并-写回失败：boom", thrown.getMessage(), "非冲突异常应按阶段失败原样上抛");
         assertEquals("boom", thrown.getCause().getMessage(), "cause 应为原始失败异常");
         verify(transactionTemplate, times(1)).executeWithoutResult(any());
         verify(entityNodeRepository, times(1)).upsert(any(EntityNode.class), eq(OPERATOR));
@@ -1948,18 +2094,18 @@ public class GraphMergeServiceTest {
         graphMergeService.mergeNodesAndEdges(defaultCtx(),
                 List.of(extractedEntity(ENTITY_ALICE, SOURCE_102)), List.of());
 
-        // then：摘要/向量化 → 开启写回事务 → 库写入，远程调用均先于事务
+        // then：摘要/批量向量化 → 开启写回事务 → 库写入，远程调用均先于事务
         InOrder order = inOrder(descriptionSummarizer, embeddingClient, transactionTemplate,
                 entityNodeRepository, entityInfoVectorRepository);
         order.verify(descriptionSummarizer).summarize(any(GraphMergeContext.class), anyString(), anyString(),
                 anyList());
-        order.verify(embeddingClient).embed(eq(EMBED_PROFILE), anyString());
+        order.verify(embeddingClient).embedBatch(eq(EMBED_PROFILE), anyList());
         order.verify(transactionTemplate).executeWithoutResult(any());
         order.verify(entityNodeRepository).upsert(any(EntityNode.class), eq(OPERATOR));
         order.verify(entityInfoVectorRepository).upsert(any(EntityInfoVector.class), eq(OPERATOR));
         // 写回期间（含重试路径）不再产生任何远程调用
         verify(descriptionSummarizer, times(1)).summarize(any(), anyString(), anyString(), anyList());
-        verify(embeddingClient, times(1)).embed(anyString(), anyString());
+        verify(embeddingClient, times(1)).embedBatch(anyString(), anyList());
     }
 
     /**
@@ -2010,8 +2156,9 @@ public class GraphMergeServiceTest {
         }).when(relationEdgeRepository).upsertAll(anyList(), eq(OPERATOR));
         doAnswer(invocation -> {
             remoteCallInTransaction.set(inTransaction.get());
-            return EMBEDDING_VECTOR;
-        }).when(embeddingClient).embed(anyString(), anyString());
+            List<String> texts = invocation.getArgument(1);
+            return texts.stream().map(text -> EMBEDDING_VECTOR).toList();
+        }).when(embeddingClient).embedBatch(anyString(), anyList());
         doAnswer(invocation -> {
             remoteCallInTransaction.set(inTransaction.get());
             return null;
@@ -2038,7 +2185,8 @@ public class GraphMergeServiceTest {
         edgeOrder.verify(relationEdgeRepository).upsertAll(anyList(), eq(OPERATOR));
         verify(transactionTemplate, times(2)).executeWithoutResult(any());
         verify(descriptionSummarizer, times(2)).summarize(any(), anyString(), anyString(), anyList());
-        verify(embeddingClient, times(2)).embed(anyString(), anyString());
+        // 批量段每阶段各一次调用（实体 1 条、关系 1 条），单发 embed 已不存在
+        verify(embeddingClient, times(2)).embedBatch(anyString(), anyList());
     }
 
     /**

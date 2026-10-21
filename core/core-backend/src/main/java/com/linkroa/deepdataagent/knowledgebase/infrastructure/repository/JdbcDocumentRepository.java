@@ -82,6 +82,16 @@ public class JdbcDocumentRepository implements DocumentRepository {
     }
 
     @Override
+    public int markNonTerminalDeletingByKbId(Long kbId) {
+        if (ObjectUtils.isEmpty(kbId)) {
+            return 0;
+        }
+        return mapper.transitNonTerminalByKbId(kbId,
+                List.of(DocumentStatus.PENDING.name(), DocumentStatus.PROCESSING.name()),
+                DocumentStatus.DELETING.name());
+    }
+
+    @Override
     public void deleteByKbId(Long kbId) {
         mapper.deleteByKbId(kbId);
     }

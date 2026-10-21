@@ -35,9 +35,9 @@ import static org.mockito.Mockito.when;
 /**
  * {@link LocalReadFallbackDocumentParser} 单元测试。
  * <p>覆盖：可解码文本产出真实 TEXT 块、图片签名命中产出视觉直通产物（IMAGE 块 + 自身字节载荷、
- * 载荷键与 img_path 对齐）、不可解码<b>非图片</b> / 空内容产出占位 TEXT 块（正文含文件名）、
- * 伪造图片后缀不误直通、对象缺失与读取 IO 异常分支、支持类型集合声明，
- * 以及占位块经通用策略切分后切片数 ≥ 1 的不变量。</p>
+ * 载荷键与 img_path 对齐）、不可解码<b>非图片</b>按「引擎不支持该类型」抛错如实上报、
+ * 空内容产出占位 TEXT 块、伪造图片后缀不误直通、对象缺失与读取 IO 异常分支、
+ * 支持类型集合声明，以及占位块经通用策略切分后切片数 ≥ 1 的不变量。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class LocalReadFallbackDocumentParserTest {
@@ -79,24 +79,24 @@ class LocalReadFallbackDocumentParserTest {
 
     /**
      * 场景：源内容为不可解码的<b>非图片</b>二进制（不含任何受支持图片签名）。
-     * 预期：产出单个占位 TEXT 块，正文含文件名（对象键基名），保证切片数 ≥ 1——
-     * 占位口径收窄后仅覆盖非图片不可解码内容。
+     * 预期：抛出 {@link IllegalArgumentException}，消息含文件名与「不支持该文件类型」——
+     * 该情形说明所选引擎不支持此类型，必须如实上报失败，不得以占位块伪装成解析成功。
      */
     @Test
-    void should_keepPlaceholder_when_parse_given_undecodableNonImageBytes() {
+    void should_throwException_when_parse_given_undecodableNonImageBytes() {
         // given：0xFF / 0xFE 为非法 UTF-8 字节且头部不命中 PNG / JPEG 签名
         byte[] binary = new byte[] {0x00, (byte) 0xFF, (byte) 0xFE, (byte) 0x80, (byte) 0xC0, 0x41};
         stubOpen(binary);
 
         // when
-        ParsedDocument parsed = parser.parse(new S3File(OBJECT_KEY), "auto", new MultiModelConfig("p1"));
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> parser.parse(new S3File(OBJECT_KEY), "auto", new MultiModelConfig("p1")));
 
         // then
-        assertEquals(1, parsed.blocks().size());
-        ContentBlockVO placeholder = parsed.blocks().get(0);
-        assertEquals(ContentBlockVO.TYPE_TEXT, placeholder.type(), "占位块应为 TEXT 类型");
-        assertTrue(placeholder.text().contains("手册.pdf"), "占位块正文应含文件名，实际: " + placeholder.text());
-        assertTrue(parsed.images().isEmpty(), "占位产物图片载荷应为空");
+        assertTrue(exception.getMessage().contains("不支持该文件类型"),
+                "应明确提示引擎不支持该类型，实际: " + exception.getMessage());
+        assertTrue(exception.getMessage().contains("手册.pdf"),
+                "提示应含文件名便于定位，实际: " + exception.getMessage());
     }
 
     /**
@@ -167,7 +167,7 @@ class LocalReadFallbackDocumentParserTest {
 
     /**
      * 场景：源内容为空字节（空文件）。
-     * 预期：产出占位 TEXT 块（不可解码 / 空白归一为占位）。
+     * 预期：产出占位 TEXT 块（可解码但无有效文本，与「类型不支持」区分）。
      */
     @Test
     void should_returnPlaceholderBlock_when_parse_given_emptyContent() {
@@ -216,7 +216,7 @@ class LocalReadFallbackDocumentParserTest {
     }
 
     /**
-     * 场景：本地直读兜底声明的支持类型集合。
+     * 场景：本地直读兜底声明的可读类型集合。
      * 预期：覆盖全部白名单类型（读字节而非引擎解析，故可读任意类型）。
      */
     @Test
@@ -231,13 +231,13 @@ class LocalReadFallbackDocumentParserTest {
     }
 
     /**
-     * 场景（≥1 切片不变量）：不可解码<b>非图片</b>内容产出的占位 TEXT 块交由通用策略切分。
+     * 场景（≥1 切片不变量）：空文件产出的占位 TEXT 块交由通用策略切分。
      * 预期：切片数 ≥ 1（占位块正文非空白，通用策略不会丢弃）。
      */
     @Test
     void should_produceChunk_when_split_given_placeholderBlock() {
         // given
-        stubOpen(new byte[] {0x00, (byte) 0xFF, (byte) 0xFE, (byte) 0x80});
+        stubOpen(new byte[0]);
         ParsedDocument parsed = parser.parse(new S3File(OBJECT_KEY), "auto", new MultiModelConfig("p1"));
         TokenCounter counter = mock(TokenCounter.class);
         when(counter.count(anyString())).thenReturn(3);

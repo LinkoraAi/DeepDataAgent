@@ -33,6 +33,10 @@ import java.util.function.BooleanSupplier;
  *                                  空白时跳过注入，主实体节点由摄入管线唯一构造）
  * @param llmCacheHits              LLM 缓存命中计数器（可空；非空时抽取每次缓存回放
  *                                  递增一次，供摄入收尾结构化日志汇总）
+ * @param maxTotalRecords           单块输出实体+关系记录总条数软上限（注入提示词，
+ *                                  非正数回退 {@link #DEFAULT_MAX_TOTAL_RECORDS}）
+ * @param maxEntityRecords          单块输出实体记录条数软上限（注入提示词，非正数回退
+ *                                  {@link #DEFAULT_MAX_ENTITY_RECORDS}，大于总上限时截到总上限）
  * @author DeepDataAgent
  */
 public record EntityExtractionContext(
@@ -47,10 +51,18 @@ public record EntityExtractionContext(
         String filePath,
         BooleanSupplier cancellationCheck,
         String mediaPrimaryEntityName,
-        AtomicInteger llmCacheHits) {
+        AtomicInteger llmCacheHits,
+        int maxTotalRecords,
+        int maxEntityRecords) {
 
-    /** chunk 级并发度默认值（与图合并阶段默认并发口径一致） */
-    public static final int DEFAULT_CONCURRENCY = 4;
+    /** chunk 级并发度默认值（可由上下文显式覆盖，非正数回退本值） */
+    public static final int DEFAULT_CONCURRENCY = 1;
+
+    /** 单块输出记录总条数软上限默认值 50 */
+    public static final int DEFAULT_MAX_TOTAL_RECORDS = 50;
+
+    /** 单块输出实体记录条数软上限默认值 20 */
+    public static final int DEFAULT_MAX_ENTITY_RECORDS = 20;
 
     /**
      * 紧凑构造器：不变量校验与兜底。
@@ -71,6 +83,9 @@ public record EntityExtractionContext(
                 : entityTypes.stream().filter(Objects::nonNull).toList();
         maxGleaning = Math.max(maxGleaning, 0);
         concurrency = concurrency <= 0 ? DEFAULT_CONCURRENCY : concurrency;
+        maxTotalRecords = maxTotalRecords <= 0 ? DEFAULT_MAX_TOTAL_RECORDS : maxTotalRecords;
+        maxEntityRecords = maxEntityRecords <= 0 ? DEFAULT_MAX_ENTITY_RECORDS : maxEntityRecords;
+        maxEntityRecords = Math.min(maxEntityRecords, maxTotalRecords);
     }
 
     /**
@@ -93,7 +108,34 @@ public record EntityExtractionContext(
             List<EntityType> entityTypes, boolean jsonMode, int maxGleaning, int concurrency,
             String filePath, BooleanSupplier cancellationCheck, String mediaPrimaryEntityName) {
         this(kbId, documentId, extractionModelProfileId, language, entityTypes, jsonMode,
-                maxGleaning, concurrency, filePath, cancellationCheck, mediaPrimaryEntityName, null);
+                maxGleaning, concurrency, filePath, cancellationCheck, mediaPrimaryEntityName, null,
+                DEFAULT_MAX_TOTAL_RECORDS, DEFAULT_MAX_ENTITY_RECORDS);
+    }
+
+    /**
+     * 便捷构造器：携带缓存命中计数器、记录上限取默认值（注入配置引入前的十二参规范形态）。
+     *
+     * @param kbId                   所属知识库ID
+     * @param documentId             来源文档ID
+     * @param extractionModelProfileId 抽取模型 profileId
+     * @param language               知识库语言全名（兼容历史裸语言码）
+     * @param entityTypes            实体类型清单
+     * @param jsonMode               是否 JSON 输出模式
+     * @param maxGleaning            补漏最大轮数
+     * @param concurrency            chunk 级并发度
+     * @param filePath               来源文件路径
+     * @param cancellationCheck      取消检查器
+     * @param mediaPrimaryEntityName 多模态主实体名
+     * @param llmCacheHits           LLM 缓存命中计数器（可空）
+     */
+    public EntityExtractionContext(
+            Long kbId, Long documentId, String extractionModelProfileId, String language,
+            List<EntityType> entityTypes, boolean jsonMode, int maxGleaning, int concurrency,
+            String filePath, BooleanSupplier cancellationCheck, String mediaPrimaryEntityName,
+            AtomicInteger llmCacheHits) {
+        this(kbId, documentId, extractionModelProfileId, language, entityTypes, jsonMode,
+                maxGleaning, concurrency, filePath, cancellationCheck, mediaPrimaryEntityName,
+                llmCacheHits, DEFAULT_MAX_TOTAL_RECORDS, DEFAULT_MAX_ENTITY_RECORDS);
     }
 
     /**

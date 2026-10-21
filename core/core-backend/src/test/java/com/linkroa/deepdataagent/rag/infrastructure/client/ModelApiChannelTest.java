@@ -12,8 +12,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.Duration;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -47,9 +45,6 @@ class ModelApiChannelTest {
     private static final ModelProfileAccess.ResolvedEndpoint NO_KEY_ENDPOINT =
             new ModelProfileAccess.ResolvedEndpoint("https://api.example/v1", null, "local-rerank", null, null);
 
-    /** 单次调用超时（生产口径：embedding/rerank 60s） */
-    private static final Duration TIMEOUT = Duration.ofSeconds(60);
-
     /** 框架 HTTP 传输 Mock（捕获出站请求并编排响应） */
     @Mock
     private HttpTransport httpTransport;
@@ -62,7 +57,7 @@ class ModelApiChannelTest {
      */
     @BeforeEach
     void setUp() {
-        transport = new AgentscopeModelTransport(timeout -> new OpenAIClient(httpTransport));
+        transport = new AgentscopeModelTransport(new OpenAIClient(httpTransport));
     }
 
     /**
@@ -75,7 +70,7 @@ class ModelApiChannelTest {
         stubResponse(HttpResponse.builder().statusCode(200).body("{\"data\":[]}").build());
 
         // when
-        String raw = transport.post(VERSIONED_ENDPOINT, "/embeddings", "{\"model\":\"bge-m3\"}", TIMEOUT);
+        String raw = transport.post(VERSIONED_ENDPOINT, "/embeddings", "{\"model\":\"bge-m3\"}");
 
         // then
         assertEquals("{\"data\":[]}", raw);
@@ -96,7 +91,7 @@ class ModelApiChannelTest {
         stubResponse(HttpResponse.builder().statusCode(200).body("{\"results\":[]}").build());
 
         // when
-        transport.post(VERSIONED_ENDPOINT, "/rerank", "{}", TIMEOUT);
+        transport.post(VERSIONED_ENDPOINT, "/rerank", "{}");
 
         // then
         assertEquals("https://api.example/v1/rerank", capturedRequest().getUrl());
@@ -112,7 +107,7 @@ class ModelApiChannelTest {
         stubResponse(HttpResponse.builder().statusCode(200).body("{}").build());
 
         // when
-        transport.post(PLAIN_ENDPOINT, "/embeddings", "{}", TIMEOUT);
+        transport.post(PLAIN_ENDPOINT, "/embeddings", "{}");
 
         // then
         assertEquals("https://api.example/embeddings", capturedRequest().getUrl());
@@ -128,7 +123,7 @@ class ModelApiChannelTest {
         stubResponse(HttpResponse.builder().statusCode(200).body("{}").build());
 
         // when
-        transport.post(NO_KEY_ENDPOINT, "/rerank", "{}", TIMEOUT);
+        transport.post(NO_KEY_ENDPOINT, "/rerank", "{}");
 
         // then
         assertFalse(capturedRequest().getHeaders().containsKey("Authorization"),
@@ -147,7 +142,7 @@ class ModelApiChannelTest {
 
         // when
         RuntimeException exception = assertThrows(RuntimeException.class,
-                () -> transport.post(VERSIONED_ENDPOINT, "/embeddings", "{}", TIMEOUT));
+                () -> transport.post(VERSIONED_ENDPOINT, "/embeddings", "{}"));
 
         // then
         String message = exception.getMessage();
@@ -170,7 +165,7 @@ class ModelApiChannelTest {
 
         // when
         RuntimeException exception = assertThrows(RuntimeException.class,
-                () -> transport.post(VERSIONED_ENDPOINT, "/embeddings", "{}", TIMEOUT));
+                () -> transport.post(VERSIONED_ENDPOINT, "/embeddings", "{}"));
 
         // then
         assertTrue(exception.getMessage().startsWith("模型接口调用失败: "),
@@ -188,7 +183,7 @@ class ModelApiChannelTest {
 
         // when / then
         assertThrows(RuntimeException.class,
-                () -> transport.post(VERSIONED_ENDPOINT, "/embeddings", "{}", TIMEOUT));
+                () -> transport.post(VERSIONED_ENDPOINT, "/embeddings", "{}"));
     }
 
     /**

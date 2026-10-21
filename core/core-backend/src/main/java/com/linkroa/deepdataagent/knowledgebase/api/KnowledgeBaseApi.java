@@ -70,7 +70,7 @@ public interface KnowledgeBaseApi {
      * 按知识库ID读取知识库语言配置（读侧只读投影，供检索侧与摄入端语言同源消费，
      * ；真相源口径见）。
      * <p>语言以字符串落库于 {@code knowledge_base.language} 列——知识库语言的<strong>唯一真相源</strong>
-     * （11 语言全名值域，见 {@code KbLanguage}；{@code rag_engine_config} JSONB 的 language 键已弃用，
+     * （仅 Chinese/English 两个全名值域，见 {@code KbLanguage}；{@code rag_engine_config} JSONB 的 language 键已弃用，
      * 本方法不再解析该键）。本方法负责列值 → 语言全名的读取归一（大小写不敏感归一为枚举规范全名，
      * 存量值如 {@code ENGLISH} 归入 English；历史裸语言码原样透传的宽容口径不变）。
      * 只读不加锁，不区分知识库生命周期状态（与 {@link #findRetrievalStrategyByKbId(Long)} 口径一致）。</p>

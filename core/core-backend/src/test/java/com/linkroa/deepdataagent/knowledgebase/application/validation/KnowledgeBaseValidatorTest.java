@@ -37,25 +37,25 @@ class KnowledgeBaseValidatorTest {
 
     @Test
     void should_pass_when_validateLanguage_given_legalFullName() {
-        // given & then：11 全名值域命中放行（含大小写变体与首尾空白，原文落库、读取端归一）
-        assertDoesNotThrow(() -> KnowledgeBaseValidator.validateLanguage("Japanese"));
-        assertDoesNotThrow(() -> KnowledgeBaseValidator.validateLanguage("japanese"));
+        // given & then：Chinese/English 两值命中放行（含大小写变体与首尾空白，原文落库、读取端归一）
+        assertDoesNotThrow(() -> KnowledgeBaseValidator.validateLanguage("English"));
+        assertDoesNotThrow(() -> KnowledgeBaseValidator.validateLanguage("english"));
         assertDoesNotThrow(() -> KnowledgeBaseValidator.validateLanguage("  CHINESE "));
     }
 
     @Test
     void should_throwBadRequest_when_validateLanguage_given_unlistedLanguage() {
-        // given：值域外语言（未收录全名）
-        String language = "Portuguese";
+        // given：历史 11 值域中的其它语言（如 Japanese）不再合法
+        String language = "Japanese";
 
         // when
         DeepDataAgentException ex = assertThrows(DeepDataAgentException.class,
                 () -> KnowledgeBaseValidator.validateLanguage(language));
 
-        // then：拒绝并提示合法值域（含 11 全名首尾项），不静默回落
-        assertTrue(ex.getMessage().contains("Portuguese"));
+        // then：拒绝并提示合法值域（仅 Chinese/English），不静默回落
+        assertTrue(ex.getMessage().contains("Japanese"));
         assertTrue(ex.getMessage().contains("English"));
-        assertTrue(ex.getMessage().contains("Dutch"));
+        assertTrue(ex.getMessage().contains("Chinese"));
         assertTrue(ex.getMessage().contains("合法值"));
     }
 

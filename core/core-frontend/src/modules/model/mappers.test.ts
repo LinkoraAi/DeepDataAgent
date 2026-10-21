@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MODEL_TYPE_CHAT, MODEL_TYPE_EMBEDDING } from './api';
+import {
+  MODEL_TYPE_CHAT_LLM,
+  MODEL_TYPE_CHAT_VLM,
+  MODEL_TYPE_EMBEDDING,
+  MODEL_TYPE_RERANK,
+} from './api';
 import type { ModelProfileResponse } from './api';
 import {
   buildModelProfilePayload,
@@ -118,7 +123,7 @@ describe('buildModelProfilePayload 字段装配', () => {
     expect(payload).not.toHaveProperty('vectorDimension');
     expect(payload.displayName).toBe('生产对话模型');
     expect(payload.apiFormat).toBe('OPENAI');
-    expect(payload.modelType).toBe(MODEL_TYPE_CHAT);
+    expect(payload.modelType).toBe(MODEL_TYPE_CHAT_LLM);
   });
 
   it('should_装配全部数值字段_when_buildModelProfilePayload_given_合法填写', () => {
@@ -171,7 +176,7 @@ describe('buildModelProfilePayload 字段装配', () => {
   it('should_忽略向量维度_when_buildModelProfilePayload_given_对话类型误填维度', () => {
     // given
     const form = baseForm();
-    form.modelType = MODEL_TYPE_CHAT;
+    form.modelType = MODEL_TYPE_CHAT_LLM;
     form.vectorDimension = 1024;
 
     // when
@@ -428,8 +433,10 @@ describe('回显与标签', () => {
 
   it('should_返回中文标签_when_modelTypeLabel_given_已知与未知编码', () => {
     // given & when & then
-    expect(modelTypeLabel(MODEL_TYPE_CHAT)).toBe('对话');
+    expect(modelTypeLabel(MODEL_TYPE_CHAT_LLM)).toBe('对话LLM');
+    expect(modelTypeLabel(MODEL_TYPE_CHAT_VLM)).toBe('视觉对话');
     expect(modelTypeLabel(MODEL_TYPE_EMBEDDING)).toBe('嵌入');
+    expect(modelTypeLabel(MODEL_TYPE_RERANK)).toBe('重排');
     expect(modelTypeLabel(7)).toBe('7');
     expect(modelTypeLabel(null)).toBe('-');
   });
@@ -440,7 +447,7 @@ describe('回显与标签', () => {
 
     // then
     expect(form.apiFormat).toBe('OPENAI');
-    expect(form.modelType).toBe(MODEL_TYPE_CHAT);
+    expect(form.modelType).toBe(MODEL_TYPE_CHAT_LLM);
     expect(form.credential).toBe('');
     expect(form.vectorDimension).toBeNull();
     expect(validateModelForm(form).displayName).toBe('请输入显示名称');

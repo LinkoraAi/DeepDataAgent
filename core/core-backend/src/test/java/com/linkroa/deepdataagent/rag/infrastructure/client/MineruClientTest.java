@@ -67,7 +67,7 @@ class MineruClientTest {
     private long originalPollIntervalMs;
 
     /**
-     * 每个用例前构造被测对象（默认参数：hybrid-engine / auto / [ch] / medium）。
+     * 每个用例前构造被测对象（默认参数：pipeline / auto / [ch] / medium）。
      */
     @BeforeEach
     void setUp() {
@@ -493,6 +493,52 @@ class MineruClientTest {
         assertEquals(List.of("ch", "en"), body.get("lang_list"), "pipeline 后端应逐条提交全部语言");
         assertNull(body.get("model_server_url"), "pipeline 后端不应提交 model_server_url");
         assertNull(body.get("effort"), "仅 hybrid-engine 后端才提交 effort");
+    }
+
+    /**
+     * 场景：默认构造（未显式指定解析后端）。
+     * 预期：默认后端为 pipeline——提交 backend=pipeline、携带 parse_method，不提交 effort。
+     */
+    @Test
+    void should_submitPipelineBackend_when_createTask_given_defaultConstructor() {
+        // given
+        stubCreateAndCompleted();
+        when(restTemplate.exchange(eq(RESULT_URL), eq(HttpMethod.GET), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.status(200).body(
+                        "{\"results\":{\"report\":{\"content_list\":[]}}}"));
+
+        // when
+        client.parse(new byte[]{1}, "report.pdf");
+
+        // then
+        LinkedMultiValueMap<String, Object> body = captureCreateRequest();
+        assertEquals(List.of("pipeline"), body.get("backend"), "默认解析后端应为 pipeline");
+        assertEquals(List.of("auto"), body.get("parse_method"), "pipeline 后端应提交 parse_method");
+        assertNull(body.get("effort"), "pipeline 后端不提交 effort");
+    }
+
+    /**
+     * 场景：显式指定 hybrid-engine 后端。
+     * 预期：提交 effort，且仍携带 parse_method（两后端方法参数能力一致）。
+     */
+    @Test
+    void should_submitEffort_when_createTask_given_hybridEngineBackend() {
+        // given
+        MineruClient hybridClient = new MineruClient(API_BASE_URL, "hybrid-engine", null, "auto",
+                List.of("ch"), "high", restTemplate);
+        stubCreateAndCompleted();
+        when(restTemplate.exchange(eq(RESULT_URL), eq(HttpMethod.GET), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.status(200).body(
+                        "{\"results\":{\"report\":{\"content_list\":[]}}}"));
+
+        // when
+        hybridClient.parse(new byte[]{1}, "report.pdf");
+
+        // then
+        LinkedMultiValueMap<String, Object> body = captureCreateRequest();
+        assertEquals(List.of("hybrid-engine"), body.get("backend"));
+        assertEquals(List.of("high"), body.get("effort"), "hybrid-engine 后端应提交 effort");
+        assertEquals(List.of("auto"), body.get("parse_method"), "hybrid-engine 后端应提交 parse_method");
     }
 
     /**

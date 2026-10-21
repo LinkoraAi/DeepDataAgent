@@ -1,4 +1,6 @@
 import { post } from '@/shared/api/http';
+import { openSseStream } from '@/shared/api/sse';
+import type { SseHandle } from '@/shared/api/sse';
 
 /**
  * 检索能力端点（后端 RetrievalController，前缀 /api/v1/rag/retrievals）。
@@ -6,8 +8,9 @@ import { post } from '@/shared/api/http';
  * <ul>
  *   <li>{@code POST /chunks} —— 只返回精排后全量命中切片（不作答，token 预算与本端点无关）；
  *       无命中时 chunks 为空数组而非 null；</li>
- *   <li>{@code POST /answer} —— 只返回 LLM 最终答案；答案生成降级时 answer 为 null
- *       （响应不携带引用列表与降级标记）；</li>
+ *   <li>{@code POST /answer} —— SSE 流式返回 LLM 最终答案：{@code answer.started} →
+ *       {@code answer.delta}×N → {@code answer.completed}（只含完整答案）或
+ *       {@code answer.error}；建流前的参数/归属校验失败仍返回真实 HTTP 错误信封；</li>
  *   <li>两形态共用同一请求体：kbId / query 必填，其余可空（缺省走后端契约默认值）；</li>
  *   <li>库级检索策略（策略类型 / 结果数量 / 阈值 / 重排 / 融合）由后端从知识库配置读取，
  *       不经本请求体下发，参数调整须走 retrieval-config 端点；</li>
@@ -18,16 +21,6 @@ import { post } from '@/shared/api/http';
 
 /** 统一前缀（版本 v1 与后端 ApiVersionConstants.CURRENT_API_VERSION 对齐）。 */
 const BASE = '/api/v1/rag/retrievals';
-
-/**
- * 答案形态请求超时（毫秒）。
- * <p>答案端点是同一条完整链路的同步接口：作答阶段（Stage 5）单次 LLM 调用即可达 ~30s，
- * 冷缓存时首轮查询改写另需十余秒，整体常在 30~45s 区间返回；http 客户端常规请求默认
- * 30s 会先于后端返回把请求中断，前端表现为误报「问答失败：请求超时」。</p>
- * <p>放宽到 10 分钟（600000ms）覆盖该区间。沿用 http 客户端「≤0 关闭超时」语义，
- * 故取值必须为正数；亦不得超过 nginx 该路径的 proxy_read_timeout（见 deploy/nginx/default.conf）。</p>
- */
-const RETRIEVAL_ANSWER_TIMEOUT_MS = 600_000;
 
 /**
  * 检索请求附图（后端 QueryImageDTO 同构）。
@@ -88,10 +81,45 @@ export interface RetrievalChunksWire {
   chunks: ChunkReference[] | null;
 }
 
-/** 答案形态响应（RetrievalAnswerResponse 同构）。 */
-export interface RetrievalAnswerWire {
-  /** 最终答案文本（答案生成降级时为 null） */
-  answer: string | null;
+/** 答案流事件名（与后端 AnswerStreamEventCodec 常量逐字一致）。 */
+export const ANSWER_EVENT_STARTED = 'answer.started';
+
+/** 答案流：增量事件名。 */
+export const ANSWER_EVENT_DELTA = 'answer.delta';
+
+/** 答案流：正常终结事件名。 */
+export const ANSWER_EVENT_COMPLETED = 'answer.completed';
+
+/** 答案流：异常终结事件名。 */
+export const ANSWER_EVENT_ERROR = 'answer.error';
+
+/** 答案流事件载荷（后端 data JSON 同构，字段按事件类型取用）。 */
+interface AnswerStreamPayload {
+  /** 事件类型（与 SSE event 名一致） */
+  type?: string;
+  /** 增量文本（answer.delta） */
+  delta?: string;
+  /** 完整答案（answer.completed；引用信息由模型在正文 References 段中生成） */
+  answer?: string;
+  /** 错误码（answer.error） */
+  code?: string;
+  /** 错误信息（answer.error） */
+  message?: string;
+}
+
+/**
+ * 答案流回调集合。
+ * <p>{@code onCompleted} 与 {@code onError} 互斥：一次流只会走到其中之一。</p>
+ */
+export interface StreamAnswerHandlers {
+  /** 检索已进入答案生成阶段 */
+  onStarted?: () => void;
+  /** 收到增量文本（按到达顺序追加） */
+  onDelta: (delta: string) => void;
+  /** 正常终结：完整答案（含模型生成的 References 段） */
+  onCompleted: (answer: string) => void;
+  /** 异常终结或连接失败 */
+  onError: (message: string) => void;
 }
 
 /**
@@ -146,10 +174,41 @@ export function retrieveChunks(payload: RetrievalPayload): Promise<RetrievalChun
 }
 
 /**
- * 检索并只返回 LLM 最终答案（同步）。
+ * 以 SSE 流式发起检索作答（一次性流，不自动重连）。
+ * <p>建流前的参数/归属校验失败时后端返回 JSON 错误信封，此处由 {@code onError} 归一呈现。</p>
  * @param payload 检索请求体（kbId / query 必填，可携带内联附图）
- * @returns 答案形态响应（answer 可为 null，表示模型降级）
+ * @param handlers 事件回调（增量 / 终结 / 错误）
+ * @returns 流句柄（停止生成或组件卸载时调用 close）
  */
-export function retrieveAnswer(payload: RetrievalPayload): Promise<RetrievalAnswerWire> {
-  return post<RetrievalAnswerWire>(`${BASE}/answer`, payload, RETRIEVAL_ANSWER_TIMEOUT_MS);
+export function streamAnswer(payload: RetrievalPayload, handlers: StreamAnswerHandlers): SseHandle {
+  return openSseStream(`${BASE}/answer`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    autoReconnect: false,
+    onFrame: (frame) => {
+      let event: AnswerStreamPayload;
+      try {
+        event = JSON.parse(frame.data) as AnswerStreamPayload;
+      } catch {
+        return;
+      }
+      const type = event.type ?? frame.event;
+      if (type === ANSWER_EVENT_STARTED) {
+        handlers.onStarted?.();
+        return;
+      }
+      if (type === ANSWER_EVENT_DELTA) {
+        handlers.onDelta(event.delta ?? '');
+        return;
+      }
+      if (type === ANSWER_EVENT_COMPLETED) {
+        handlers.onCompleted(event.answer ?? '');
+        return;
+      }
+      if (type === ANSWER_EVENT_ERROR) {
+        handlers.onError(event.message ?? '答案生成失败');
+      }
+    },
+    onError: (error) => handlers.onError(error.message),
+  });
 }

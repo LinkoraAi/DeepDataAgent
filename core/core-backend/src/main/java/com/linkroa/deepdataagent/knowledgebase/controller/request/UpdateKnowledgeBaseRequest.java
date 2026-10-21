@@ -9,7 +9,7 @@ import jakarta.validation.constraints.Size;
  * @param name              知识库名称（最长 128 字符）
  * @param description       知识库描述
  * @param language          知识库语言（可选，落 {@code knowledge_base.language} 列——语言唯一真相源；
- *                          值域为 KbLanguage 十一语言全名、大小写不敏感；未传（null）保持原值不覆盖）
+ *                          值域为 KbLanguage 的 Chinese/English、大小写不敏感；未传（null）保持原值不覆盖）
  * @param ragEngineConfig   RAG 引擎配置 JSON
  * @param dedupPolicy       去重策略 JSON
  * @param retrievalStrategy 检索策略 JSON

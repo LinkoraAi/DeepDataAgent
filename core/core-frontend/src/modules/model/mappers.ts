@@ -1,5 +1,10 @@
-import { API_FORMATS } from '@/shared/enums/dict';
-import { MODEL_TYPE_CHAT, MODEL_TYPE_EMBEDDING } from './api';
+import { API_FORMATS, MODEL_TYPES } from '@/shared/enums/dict';
+import {
+  MODEL_TYPE_CHAT_LLM,
+  MODEL_TYPE_CHAT_VLM,
+  MODEL_TYPE_EMBEDDING,
+  MODEL_TYPE_RERANK,
+} from './api';
 import type { ModelProfilePayload, ModelProfileResponse } from './api';
 
 /**
@@ -61,11 +66,13 @@ export const DISPLAY_NAME_PATTERN = /^[\p{Script=Han}A-Za-z][\p{Script=Han}A-Za-
 
 /** 模型类型编码 → 列表用简短中文标签 */
 export const MODEL_TYPE_LABELS: Record<number, string> = {
-  [MODEL_TYPE_CHAT]: '对话',
+  [MODEL_TYPE_CHAT_LLM]: '对话LLM',
+  [MODEL_TYPE_CHAT_VLM]: '视觉对话',
   [MODEL_TYPE_EMBEDDING]: '嵌入',
+  [MODEL_TYPE_RERANK]: '重排',
 };
 
-/** 新建态空表单（默认对话模型 + OpenAI 格式，与后端缺省口径一致）。 */
+/** 新建态空表单（默认对话LLM + OpenAI 格式，与后端缺省口径 1 一致）。 */
 export function createEmptyModelForm(): ModelFormState {
   return {
     displayName: '',
@@ -79,7 +86,7 @@ export function createEmptyModelForm(): ModelFormState {
     contextWindowInput: null,
     contextWindowOutput: null,
     toolCallRounds: null,
-    modelType: MODEL_TYPE_CHAT,
+    modelType: MODEL_TYPE_CHAT_LLM,
     vectorDimension: null,
   };
 }
@@ -98,7 +105,7 @@ export function modelProfileFormFromResponse(profile: ModelProfileResponse): Mod
     contextWindowInput: profile.contextWindowInput ?? null,
     contextWindowOutput: profile.contextWindowOutput ?? null,
     toolCallRounds: profile.toolCallRounds ?? null,
-    modelType: profile.modelType ?? MODEL_TYPE_CHAT,
+    modelType: profile.modelType ?? MODEL_TYPE_CHAT_LLM,
     vectorDimension: profile.vectorDimension ?? null,
   };
 }
@@ -170,7 +177,7 @@ export function validateModelForm(form: ModelFormState): ModelFormErrors {
   if (form.modelSeries.trim().length > MAX_MODEL_SERIES_LENGTH) {
     errors.modelSeries = `模型系列不能超过${MAX_MODEL_SERIES_LENGTH}个字符`;
   }
-  if (form.modelType !== MODEL_TYPE_CHAT && form.modelType !== MODEL_TYPE_EMBEDDING) {
+  if (!MODEL_TYPES.some((item) => item.value === form.modelType)) {
     errors.modelType = '请选择模型类型';
   }
   if (isEmbeddingType(form) && toPositiveInt(form.vectorDimension) === null) {

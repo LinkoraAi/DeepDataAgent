@@ -22,9 +22,9 @@ function patch(key: keyof MineruParams, value: string): void {
 
 /** MinerU 解析后端候选（与后端 MineruClient 默认值对齐；留空取默认） */
 const BACKEND_OPTIONS = [
-  { value: '', label: '默认（hybrid-engine）' },
-  { value: 'hybrid-engine', label: 'hybrid-engine' },
+  { value: '', label: '默认（pipeline）' },
   { value: 'pipeline', label: 'pipeline' },
+  { value: 'hybrid-engine', label: 'hybrid-engine' },
   { value: 'vlm-engine', label: 'vlm-engine' },
 ];
 
@@ -107,7 +107,7 @@ const QUALITY_OPTIONS = [
 
 .kb-field--col {
   flex: 1;
-  /* flex 项默认 min-width:auto 会被长选项文本（如「默认（hybrid-engine）」）撑破抽屉，
+  /* flex 项默认 min-width:auto 会被长选项文本（如「默认（pipeline）」）撑破抽屉，
      置 0 允许收缩，select 内部按可用宽度省略号截断 */
   min-width: 0;
   margin-bottom: 0;

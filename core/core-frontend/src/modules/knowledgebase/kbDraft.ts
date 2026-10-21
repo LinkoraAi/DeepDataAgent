@@ -17,7 +17,7 @@ import type { KnowledgeBaseCreatePayload, KnowledgeBaseUpdatePayload, KnowledgeB
 export interface MineruParams {
   /** MinerU 服务地址（MINERU 必填） */
   apiBaseUrl: string;
-  /** 解析后端（如 hybrid-engine） */
+  /** 解析后端（如 pipeline） */
   backend: string;
   /** 解析方法（auto / txt / ocr） */
   parseMethod: string;

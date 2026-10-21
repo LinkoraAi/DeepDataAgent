@@ -5,7 +5,7 @@ import EmptyGuide from '@/shared/components/EmptyGuide.vue';
 import FormSection from '@/shared/components/FormSection.vue';
 import { errorMessage } from '@/shared/composables/useAsync';
 import { FUSION_TYPES, RETRIEVAL_CHANNELS, RETRIEVAL_STRATEGIES } from '@/shared/enums/dict';
-import { MODEL_TYPE_CHAT, listEnabledProfiles } from '@/modules/model/api';
+import { MODEL_TYPE_RERANK, listEnabledProfiles } from '@/modules/model/api';
 import type { ModelProfileResponse } from '@/modules/model/api';
 import { getKnowledgeBase, updateRetrievalConfig } from '../../api/knowledgeBase';
 import { retrieveChunks } from '../../api/retrieval';
@@ -128,10 +128,10 @@ async function loadConfig(): Promise<void> {
   }
 }
 
-/** 加载重排模型下拉（仅启用中的对话模型，与知识库多模态模型同源） */
+/** 加载重排模型下拉（仅启用中的重排模型，类型过滤由服务端完成） */
 async function loadRerankModels(): Promise<void> {
   try {
-    rerankModels.value = await listEnabledProfiles(MODEL_TYPE_CHAT);
+    rerankModels.value = await listEnabledProfiles(MODEL_TYPE_RERANK);
   } catch (e) {
     MessagePlugin.error(`重排模型列表加载失败：${errorMessage(e)}`);
   }
@@ -218,7 +218,40 @@ onMounted(() => {
         </div>
       </FormSection>
 
-      <FormSection title="召回与精排" hint="阈值越高结果越少；数量决定精排后的返回条数">
+      <FormSection title="重排" hint="开启后按重排模型重新打分，必须选择模型">
+        <div class="retrieval-field retrieval-field--row">
+          <label class="retrieval-field__label">启用重排</label>
+          <t-switch :value="draft.rerankConfig.enabled" @change="onRerankEnabledChange" />
+        </div>
+        <template v-if="rerankEnabled">
+          <div class="retrieval-field">
+            <label class="retrieval-field__label">重排模型</label>
+            <t-select
+              v-model="draft.rerankConfig.modelProfileId"
+              :options="modelOptions"
+              placeholder="请选择启用中的对话模型"
+              :status="errorOf('rerankConfig.modelProfileId') ? 'error' : 'default'"
+            />
+            <p v-if="errorOf('rerankConfig.modelProfileId')" class="retrieval-field__error">
+              {{ errorOf('rerankConfig.modelProfileId') }}
+            </p>
+          </div>
+          <div class="retrieval-field">
+            <label class="retrieval-field__label">重排保留条数 topK（可选）</label>
+            <t-input-number
+              class="retrieval-field__number"
+              :value="draft.rerankConfig.topK"
+              :min="RERANK_TOP_K_MIN"
+              theme="column"
+              placeholder="留空表示不限制"
+              @update:value="onRerankTopKChange"
+            />
+            <p v-if="errorOf('rerankConfig.topK')" class="retrieval-field__error">{{ errorOf('rerankConfig.topK') }}</p>
+          </div>
+        </template>
+      </FormSection>
+
+      <FormSection title="召回" hint="阈值越高结果越少；数量决定重排后的返回条数">
         <div class="retrieval-field retrieval-field--row">
           <label class="retrieval-field__label">问题改写</label>
           <t-switch :value="draft.rewriteQuestion" @change="onRewriteChange" />
@@ -230,6 +263,7 @@ onMounted(() => {
           </label>
           <t-input-number
             v-model="draft.resultChunkCount"
+            class="retrieval-field__number"
             :min="RESULT_CHUNK_COUNT_MIN"
             :max="RESULT_CHUNK_COUNT_MAX"
             theme="column"
@@ -253,38 +287,6 @@ onMounted(() => {
         </div>
       </FormSection>
 
-      <FormSection title="重排" hint="开启后按重排模型重新打分，必须选择模型">
-        <div class="retrieval-field retrieval-field--row">
-          <label class="retrieval-field__label">启用重排</label>
-          <t-switch :value="draft.rerankConfig.enabled" @change="onRerankEnabledChange" />
-        </div>
-        <template v-if="rerankEnabled">
-          <div class="retrieval-field">
-            <label class="retrieval-field__label">重排模型</label>
-            <t-select
-              v-model="draft.rerankConfig.modelProfileId"
-              :options="modelOptions"
-              placeholder="请选择启用中的对话模型"
-              :status="errorOf('rerankConfig.modelProfileId') ? 'error' : 'default'"
-            />
-            <p v-if="errorOf('rerankConfig.modelProfileId')" class="retrieval-field__error">
-              {{ errorOf('rerankConfig.modelProfileId') }}
-            </p>
-          </div>
-          <div class="retrieval-field">
-            <label class="retrieval-field__label">重排保留条数 topK（可选）</label>
-            <t-input-number
-              :value="draft.rerankConfig.topK"
-              :min="RERANK_TOP_K_MIN"
-              theme="column"
-              placeholder="留空表示不限制"
-              @update:value="onRerankTopKChange"
-            />
-            <p v-if="errorOf('rerankConfig.topK')" class="retrieval-field__error">{{ errorOf('rerankConfig.topK') }}</p>
-          </div>
-        </template>
-      </FormSection>
-
       <FormSection title="多路融合" hint="RRF 配 K 值；加权求和配三路权重（互斥）">
         <div class="retrieval-field">
           <label class="retrieval-field__label">融合方式</label>
@@ -295,7 +297,7 @@ onMounted(() => {
         </div>
         <div v-if="isRrf" class="retrieval-field">
           <label class="retrieval-field__label">RRF 常数 K（大于 {{ RRF_K_MIN }}，默认 60）</label>
-          <t-input-number v-model="draft.fusionConfig.rrfK" :min="RRF_K_MIN" theme="column" />
+          <t-input-number v-model="draft.fusionConfig.rrfK" class="retrieval-field__number" :min="RRF_K_MIN" theme="column" />
           <p v-if="errorOf('fusionConfig.rrfK')" class="retrieval-field__error">{{ errorOf('fusionConfig.rrfK') }}</p>
         </div>
         <template v-else>
@@ -303,6 +305,7 @@ onMounted(() => {
             <label class="retrieval-field__label">{{ channel.label }}通道权重（0~1，不含 0 与 1）</label>
             <t-input-number
               v-model="draft.fusionConfig.channelDenseWeight[channel.value]"
+              class="retrieval-field__number"
               :min="CHANNEL_WEIGHT_FLOOR"
               :max="CHANNEL_WEIGHT_CEIL"
               :step="0.05"
@@ -513,6 +516,11 @@ onMounted(() => {
   margin-bottom: 4px;
   font-size: 13px;
   color: var(--td-text-color-primary, rgba(0, 0, 0, 0.9));
+}
+
+/* 数值输入框铺满面板列宽，避免数量 / K 值 / 权重输入框过窄难以辨认 */
+.retrieval-field__number {
+  width: 100%;
 }
 
 .retrieval-field__suffix {

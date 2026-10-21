@@ -10,9 +10,12 @@ import com.linkroa.deepdataagent.rag.domain.model.PersistedChunkVO;
 import com.linkroa.deepdataagent.rag.domain.model.RelationContribution;
 import com.linkroa.deepdataagent.rag.domain.model.RelationEdge;
 import com.linkroa.deepdataagent.rag.domain.model.RelationProperties;
+import com.linkroa.deepdataagent.rag.domain.port.LlmCallContext;
+import com.linkroa.deepdataagent.rag.domain.port.LlmCallException;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatRequest;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatResult;
 import com.linkroa.deepdataagent.rag.domain.port.LlmClient;
+import com.linkroa.deepdataagent.rag.domain.port.LlmFailureKind;
 import com.linkroa.deepdataagent.rag.domain.repository.ChunkExtractCacheRepository;
 import com.linkroa.deepdataagent.rag.domain.repository.LlmCacheRepository;
 import com.linkroa.deepdataagent.rag.infrastructure.prompts.catalog.PromptCatalog;
@@ -45,6 +48,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -73,11 +77,12 @@ import java.util.stream.Collectors;
  * 来源键均为落库后的真实分块 ID（由 {@link PersistedChunkVO} 承载，构造即真值），
  * 不存在占位与重写环节；文档级溯源另依赖 {@code documentId} 锚点与 {@code filePath}。</p>
  *
- * <p><b>失败与取消</b>（两条失败口径、严格分流）：单块<b>业务异常</b>（模型响应非法、解析失败等）
- * 仅记录告警并跳过该块（部分成功语义，不炸整批，既有有意设计）；但条目在等待并发闸门时
- * <b>被中断</b>一律计为阶段失败——全部任务收口后以首个异常上抛（其余 addSuppressed），
- * MUST NOT 以不完整快照集合继续聚合（与 {@link GraphMergeService} 阶段 fail-closed 口径同族），
- * 由管线既有失败回写路径将文档置 {@code FAILED}，杜绝「缺块却写成 PROCESSED」的静默部分成功。
+ * <p><b>失败与取消</b>（失败即阶段失败，对齐上游 LightRAG）：分块级<b>模型调用失败</b>
+ * （超时、连接失败、限流或 5xx 重试耗尽，含补漏轮次）一律计为阶段失败——停止派发剩余分块、
+ * 等待在飞任务收口后以首个异常上抛，MUST NOT 以不完整快照集合继续聚合，
+ * 由管线既有失败回写路径将文档置 {@code FAILED}，杜绝「缺块却写成 PROCESSED」。
+ * 等待并发闸门时<b>被中断</b>同样计为阶段失败。响应内容不可解析或未抽取到任何记录
+ * 按零记录处理，不判失败；仅单条实体/关系记录解析失败可跳过该条。
  * 取消检查在入口、每块提交前、全部完成后共三处生效（与图合并阶段取消语义一致），
  * 提交循环内命中时先等待已提交任务收口再上抛 {@link IllegalStateException}，
  * 不留无人等待的孤儿扇出任务。LLM 缓存由
@@ -159,13 +164,14 @@ public class EntityExtractionService {
     /** 占位符：章节路径 */
     private static final String VAR_HEADING_PATH = "heading_path";
 
-    // ------------------------------------------------------------------ 记录限额（参考 LightRAG 默认口径）
+    // ------------------------------------------------------------------ 补漏预算（限额已提为上下文配置）
 
-    /** 单次响应实体+关系总行数上限 */
-    static final int MAX_TOTAL_RECORDS = 100;
-
-    /** 单次响应实体行数上限 */
-    static final int MAX_ENTITY_RECORDS = 40;
+    /**
+     * 补漏（gleaning）重放载荷的输入 token 预算上限（ MAX_EXTRACT_INPUT_TOKENS=20480）：
+     * 续抽前以「系统提示词 + 合成本轮续抽提示词」的真实 token 计数预检，超限即 WARN 并跳过补漏——
+     * 宁可少一轮补漏，也不让超限载荷在提供方报 context_length_exceeded 后拖垮整篇抽取。
+     */
+    static final int MAX_EXTRACT_INPUT_TOKENS = 20480;
 
     // ------------------------------------------------------------------ 文本模式解析协议
 
@@ -342,6 +348,9 @@ public class EntityExtractionService {
     /** LLM 调用缓存仓储端口（重放路径经其按键批量读取缓存响应行，不触发任何 LLM 调用） */
     private final LlmCacheRepository llmCacheRepository;
 
+    /** Token 计数器（补漏续抽前重放载荷预检用，真实 encode 口径） */
+    private final TokenCounter tokenCounter;
+
     /**
      * 构造实体抽取领域服务。
      *
@@ -350,29 +359,32 @@ public class EntityExtractionService {
      * @param objectMapper              Jackson 对象映射器
      * @param chunkExtractCacheRepository 抽取缓存归属仓储端口（重放入口追溯分块缓存键用）
      * @param llmCacheRepository        LLM 调用缓存仓储端口（重放入口批量读取缓存响应用）
+     * @param tokenCounter              Token 计数器（补漏重放载荷预检用）
      */
     public EntityExtractionService(LlmClient llmClient,
                                    @Qualifier("ragFanoutExecutor") Executor ingestionExecutor,
                                    ObjectMapper objectMapper,
                                    ChunkExtractCacheRepository chunkExtractCacheRepository,
-                                   LlmCacheRepository llmCacheRepository) {
+                                   LlmCacheRepository llmCacheRepository,
+                                   TokenCounter tokenCounter) {
         this.llmClient = llmClient;
         this.ingestionExecutor = ingestionExecutor;
         this.objectMapper = objectMapper;
         this.chunkExtractCacheRepository = chunkExtractCacheRepository;
         this.llmCacheRepository = llmCacheRepository;
+        this.tokenCounter = tokenCounter;
     }
 
     /**
      * 文档级实体抽取主入口：对一批 chunk 并发抽取并按文档聚合。
      *
-     * <p><b>两条失败口径（严格分流）</b>：① 单块<b>业务异常</b>（模型响应非法、解析失败等）
-     * 仅告警跳过该块，文档允许带部分结果成功——既有有意设计，保持不变；② 任一条目在等待
-     * 并发闸门时<b>被中断</b>（典型为执行器停机 shutdownNow）一律计为阶段失败：收集器非空时
-     * 在全部任务收口后以首个异常上抛（其余 addSuppressed），MUST NOT 调用 {@code aggregate}
-     * 以缺块快照继续聚合——静默写 {@code PROCESSED} 会永久缺失实体/关系且不可自愈，
-     * 上抛使管线走既有失败回写路径置 {@code FAILED}（用户可重新解析）。两条路径在留痕上可区分：
-     * 后者异常链必携带 {@link InterruptedException} 原因。</p>
+     * <p><b>失败口径（对齐上游 LightRAG）</b>：① 任一分块<b>模型调用失败</b>（超时、连接失败、
+     * 限流或 5xx 重试耗尽，含补漏轮次）即停止派发剩余分块，已提交任务收口后以首个异常上抛，
+     * MUST NOT 调用 {@code aggregate} 以缺块快照继续聚合——静默写 {@code PROCESSED} 会永久
+     * 缺失实体/关系且不可自愈，上抛使管线走既有失败回写路径置 {@code FAILED}（用户可重新解析）；
+     * ② 等待并发闸门时<b>被中断</b>（典型为执行器停机 shutdownNow）同样计为阶段失败，
+     * 异常链必携带 {@link InterruptedException} 原因。响应内容不可解析或未抽取到任何记录按零记录
+     * 处理，不判失败；仅单条实体/关系记录解析失败可跳过该条。</p>
      *
      * <p>取消检查在入口、每块提交前、全部完成后三处生效；提交循环内命中取消时
      * <b>先等待已提交任务收口</b>（任务体自带闸门与异常兜底、必然结束）再上抛，
@@ -398,9 +410,12 @@ public class EntityExtractionService {
         Set<String> customTypes = resolveCustomTypes(ctx.entityTypes());
         int concurrency = Math.min(Math.max(ctx.concurrency(), 1), chunks.size());
         Semaphore gate = new Semaphore(concurrency);
-        // 中断失败收集器：只收「闸门等待被中断」条目，与单块业务异常的容忍跳过严格分流
-        // （fail-closed 形态对齐 GraphMergeService#runPhase）
+        long startNanos = System.nanoTime();
+        // 中断失败收集器：只收「闸门等待被中断」条目，与分块级模型失败分流（两者均判阶段失败）
         ConcurrentLinkedQueue<Throwable> interruptFailures = new ConcurrentLinkedQueue<>();
+        // 分块级失败收集器：首个失败决定阶段判定，其余仅用于汇总日志与原因分布
+        AtomicReference<Throwable> firstFailure = new AtomicReference<>();
+        ConcurrentLinkedQueue<ChunkFailure> chunkFailures = new ConcurrentLinkedQueue<>();
         ChunkSnapshot[] perChunk = new ChunkSnapshot[chunks.size()];
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (int index = 0; index < chunks.size(); index++) {
@@ -409,6 +424,10 @@ public class EntityExtractionService {
                 // 且其结果已不可消费，等待其自然结束消除孤儿扇出
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
                 throw new IllegalStateException(CANCELLED_MESSAGE);
+            }
+            // 已出现分块失败时停止派发剩余分块（等价上游「取消 pending」）：不再产生新的模型调用
+            if (firstFailure.get() != null) {
+                break;
             }
             final int taskIndex = index;
             final PersistedChunkVO chunk = chunks.get(index);
@@ -425,11 +444,16 @@ public class EntityExtractionService {
                     return;
                 }
                 try {
-                    perChunk[taskIndex] = extractSingleChunk(ctx, systemPrompt, customTypes, chunk);
-                } catch (Exception failed) {
-                    // 单块业务异常维持既有「告警跳过、允许部分成功」语义，MUST NOT 计入中断收集器
-                    log.warn("chunk 实体抽取失败，跳过该块：documentId=[{}]，sequence=[{}]",
-                            ctx.documentId(), chunk.sequence(), failed);
+                    if (firstFailure.get() != null) {
+                        // 许可到手后二次检查：失败已发生则直接短路，不再发起模型调用
+                        return;
+                    }
+                    perChunk[taskIndex] = extractSingleChunk(ctx, systemPrompt, customTypes, chunk, firstFailure);
+                } catch (RuntimeException failed) {
+                    // 分块级模型调用失败：记录首个失败并计入原因分布，阶段在收口后统一判失败
+                    firstFailure.compareAndSet(null, failed);
+                    chunkFailures.add(new ChunkFailure(chunk.sequence(), failureKindOf(failed),
+                            StringUtils.defaultIfBlank(failed.getMessage(), failed.getClass().getSimpleName())));
                 } finally {
                     gate.release();
                 }
@@ -443,15 +467,81 @@ public class EntityExtractionService {
             for (int i = 1; i < errors.size(); i++) {
                 first.addSuppressed(errors.get(i));
             }
+            logExtractionSummary(ctx, chunks.size(), 0, chunkFailures, startNanos, "INTERRUPTED");
             throw new IllegalStateException(INTERRUPTED_FAILURE_PREFIX + first.getMessage(), first);
         }
         if (ctx.isCancelled()) {
             throw new IllegalStateException(CANCELLED_MESSAGE);
         }
+        Throwable failure = firstFailure.get();
+        if (ObjectUtils.isNotEmpty(failure)) {
+            ChunkFailure head = chunkFailures.stream().findFirst().orElse(null);
+            int failedCount = chunkFailures.size();
+            int succeededCount = (int) Arrays.stream(perChunk).filter(Objects::nonNull).count();
+            logExtractionSummary(ctx, chunks.size(), succeededCount, chunkFailures, startNanos, "FAILED");
+            String sequenceText = ObjectUtils.isEmpty(head) ? "-" : String.valueOf(head.sequence());
+            String kindText = ObjectUtils.isEmpty(head) ? LlmFailureKind.UNKNOWN.name() : head.kind().name();
+            throw new IllegalStateException("分块抽取失败：sequence=[" + sequenceText
+                    + "]，失败块数=[" + failedCount + "]，原因分类=[" + kindText + "]："
+                    + StringUtils.defaultIfBlank(failure.getMessage(), failure.getClass().getSimpleName()),
+                    failure);
+        }
         List<ChunkSnapshot> snapshots = Arrays.stream(perChunk)
                 .filter(Objects::nonNull)
                 .toList();
+        logExtractionSummary(ctx, chunks.size(), snapshots.size(), chunkFailures, startNanos, "OK");
         return aggregate(ctx, snapshots);
+    }
+
+    /**
+     * 输出文档级抽取汇总日志（成功与失败路径共用）。
+     *
+     * @param ctx            抽取上下文
+     * @param total          分块总数
+     * @param succeeded      抽取成功块数
+     * @param failures       分块失败记录
+     * @param startNanos     抽取起始纳秒时间戳
+     * @param status         汇总状态（OK / FAILED / INTERRUPTED）
+     */
+    private void logExtractionSummary(EntityExtractionContext ctx, int total, int succeeded,
+                                      ConcurrentLinkedQueue<ChunkFailure> failures,
+                                      long startNanos, String status) {
+        try {
+            Map<String, Integer> reasonCounts = new LinkedHashMap<>();
+            StringBuilder sequences = new StringBuilder();
+            for (ChunkFailure failure : failures) {
+                reasonCounts.merge(failure.kind().name(), 1, Integer::sum);
+                if (sequences.length() > 0) {
+                    sequences.append(',');
+                }
+                sequences.append(failure.sequence());
+            }
+            int failed = failures.size();
+            log.info("extract.summary | docId={} chunks={} ok={} failed={} reasons={} failedSeqs=[{}]"
+                            + " status={} elapsedMs={}",
+                    ctx.documentId(), total, succeeded, failed, reasonCounts, sequences, status,
+                    Math.max(System.nanoTime() - startNanos, 0L) / 1_000_000L);
+        } catch (RuntimeException ignored) {
+            // 观测不得影响摄入
+        }
+    }
+
+    /**
+     * 从失败异常中提取失败分类。
+     *
+     * @param failure 分块失败异常
+     * @return 失败分类（非 {@link LlmCallException} 时为 UNKNOWN）
+     */
+    private static LlmFailureKind failureKindOf(Throwable failure) {
+        for (Throwable cursor = failure; cursor != null; cursor = cursor.getCause()) {
+            if (cursor instanceof LlmCallException callException) {
+                return callException.kind();
+            }
+            if (cursor.getCause() == cursor) {
+                break;
+            }
+        }
+        return LlmFailureKind.UNKNOWN;
     }
 
     // ------------------------------------------------------------------ 抽取缓存重放（design D5）
@@ -635,8 +725,8 @@ public class EntityExtractionService {
         String guidance = PromptCatalog.buildEntityTypesGuidance(ctx.entityTypes(), ctx.language());
         Map<String, Object> vars = new LinkedHashMap<>();
         vars.put(VAR_ENTITY_TYPES_GUIDANCE, guidance);
-        vars.put(VAR_MAX_TOTAL_RECORDS, MAX_TOTAL_RECORDS);
-        vars.put(VAR_MAX_ENTITY_RECORDS, MAX_ENTITY_RECORDS);
+        vars.put(VAR_MAX_TOTAL_RECORDS, ctx.maxTotalRecords());
+        vars.put(VAR_MAX_ENTITY_RECORDS, ctx.maxEntityRecords());
         vars.put(VAR_LANGUAGE, StringUtils.trim(ctx.language()));
         vars.put(VAR_EXAMPLES, resolveExamples(ctx.language(), ctx.jsonMode()));
         String template = ctx.jsonMode() ? JSON_SYSTEM_TEMPLATE : TEXT_SYSTEM_TEMPLATE;
@@ -652,8 +742,8 @@ public class EntityExtractionService {
      */
     private String buildUserPrompt(EntityExtractionContext ctx, PersistedChunkVO chunk) {
         Map<String, Object> vars = new LinkedHashMap<>();
-        vars.put(VAR_MAX_TOTAL_RECORDS, MAX_TOTAL_RECORDS);
-        vars.put(VAR_MAX_ENTITY_RECORDS, MAX_ENTITY_RECORDS);
+        vars.put(VAR_MAX_TOTAL_RECORDS, ctx.maxTotalRecords());
+        vars.put(VAR_MAX_ENTITY_RECORDS, ctx.maxEntityRecords());
         vars.put(VAR_LANGUAGE, StringUtils.trim(ctx.language()));
         vars.put(VAR_HEADING_CONTEXT_BLOCK, buildHeadingContextBlock(ctx, chunk));
         vars.put(VAR_INPUT_TEXT, chunk.text());
@@ -701,8 +791,8 @@ public class EntityExtractionService {
     private String buildContinuePrompt(EntityExtractionContext ctx, PersistedChunkVO chunk,
                                        List<String> previousResponses) {
         Map<String, Object> vars = new LinkedHashMap<>();
-        vars.put(VAR_MAX_TOTAL_RECORDS, MAX_TOTAL_RECORDS);
-        vars.put(VAR_MAX_ENTITY_RECORDS, MAX_ENTITY_RECORDS);
+        vars.put(VAR_MAX_TOTAL_RECORDS, ctx.maxTotalRecords());
+        vars.put(VAR_MAX_ENTITY_RECORDS, ctx.maxEntityRecords());
         vars.put(VAR_LANGUAGE, StringUtils.trim(ctx.language()));
         String template = ctx.jsonMode() ? CONTINUE_JSON_TEMPLATE : CONTINUE_TEXT_TEMPLATE;
         String rendered = PromptCatalog.render(template, ctx.language(), vars);
@@ -736,41 +826,77 @@ public class EntityExtractionService {
      * @return 该块的抽取快照（已过滤、已注入 sidecar）
      */
     private ChunkSnapshot extractSingleChunk(EntityExtractionContext ctx, String systemPrompt,
-                                             Set<String> customTypes, PersistedChunkVO chunk) {
-        ExtractionHolder holder = new ExtractionHolder();
-        final Long chunkSourceId = chunk.chunkId();
-        String response = requestOnce(ctx, systemPrompt, buildUserPrompt(ctx, chunk), chunkSourceId);
-        if (StringUtils.isBlank(response)) {
-            log.warn("实体抽取返回空响应，跳过该块解析：documentId=[{}]，sequence=[{}]",
-                    ctx.documentId(), chunk.sequence());
-        } else {
-            holder.rememberRaw(response);
-            holder.beginResponse();
-            parseResponse(ctx.jsonMode(), response, holder, chunkSourceId);
-            boolean completed = StringUtils.contains(response, COMPLETION_DELIMITER);
-            for (int round = 0; round < ctx.maxGleaning() && !completed; round++) {
-                if (ctx.isCancelled()) {
-                    throw new IllegalStateException(CANCELLED_MESSAGE);
-                }
-                String gleaned = requestOnce(ctx, systemPrompt,
-                        buildContinuePrompt(ctx, chunk, holder.rawResponses()), chunkSourceId);
-                if (StringUtils.isBlank(gleaned)) {
-                    break;
-                }
-                holder.rememberRaw(gleaned);
+                                             Set<String> customTypes, PersistedChunkVO chunk,
+                                             AtomicReference<Throwable> firstFailure) {
+        if (firstFailure.get() != null) {
+            // 失败已发生：不再发起新调用（等价上游取消未开始的 pending 任务）
+            return null;
+        }
+        long startNanos = System.nanoTime();
+        int rounds = 0;
+        String userPrompt = buildUserPrompt(ctx, chunk);
+        log.info("extract.chunk.start | docId={} seq={} round=0 promptChars={}",
+                ctx.documentId(), chunk.sequence(), StringUtils.length(userPrompt));
+        try {
+            ExtractionHolder holder = new ExtractionHolder();
+            final Long chunkSourceId = chunk.chunkId();
+            String response = requestOnce(ctx, systemPrompt, userPrompt, chunk, 0);
+            rounds = 1;
+            if (StringUtils.isBlank(response)) {
+                log.warn("实体抽取返回空响应，按零记录处理：documentId=[{}]，sequence=[{}]",
+                        ctx.documentId(), chunk.sequence());
+            } else {
+                holder.rememberRaw(response);
                 holder.beginResponse();
-                parseResponse(ctx.jsonMode(), gleaned, holder, chunkSourceId);
-                completed = StringUtils.contains(gleaned, COMPLETION_DELIMITER);
-                if (holder.newRecordsSinceResponseStart() == 0) {
-                    log.debug("续抽第 {} 轮零新增记录，提前终止补漏：documentId=[{}]，sequence=[{}]",
-                            round + 1, ctx.documentId(), chunk.sequence());
-                    break;
+                parseResponse(ctx.jsonMode(), response, holder, chunkSourceId);
+                boolean completed = StringUtils.contains(response, COMPLETION_DELIMITER);
+                for (int round = 0; round < ctx.maxGleaning() && !completed; round++) {
+                    if (ctx.isCancelled()) {
+                        throw new IllegalStateException(CANCELLED_MESSAGE);
+                    }
+                    String continuePrompt = buildContinuePrompt(ctx, chunk, holder.rawResponses());
+                    // 重放载荷预检：单轮重放形态下输入即
+                    // 「系统提示词 + 续抽提示词（含分块原文与历轮响应）」，超预算直接跳过补漏，
+                    // 首轮成果照常保留——宁可少一轮，不被 context_length_exceeded 拖垮整篇
+                    int replayInputTokens = tokenCounter.count(systemPrompt) + tokenCounter.count(continuePrompt);
+                    if (replayInputTokens > MAX_EXTRACT_INPUT_TOKENS) {
+                        log.warn("续抽输入超预算，跳过补漏：documentId=[{}]，sequence=[{}]，"
+                                        + "round=[{}]，inputTokens=[{}]，budget=[{}]",
+                                ctx.documentId(), chunk.sequence(), round + 1,
+                                replayInputTokens, MAX_EXTRACT_INPUT_TOKENS);
+                        break;
+                    }
+                    String gleaned = requestOnce(ctx, systemPrompt, continuePrompt, chunk, round + 1);
+                    rounds++;
+                    if (StringUtils.isBlank(gleaned)) {
+                        break;
+                    }
+                    holder.rememberRaw(gleaned);
+                    holder.beginResponse();
+                    parseResponse(ctx.jsonMode(), gleaned, holder, chunkSourceId);
+                    completed = StringUtils.contains(gleaned, COMPLETION_DELIMITER);
+                    if (holder.newRecordsSinceResponseStart() == 0) {
+                        log.debug("续抽第 {} 轮零新增记录，提前终止补漏：documentId=[{}]，sequence=[{}]",
+                                round + 1, ctx.documentId(), chunk.sequence());
+                        break;
+                    }
                 }
             }
+            applyTypeFilter(holder, customTypes);
+            injectSidecarEntities(ctx.mediaPrimaryEntityName(), chunk.block(), chunk.chunkId(), holder);
+            ChunkSnapshot snapshot = holder.snapshot(chunk.chunkId());
+            log.info("extract.chunk.end | docId={} seq={} rounds={} elapsedMs={} status=OK entities={} relations={}",
+                    ctx.documentId(), chunk.sequence(), rounds,
+                    Math.max(System.nanoTime() - startNanos, 0L) / 1_000_000L,
+                    snapshot.entities().size(), snapshot.relations().size());
+            return snapshot;
+        } catch (RuntimeException failed) {
+            log.warn("extract.chunk.end | docId={} seq={} rounds={} elapsedMs={} status=FAILED reason={}",
+                    ctx.documentId(), chunk.sequence(), rounds,
+                    Math.max(System.nanoTime() - startNanos, 0L) / 1_000_000L,
+                    failureKindOf(failed));
+            throw failed;
         }
-        applyTypeFilter(holder, customTypes);
-        injectSidecarEntities(ctx.mediaPrimaryEntityName(), chunk.block(), chunk.chunkId(), holder);
-        return holder.snapshot(chunk.chunkId());
     }
 
     /**
@@ -784,12 +910,17 @@ public class EntityExtractionService {
      * @param ctx          抽取执行上下文
      * @param systemPrompt 系统提示词
      * @param userPrompt   用户提示词
-     * @param chunkId      本次调用所属分块的真实主键（归属登记用，可为 null 表示不登记）
+     * @param chunk        本次调用所属分块（归属登记用真实主键，同时提供文档/序号/轮次日志上下文）
+     * @param round        轮次（0 首轮，正整数补漏轮）
      * @return 响应正文（trim 后），响应缺失时为空串
      */
-    private String requestOnce(EntityExtractionContext ctx, String systemPrompt, String userPrompt, Long chunkId) {
+    private String requestOnce(EntityExtractionContext ctx, String systemPrompt, String userPrompt,
+                               PersistedChunkVO chunk, int round) {
+        LlmCallContext callContext = LlmCallContext.of(
+                round == 0 ? LlmCallContext.STAGE_EXTRACT : LlmCallContext.STAGE_EXTRACT_GLEANING,
+                ctx.documentId(), chunk.sequence(), round);
         LlmChatRequest request = new LlmChatRequest(ctx.kbId(), ctx.extractionModelProfileId(),
-                systemPrompt, userPrompt, null, CacheType.EXTRACT, List.of(), chunkId);
+                systemPrompt, userPrompt, null, CacheType.EXTRACT, List.of(), chunk.chunkId(), callContext);
         LlmChatResult result = llmClient.chat(request);
         if (ObjectUtils.isEmpty(result)) {
             log.warn("抽取 LLM 返回 null 结果：documentId=[{}]", ctx.documentId());
@@ -1329,7 +1460,8 @@ public class EntityExtractionService {
     // ------------------------------------------------------------------ few-shot 示例构建
 
     /**
-     * 预渲染文本模式 few-shot 示例（必须含真实的分隔符字面量，模板残留占位符校验据此通过）。
+     * 预渲染文本模式 few-shot 示例（注入 examples 变量的必须是渲染完成的真实分隔符字面量，
+     * 不得保留 {@code {tuple_delimiter}} 形态占位符——示例值按字面量透传进最终提示词）。
      *
      * @param chinese true 输出中文例句集（张三/星辰科技同构样例），false 输出英文例句集（Alice/ACME 现文）
      * @return 文本模式示例文本
@@ -1443,6 +1575,16 @@ public class EntityExtractionService {
      * @param chunkId  来源分块的真实主键（文档级聚合时直接回填溯源 sourceIds）
      */
     private record ChunkSnapshot(List<RawEntity> entities, List<RawRelation> relations, Long chunkId) {
+    }
+
+    /**
+     * 分块级失败记录（文档级汇总日志与失败原因分布用）。
+     *
+     * @param sequence 分块序号
+     * @param kind     失败分类
+     * @param message  失败摘要
+     */
+    private record ChunkFailure(int sequence, LlmFailureKind kind, String message) {
     }
 
     /**

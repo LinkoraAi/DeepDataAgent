@@ -163,6 +163,32 @@ public interface DocumentMapper extends BaseMapper<DocumentEntity> {
     }
 
     /**
+     * 整库删除受理：把知识库内命中允许集合的文档批量置为删除中（单条 UPDATE）。
+     * <p>用途：知识库删除受理时与知识库 {@code ACTIVE → DELETING} 同事务执行，
+     * 使库内排队中/解析中的摄入任务在状态检查处立即自灭，避免清退与摄入并发导致
+     * 「删库后又写回图谱」。wrapper 更新不触发 {@code MetaObjectHandler}，
+     * 显式补齐 updated_at / updated_by（口径统一取 {@link KbAuditFieldUtils}）。</p>
+     *
+     * @param kbId            知识库ID
+     * @param fromStatusNames 允许的当前状态名集合（通常为 PENDING / PROCESSING）
+     * @param toStatusName    目标状态名（删除受理为 DELETING）
+     * @return 受影响行数
+     */
+    default int transitNonTerminalByKbId(Long kbId, Collection<String> fromStatusNames, String toStatusName) {
+        if (ObjectUtils.isEmpty(kbId) || ObjectUtils.isEmpty(fromStatusNames) || StringUtils.isBlank(toStatusName)) {
+            return 0;
+        }
+        OffsetDateTime now = KbAuditFieldUtils.now();
+        return update(null, Wrappers.<DocumentEntity>lambdaUpdate()
+                .eq(DocumentEntity::getKbId, kbId)
+                .in(DocumentEntity::getStatus, fromStatusNames)
+                .set(DocumentEntity::getStatus, toStatusName)
+                .set(DocumentEntity::getErrorMessage, null)
+                .set(DocumentEntity::getUpdatedAt, now)
+                .set(DocumentEntity::getUpdatedBy, KbAuditFieldUtils.DEFAULT_OPERATOR));
+    }
+
+    /**
      * 物理删除知识库内全部文档（无 @TableLogic，delete(wrapper) 即 DELETE FROM）。
      *
      * @param kbId 知识库ID

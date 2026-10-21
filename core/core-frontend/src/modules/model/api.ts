@@ -1,4 +1,4 @@
-import { get, post, del, put, buildQuery } from '@/shared/api/http';
+import { get, post, del } from '@/shared/api/http';
 import type { PaginatedResp } from '@/shared/types/api';
 
 /**
@@ -7,9 +7,15 @@ import type { PaginatedResp } from '@/shared/types/api';
  * 更新端点是 POST /{profileId}（全量替换语义），非 PUT。
  */
 
-/** 模型类型线格式：1=CHAT、2=EMBEDDING */
-export const MODEL_TYPE_CHAT = 1;
-export const MODEL_TYPE_EMBEDDING = 2;
+/**
+ * 模型类型业务码（与后端 model-type-taxonomy 契约一致）：
+ * 1=对话LLM、2=视觉对话、3=嵌入、4=重排。
+ * 码值是持久化与线格式共用口径，禁止按枚举顺序推导。
+ */
+export const MODEL_TYPE_CHAT_LLM = 1;
+export const MODEL_TYPE_CHAT_VLM = 2;
+export const MODEL_TYPE_EMBEDDING = 3;
+export const MODEL_TYPE_RERANK = 4;
 
 /** 模型配置响应（ModelProfileResponse；凭证永不回显，只有 credentialConfigured） */
 export interface ModelProfileResponse {
@@ -50,24 +56,50 @@ export interface ModelProfilePayload {
 
 const BASE = '/api/v1/cloud/model-profiles';
 
-/** 分页列表（keyword/status/page/size） */
+/**
+ * 分页列表（keyword/status/modelType/page/size）。
+ * <p>{@code modelType} 支持单值或数组；数组按重复查询参数发送（后端并集语义）。</p>
+ */
 export function listModelProfiles(params: {
   keyword?: string;
   status?: string;
+  modelType?: number | number[];
   page?: number;
   size?: number;
 }): Promise<PaginatedResp<ModelProfileResponse>> {
-  return get<PaginatedResp<ModelProfileResponse>>(`${BASE}${buildQuery(params)}`);
+  const search = new URLSearchParams();
+  if (params.keyword) {
+    search.set('keyword', params.keyword);
+  }
+  if (params.status) {
+    search.set('status', params.status);
+  }
+  if (params.page !== undefined) {
+    search.set('page', String(params.page));
+  }
+  if (params.size !== undefined) {
+    search.set('size', String(params.size));
+  }
+  const types: number[] = params.modelType === undefined
+    ? []
+    : Array.isArray(params.modelType) ? params.modelType : [params.modelType];
+  types.forEach((code) => search.append('modelType', String(code)));
+  const query = search.toString();
+  return get<PaginatedResp<ModelProfileResponse>>(`${BASE}${query ? `?${query}` : ''}`);
 }
 
 /**
- * 取全部启用中的某类型模型（跨模块下拉数据源：知识库嵌入/多模态/重排、智能体等）。
- * 后端按 status=ENABLED 过滤，类型在前端二次过滤（size 上限 100 足够管理端规模）。
+ * 取全部启用中的某类（或多类）模型配置，供各模块下拉数据源使用。
+ * <p>类型过滤下推到服务端（{@code modelType} 查询参数），不再拉全量后本地过滤；
+ * size 上限 100 足够管理端规模。</p>
+ *
+ * @param modelType 类型业务码，单值或数组（数组取并集）；缺省表示不限类型
  */
-export async function listEnabledProfiles(modelType?: number): Promise<ModelProfileResponse[]> {
-  const resp = await listModelProfiles({ status: 'ENABLED', page: 1, size: 100 });
-  const list = resp.list ?? [];
-  return modelType === undefined ? list : list.filter((item) => item.modelType === modelType);
+export async function listEnabledProfiles(
+  modelType?: number | number[],
+): Promise<ModelProfileResponse[]> {
+  const resp = await listModelProfiles({ status: 'ENABLED', page: 1, size: 100, modelType });
+  return resp.list ?? [];
 }
 
 /** 详情 */

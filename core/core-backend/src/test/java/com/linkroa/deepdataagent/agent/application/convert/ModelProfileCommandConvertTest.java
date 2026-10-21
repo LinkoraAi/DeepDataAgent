@@ -32,7 +32,7 @@ class ModelProfileCommandConvertTest {
         assertEquals("https://api.example.com/v1", command.apiEndpointUrl());
         assertEquals("sk-1", command.credential());
         assertEquals(5, command.toolCallRounds());
-        assertEquals(ModelType.CHAT, command.modelType());
+        assertEquals(ModelType.CHAT_LLM, command.modelType());
         assertEquals(1536, command.vectorDimension());
     }
 
@@ -62,7 +62,7 @@ class ModelProfileCommandConvertTest {
 
         // then
         assertNull(command.apiFormat());
-        assertEquals(ModelType.CHAT, command.modelType());
+        assertEquals(ModelType.CHAT_LLM, command.modelType());
     }
 
     @Test
@@ -70,7 +70,7 @@ class ModelProfileCommandConvertTest {
         // given
         UpdateModelProfileRequest request = new UpdateModelProfileRequest(
                 "嵌入模型", null, "AGENTSCOPE", "https://api.example.com/v1", "text-embedding", "",
-                null, null, null, null, 2, 256);
+                null, null, null, null, 3, 256);
 
         // when
         UpdateModelProfileCommand command = ModelProfileCommandConvert.INSTANCE.toUpdateCommand("mp-9", request);

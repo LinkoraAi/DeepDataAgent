@@ -45,8 +45,14 @@ import java.util.Map;
  */
 public class MineruClient {
 
-    /** 默认解析后端：混合引擎。 */
-    public static final String DEFAULT_BACKEND = "hybrid-engine";
+    /** 解析后端：pipeline（纯流程式解析，不依赖本地 VLM 算力）。 */
+    private static final String BACKEND_PIPELINE = "pipeline";
+
+    /** 解析后端：hybrid-engine（混合引擎，依赖本地 VLM 算力）。 */
+    private static final String BACKEND_HYBRID_ENGINE = "hybrid-engine";
+
+    /** 默认解析后端：pipeline。 */
+    public static final String DEFAULT_BACKEND = BACKEND_PIPELINE;
 
     /** 默认解析方法：自动。 */
     public static final String DEFAULT_PARSE_METHOD = "auto";
@@ -165,7 +171,7 @@ public class MineruClient {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
-     * 默认参数构造器：其余解析参数取默认值（backend=hybrid-engine、parseMethod=auto、
+     * 默认参数构造器：其余解析参数取默认值（backend=pipeline、parseMethod=auto、
      * language=[ch]、quality=medium、modelServerUrl=null）。
      *
      * @param apiBaseUrl   MinerU 服务地址（必填，调用方保证 URL 格式合法；内网无鉴权）
@@ -305,7 +311,7 @@ public class MineruClient {
                 body.add("lang_list", lang);
             }
         }
-        if (StringUtils.equals(backend, DEFAULT_BACKEND)) {
+        if (StringUtils.equals(backend, BACKEND_HYBRID_ENGINE)) {
             body.add("effort", quality);
         }
         return body;
@@ -317,7 +323,7 @@ public class MineruClient {
      * @return true 表示当前后端支持解析方法与语言参数
      */
     private boolean isMethodCapableBackend() {
-        return StringUtils.equals(backend, "pipeline") || StringUtils.equals(backend, DEFAULT_BACKEND);
+        return StringUtils.equals(backend, BACKEND_PIPELINE) || StringUtils.equals(backend, BACKEND_HYBRID_ENGINE);
     }
 
     /**

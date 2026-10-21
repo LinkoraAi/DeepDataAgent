@@ -2,6 +2,7 @@ package com.linkroa.deepdataagent.rag.application.service;
 
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskRegistry;
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskType;
+import com.linkroa.deepdataagent.knowledgebase.api.IngestionCancellationApi;
 import com.linkroa.deepdataagent.knowledgebase.api.KbCacheCleanupApi;
 import com.linkroa.deepdataagent.knowledgebase.api.KbCleanupWriter;
 import com.linkroa.deepdataagent.knowledgebase.api.KnowledgeBaseApi;
@@ -17,6 +18,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.ArgumentMatchers.any;
@@ -73,6 +76,9 @@ class KbCleanupOrchestrationServiceTest {
     private KnowledgeBaseApi knowledgeBaseApi;
 
     @Mock
+    private IngestionCancellationApi ingestionCancellationApi;
+
+    @Mock
     private InFlightTaskRegistry inFlightTaskRegistry;
 
     @InjectMocks
@@ -85,7 +91,10 @@ class KbCleanupOrchestrationServiceTest {
 
     @Test
     void should_runStepsInOrder_when_cleanup_given_allStepsSucceed() {
-        // given：派生数据两批、文档两批后返回 0（分批循环至取批为空的收敛点）
+        // given：派生数据两批、文档两批后返回 0（分批循环至取批为空的收敛点）；
+        // 取消步在资产回收之前执行，库内两个文档均确认终止
+        when(kbCleanupWriter.listDocumentIds(KB_ID)).thenReturn(List.of(11L, 12L));
+        when(ingestionCancellationApi.awaitTermination(anyLong(), any())).thenReturn(true);
         when(kbCleanupWriter.cleanupDerivedDataBatch(KB_ID, BATCH_SIZE)).thenReturn(5, 0);
         when(kbCleanupWriter.cleanupDocumentsBatch(KB_ID, BATCH_SIZE)).thenReturn(2, 0);
         when(knowledgeBaseApi.executeDelete(KB_ID)).thenReturn(true);
@@ -94,8 +103,12 @@ class KbCleanupOrchestrationServiceTest {
         service.cleanup(KB_ID);
 
         // then：Storage 资产回收恒先于任何数据库清退批次，图谱按「图行 → 向量行」固定序，最后收口
-        InOrder inOrder = inOrder(kbCleanupWriter, entityNodeGraphRepository, relationEdgeGraphRepository,
-                entityInfoVectorRepository, relationInfoVectorRepository, kbCacheCleanupApi, knowledgeBaseApi);
+        InOrder inOrder = inOrder(kbCleanupWriter, ingestionCancellationApi, entityNodeGraphRepository,
+                relationEdgeGraphRepository, entityInfoVectorRepository, relationInfoVectorRepository,
+                kbCacheCleanupApi, knowledgeBaseApi);
+        inOrder.verify(kbCleanupWriter).listDocumentIds(KB_ID);
+        inOrder.verify(ingestionCancellationApi).awaitTermination(eq(11L), any());
+        inOrder.verify(ingestionCancellationApi).awaitTermination(eq(12L), any());
         inOrder.verify(kbCleanupWriter).cleanupAssetsByKnowledgeBase(KB_ID);
         inOrder.verify(kbCleanupWriter, times(2)).cleanupDerivedDataBatch(KB_ID, BATCH_SIZE);
         inOrder.verify(kbCleanupWriter, times(2)).cleanupDocumentsBatch(KB_ID, BATCH_SIZE);

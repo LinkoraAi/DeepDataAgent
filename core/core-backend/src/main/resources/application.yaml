@@ -103,20 +103,27 @@ app:
   rag:
     ingestion:
       # 在飞摄入上限 = 常驻消费线程数（内存队列模型：落库即入队，出队条件更新领取；
-      max-inflight: 5
+      max-inflight: 3
       # 启动恢复：按本实例标识直接读取在飞任务注册表键，经状态一致性校验后把残留的
       describe:
-        concurrency: 4
+        # 多模态描述并发上限（支持环境变量覆盖；<=1 即逐块串行）
+        concurrency: ${APP_RAG_INGESTION_DESCRIBE_CONCURRENCY:3}
       # Stage 3 向量化预趟单批条数（embedBatch 分批远程调用；小于 1 按 1 即逐条；
       embed:
-        batch-size: 32
+        batch-size: 16
       # 摄入全局默认语言（知识库语言未配置时的兜底，11 语言全名口径，缺省 Chinese；
       language: Chinese
       extraction:
+        # 实体/关系抽取分块并发上限（支持环境变量覆盖；<=1 即逐块串行）
+        concurrency: ${APP_RAG_INGESTION_EXTRACTION_CONCURRENCY:3}
         # 是否启用 JSON 输出模式抽取（默认文本分隔符模式）
         json-mode: false
         # 补漏（gleaning）最大轮数 N（0 表示不补漏，负数归零）
         max-gleaning: 1
+        # 单块输出实体+关系记录总条数软上限
+        max-total-records: ${APP_RAG_INGESTION_EXTRACTION_MAX_TOTAL_RECORDS:50}
+        # 单块输出实体记录条数软上限
+        max-entity-records: ${APP_RAG_INGESTION_EXTRACTION_MAX_ENTITY_RECORDS:20}
     graph:
       # 图谱来源账本（source_ids）保留上限：超出按截断策略丢弃并输出 INFO 留痕
       source-ids-limit: ${RAG_GRAPH_SOURCE_IDS_LIMIT:200}
@@ -135,6 +142,15 @@ app:
       shutdown-grace-seconds: 30
       # 单批清退条数（透传给 KbCleanupWriter，每批独立小事务）
       batch-size: 500
+    # 检索答案 SSE 流参数（仅答案端点；不改变检索与作答语义）
+    retrieval:
+      stream:
+        # SSE 连接超时：必须大于一次作答的最长耗时（答案端点已由同步改为流式，不再依赖前端超时兜底）
+        sse-timeout: ${APP_RAG_RETRIEVAL_SSE_TIMEOUT:600s}
+        # 增量合帧窗口（毫秒）：首个增量立即下发，其余按窗口合并
+        delta-flush-interval-ms: ${APP_RAG_RETRIEVAL_DELTA_FLUSH_INTERVAL_MS:50}
+        # 准备阶段保活间隔：Stage 0~4 期间周期性发送注释帧，避免长时间无数据被判定空闲
+        keepalive-interval: ${APP_RAG_RETRIEVAL_KEEPALIVE_INTERVAL:15s}
 
 
 datasource:
@@ -151,8 +167,8 @@ model:
 # provider-mappings 为「租户键（ownerId 或 "*"）→ 目录模型 id → model_profile_id」，
 # 解析结果仅运行时装配消费、不进入对外契约；部署时按实际供应商配置，例：
 #   provider-mappings:
-#     "*": {auto: mp-default, ultimate: mp-openai-strong}
-#     "42": {ultimate: mp-tenant42-openai}
+#     "[*]": {auto: mp-default, ultimate: mp-openai-strong}
+#     "[42]": {ultimate: mp-tenant42-openai}
 model-catalog:
   items:
     - id: auto

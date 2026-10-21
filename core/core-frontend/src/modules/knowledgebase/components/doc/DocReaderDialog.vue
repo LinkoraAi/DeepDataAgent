@@ -12,9 +12,13 @@ import type { DocumentWire } from '../../api/documents';
 /**
  * 文档在线阅读对话框：按 fileType 分流做「真正的在线预览」。
  * <p>PDF 经鉴权 fetchBlob 取二进制转一次性 object URL 后用原生 &lt;iframe&gt; 渲染（并可「在新窗口打开」）；
- * 图片用 &lt;img&gt;；DOCX / XLS / XLSX / PPTX 交给前端渲染组件（@vue-office）直接解析原始二进制呈现版式；
+ * 图片用 &lt;img&gt;；DOCX / XLSX / PPTX 交给前端渲染组件（@vue-office）直接解析原始二进制呈现版式；
  * TXT / MD / CSV / JSON / LOG 读 blob 文本以等宽 &lt;pre&gt; 展示原文；
- * 其余类型（含老二进制 DOC / PPT）与超大文件提示下载。关闭即 revoke object URL。</p>
+ * 老二进制 XLS（BIFF 格式，@vue-office/excel 内置 exceljs 仅支持 xlsx）与超大文件不进渲染分支，
+ * 统一提示下载。关闭即 revoke object URL。</p>
+ * <p>布局约定：本弹窗经 t-dialog attach="body" 的 &lt;Teleport&gt; 渲染，scoped style 的
+ * CSS v-bind() 变量无法穿越传送边界（Vue useCssVars 限制，曾致预览区塌陷为 iframe 默认 150px），
+ * 因此预览高度一律使用样式表定义的普通 CSS 变量或字面量——<b>Teleport 弹窗内禁用 v-bind()</b>。</p>
  */
 const props = defineProps<{
   /** 目标文档；为空表示未选中（对话框关闭态） */
@@ -52,12 +56,10 @@ type PreviewKind =
 const IMAGE_TYPES = ['PNG', 'JPG', 'JPEG'];
 /** 纯文本类型（原文 <pre> 展示，内容即原文，非提取）。 */
 const TEXT_TYPES = ['TXT', 'MD', 'CSV', 'JSON', 'LOG'];
-/** 走前端渲染组件的办公文档类型（DOCX / XLS / XLSX / PPTX）。 */
+/** 走前端渲染组件的办公文档类型（DOCX / XLSX / PPTX；老二进制 XLS 不支持，走下载引导）。 */
 const OFFICE_RENDER_KINDS: PreviewKind[] = ['docx', 'excel', 'pptx'];
 /** 内联预览大小上限（50 MB）：超过则仅提示下载，避免大文件解析造成的卡顿或崩溃。 */
 const MAX_INLINE_PREVIEW_BYTES = 50 * 1024 * 1024;
-/** 未渲染 Office 文档时的渲染区默认高度（自适应视口，避免页面级双滚动条）。 */
-const PREVIEW_HEIGHT = '72vh';
 
 /** 当前预览形态。 */
 const kind = ref<PreviewKind>('loading');
@@ -83,7 +85,7 @@ const fileTypeUpper = computed(() => (props.document?.fileType ?? '').toUpperCas
 /** 是否走前端渲染组件的办公文档（决定弹窗更宽的版式）。 */
 const isOfficeDoc = computed(() => {
   const upper = fileTypeUpper.value;
-  return upper === 'DOCX' || upper === 'XLS' || upper === 'XLSX' || upper === 'PPTX';
+  return upper === 'DOCX' || upper === 'XLSX' || upper === 'PPTX';
 });
 
 /** 弹窗宽度：办公文档放宽到 1100px，其余保持 900px。 */
@@ -92,7 +94,7 @@ const dialogWidth = computed(() => (isOfficeDoc.value ? '1100px' : '900px'));
 /** 是否为当前走 Office 渲染组件的形态。 */
 const isOfficeKind = computed(() => OFFICE_RENDER_KINDS.includes(kind.value));
 
-/** 是否为可在线预览的二进制类型（需 fetchBlob 取原文）。 */
+/** 是否为可在线预览的二进制类型（需 fetchBlob 取原文）；老二进制 XLS 不支持前端渲染，返回 null 走下载引导。 */
 function binaryPreviewKind(fileType: string): PreviewKind | null {
   const upper = (fileType || '').toUpperCase();
   if (upper === 'PDF') {
@@ -104,7 +106,7 @@ function binaryPreviewKind(fileType: string): PreviewKind | null {
   if (upper === 'DOCX') {
     return 'docx';
   }
-  if (upper === 'XLS' || upper === 'XLSX') {
+  if (upper === 'XLSX') {
     return 'excel';
   }
   if (upper === 'PPTX') {
@@ -170,6 +172,13 @@ async function load(): Promise<void> {
       kind.value = 'error';
       errorText.value = errorMessage(e);
     }
+    return;
+  }
+  // 老二进制 XLS：@vue-office/excel 内置 exceljs 仅支持 xlsx，BIFF 格式必解析失败，直接引导下载
+  if (fileTypeUpper.value === 'XLS') {
+    kind.value = 'unsupported';
+    unsupportedTitle.value = '该格式不支持在线预览';
+    unsupportedDesc.value = '老版 Excel（.xls）暂不支持在线预览，请下载后使用本地 Office 查看。';
     return;
   }
   if (TEXT_TYPES.includes(fileTypeUpper.value)) {
@@ -302,44 +311,59 @@ onScopeDispose(revokeObjectUrl);
 </template>
 
 <style scoped>
+/*
+ * 预览容器：纵向 flex 固定高度，五种形态（loading/iframe/img/office/text）统一填充并内部滚动，
+ * 保证加载态与预览态同高、无跳动。本弹窗经 <Teleport> 渲染——禁用 scoped style 的 v-bind()，
+ * 变量必须由样式表选择器定义（随 DOM 继承进入传送内容），见组件 Javadoc 约定。
+ * 高度预算 = 弹窗 body 上限(80vh - 32px) − header/footer/body padding/PDF 工具条 ≈ 232px。
+ */
 .doc-reader {
-  min-height: 320px;
+  --dda-preview-h: max(420px, calc(80vh - 232px));
+  display: flex;
+  flex-direction: column;
+  height: var(--dda-preview-h);
 }
 
 .doc-reader__loading {
   display: flex;
+  flex: 1 1 auto;
+  align-items: center;
   justify-content: center;
-  padding: 60px 0;
+  min-height: 0;
 }
 
 .doc-reader__toolbar {
   display: flex;
+  flex: none;
   justify-content: flex-end;
   margin-bottom: 6px;
 }
 
 .doc-reader__frame {
   width: 100%;
-  height: v-bind('PREVIEW_HEIGHT');
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
   border: 1px solid var(--td-component-border, #e7e7e7);
   border-radius: 4px;
 }
 
 .doc-reader__image {
   display: flex;
+  flex: 1 1 auto;
   justify-content: center;
-  max-height: v-bind('PREVIEW_HEIGHT');
+  min-height: 0;
   overflow: auto;
 }
 
 .doc-reader__image img {
   max-width: 100%;
-  max-height: v-bind('PREVIEW_HEIGHT');
 }
 
 .doc-reader__office {
   position: relative;
-  height: v-bind('PREVIEW_HEIGHT');
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   border: 1px solid var(--td-component-border, #e7e7e7);
   border-radius: 4px;
@@ -355,7 +379,8 @@ onScopeDispose(revokeObjectUrl);
 }
 
 .doc-reader__text {
-  max-height: v-bind('PREVIEW_HEIGHT');
+  flex: 1 1 auto;
+  min-height: 0;
   margin: 0;
   padding: 12px;
   overflow: auto;

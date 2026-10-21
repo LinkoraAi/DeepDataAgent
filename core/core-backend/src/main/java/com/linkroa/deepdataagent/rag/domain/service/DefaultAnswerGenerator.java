@@ -12,9 +12,9 @@ import com.linkroa.deepdataagent.rag.domain.model.KgSearchResult;
 import com.linkroa.deepdataagent.rag.domain.model.LlmCacheEntry;
 import com.linkroa.deepdataagent.rag.domain.model.RankedChunk;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatRequest;
-import com.linkroa.deepdataagent.rag.domain.port.LlmChatResult;
-import com.linkroa.deepdataagent.rag.domain.port.LlmClient;
 import com.linkroa.deepdataagent.rag.domain.port.LlmImage;
+import com.linkroa.deepdataagent.rag.domain.port.LlmStreamClient;
+import com.linkroa.deepdataagent.rag.domain.port.LlmStreamDelta;
 import com.linkroa.deepdataagent.rag.domain.repository.LlmCacheRepository;
 import com.linkroa.deepdataagent.rag.infrastructure.prompts.catalog.PromptCatalog;
 import com.linkroa.deepdataagent.rag.infrastructure.prompts.catalog.PromptTemplates;
@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
+import reactor.core.publisher.Flux;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -35,6 +36,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -118,8 +120,8 @@ public class DefaultAnswerGenerator implements AnswerGenerator {
     /** 图片内容摘要片段连接符（缓存键图片要素内部逐图 MD5 之间的连接符，避免拼接歧义） */
     private static final String IMAGE_DIGEST_JOINER = ";";
 
-    /** 裸 LLM 客户端（不含缓存装饰，缓存由本类按键口径自持） */
-    private final LlmClient llmClient;
+    /** 裸 LLM 流式客户端（与 {@code openAiCompatibleLlmClient} 同一实现，答案链路唯一模型出口） */
+    private final LlmStreamClient llmStreamClient;
 
     /** LLM 调用缓存仓储（ANSWER 分类的读写入口） */
     private final LlmCacheRepository llmCacheRepository;
@@ -139,19 +141,19 @@ public class DefaultAnswerGenerator implements AnswerGenerator {
     /**
      * 构造答案生成器。
      *
-     * @param llmClient           裸 LLM 客户端（显式限定 {@code openAiCompatibleLlmClient}）
+     * @param llmStreamClient     裸 LLM 流式客户端（显式限定 {@code openAiCompatibleLlmClient}）
      * @param llmCacheRepository  LLM 调用缓存仓储
      * @param knowledgeBaseApi    知识库跨 BC 只读契约（回取 chunk {@code original_item}、
      *                            按 kbId 投影 chat 模型 profileId）
      * @param answerImageResolver 作答侧原图直读解析器
      * @param objectMapper        JSON 解析器（解析 {@code original_item}）
      */
-    public DefaultAnswerGenerator(@Qualifier("openAiCompatibleLlmClient") LlmClient llmClient,
+    public DefaultAnswerGenerator(@Qualifier("openAiCompatibleLlmClient") LlmStreamClient llmStreamClient,
                                   LlmCacheRepository llmCacheRepository,
                                   KnowledgeBaseApi knowledgeBaseApi,
                                   AnswerImageResolver answerImageResolver,
                                   ObjectMapper objectMapper) {
-        this.llmClient = llmClient;
+        this.llmStreamClient = llmStreamClient;
         this.llmCacheRepository = llmCacheRepository;
         this.knowledgeBaseApi = knowledgeBaseApi;
         this.answerImageResolver = answerImageResolver;
@@ -171,8 +173,9 @@ public class DefaultAnswerGenerator implements AnswerGenerator {
     }
 
     /**
-     * 生成最终答案（带 LLM 缓存命中计数口径）：语义与四参重载一致，
-     * {@code ANSWER} 缓存命中回放时对 {@code cacheHits} 递增一次。
+     * 生成最终答案（同步聚合形态）。
+     * <p>实现为 {@link #generateStream} 的聚合：逐增量拼接为完整文本后返回，
+     * 因此与流式入口的降级、缓存与兜底口径天然一致。</p>
      *
      * @param query     用户查询文本（改写后 query）
      * @param context   上下文产物（contextData / referenceList / kgResult）
@@ -185,26 +188,42 @@ public class DefaultAnswerGenerator implements AnswerGenerator {
     @Override
     public String generate(String query, KgContext context, RetrievalStrategyConfig cfg, RetrievalQuery q,
                            AtomicInteger cacheHits) {
+        List<String> parts = generateStream(query, context, cfg, q, cacheHits).collectList().block();
+        if (CollectionUtils.isEmpty(parts)) {
+            return StringUtils.EMPTY;
+        }
+        return String.join(StringUtils.EMPTY, parts);
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>执行顺序与同步形态完全一致：降级前置校验 → 模板选择与变量装配 → 渲染 → 缓存键计算 →
+     * 缓存读 → 流式生成 → 正常完成时回写缓存。前置阶段在本方法调用线程内同步执行，
+     * 因此缓存读取异常会按原语义向上抛出；模型调用段才进入响应式流。</p>
+     */
+    @Override
+    public Flux<String> generateStream(String query, KgContext context, RetrievalStrategyConfig cfg, RetrievalQuery q,
+                                       AtomicInteger cacheHits) {
         if (ObjectUtils.isEmpty(cfg) || ObjectUtils.isEmpty(q)) {
             log.warn("答案生成入参缺失策略配置或检索请求，直出 fail_response");
-            return renderFailResponse();
+            return Flux.just(renderFailResponse());
         }
         if (StringUtils.isBlank(query)) {
             log.warn("送入答案生成的问题为空白，直出 fail_response: kbId={}", q.kbId());
-            return renderFailResponse();
+            return Flux.just(renderFailResponse());
         }
         String chatProfileId = knowledgeBaseApi.findMediaModelProfileIdByKbId(q.kbId());
         if (StringUtils.isBlank(chatProfileId)) {
             log.warn("知识库未配置 CHAT 模型 profileId，LLM 不可用，直出 fail_response: kbId={}", q.kbId());
-            return renderFailResponse();
+            return Flux.just(renderFailResponse());
         }
         if (isResultChunkDisabled(cfg)) {
             log.info("检索策略结果返回数量为 0，直出 fail_response: kbId={}", q.kbId());
-            return renderFailResponse();
+            return Flux.just(renderFailResponse());
         }
         if (!hasUsableContext(context)) {
             log.info("无可利用上下文，直出 fail_response: kbId={}", q.kbId());
-            return renderFailResponse();
+            return Flux.just(renderFailResponse());
         }
 
         // 模板形态（回答模板名 + 默认变量表 + 内容槽变量名）由 AnswerProfile 单点供给，
@@ -221,7 +240,7 @@ public class DefaultAnswerGenerator implements AnswerGenerator {
             cacheKey = buildCacheKey(cfg, q, query, renderedPrompt, List.of(), chatProfileId);
         } catch (RuntimeException e) {
             log.warn("答案提示词渲染或缓存键计算失败，降级直出 fail_response: template={}", templateName, e);
-            return renderFailResponse();
+            return Flux.just(renderFailResponse());
         }
 
         Optional<LlmCacheEntry> cached =
@@ -231,50 +250,129 @@ public class DefaultAnswerGenerator implements AnswerGenerator {
                 cacheHits.incrementAndGet();
             }
             log.debug("ANSWER 缓存命中回放: kbId={}, cacheKey={}", q.kbId(), cacheKey);
-            return StringUtils.defaultString(cached.get().response());
+            // 回放原样内容：与缓存写入时下发的内容逐字一致（含模型生成的 References 段）
+            String cachedAnswer = cached.get().response();
+            if (StringUtils.isEmpty(cachedAnswer)) {
+                log.warn("ANSWER 缓存内容为空，降级直出 fail_response: kbId={}", q.kbId());
+                return Flux.just(renderFailResponse());
+            }
+            return Flux.just(cachedAnswer);
         }
 
         // 通路 B：仅缓存未命中才解析上下文原图引用（profileId 已在前置校验保证非空白=视觉可用；
         // 无引用/异常均回落空表，零对象存储交互；answerImageDirectRead=false 时入口即短路）；
         // 回写与查询共用上方同一 cacheKey，开关关闭后键不追加图片要素、与历史纯文本键逐字节一致
         List<LlmImage> answerImages = resolveAnswerImages(context, q);
-        LlmChatResult result = null;
-        // 有可直读原图时先发起多模态作答，失败/空结果回落纯文本二次调用（回落不影响正常回答产物）
-        if (CollectionUtils.isNotEmpty(answerImages)) {
-            try {
-                result = llmClient.chat(new LlmChatRequest(q.kbId(), chatProfileId, renderedPrompt, query,
-                        null, CacheType.ANSWER, answerImages));
-            } catch (RuntimeException e) {
-                log.warn("原图直读作答调用失败，回落纯文本作答: kbId={}, imageCount={}", q.kbId(),
-                        answerImages.size(), e);
-                result = null;
-            }
-            if (ObjectUtils.isEmpty(result)) {
-                log.warn("原图直读作答返回空结果，回落纯文本作答: kbId={}", q.kbId());
-            }
-        }
-        if (ObjectUtils.isEmpty(result)) {
-            try {
-                result = llmClient.chat(new LlmChatRequest(
-                        q.kbId(), chatProfileId, renderedPrompt, query, null, CacheType.ANSWER));
-            } catch (RuntimeException e) {
-                log.warn("LLM 答案生成失败，降级直出 fail_response: kbId={}, profileId={}", q.kbId(), chatProfileId, e);
-                return renderFailResponse();
-            }
-        }
-        if (ObjectUtils.isEmpty(result)) {
-            log.warn("LLM 返回空结果，降级直出 fail_response: kbId={}", q.kbId());
-            return renderFailResponse();
-        }
+        StringBuilder accumulated = new StringBuilder();
+        AtomicInteger totalTokens = new AtomicInteger();
+        return answerDeltaStream(q, chatProfileId, renderedPrompt, query, answerImages)
+                .filter(delta -> StringUtils.isNotEmpty(delta.text()))
+                .doOnNext(delta -> {
+                    if (ObjectUtils.isNotEmpty(delta.totalTokens())) {
+                        totalTokens.set(delta.totalTokens());
+                    }
+                })
+                // 原样透传：模型产出（含正文引用标记与 References 段）直接下发并累积
+                .map(LlmStreamDelta::text)
+                .doOnNext(accumulated::append)
+                // 正常完成才回写：cancel 不触发 doOnComplete，空累积在方法内判空跳过
+                .doOnComplete(() -> saveCacheQuietly(q, cacheKey, chatProfileId, renderedPrompt,
+                        accumulated, totalTokens))
+                .switchIfEmpty(Flux.defer(() -> {
+                    log.warn("LLM 返回空结果，降级直出 fail_response: kbId={}", q.kbId());
+                    return Flux.just(renderFailResponse());
+                }))
+                .onErrorResume(e -> {
+                    if (!accumulated.isEmpty()) {
+                        // 增量无法撤回：保留已产出内容并正常结束，避免把失败文案拼在有效答案之后
+                        log.warn("LLM 答案流中断，保留已产出内容: kbId={}, emittedChars={}",
+                                q.kbId(), accumulated.length(), e);
+                        return Flux.empty();
+                    }
+                    log.warn("LLM 答案生成失败，降级直出 fail_response: kbId={}, profileId={}",
+                            q.kbId(), chatProfileId, e);
+                    return Flux.just(renderFailResponse());
+                });
+    }
 
-        // 缓存回写失败仅告警，不影响已生成答案返回，避免仓储故障连带丢弃有效答案
+    /**
+     * 组装答案增量流：有可直读原图时先发起多模态作答，失败或空结果回落纯文本二次调用。
+     * <p>与同步形态的差异仅在「回落判定」：同步形态可丢弃已得结果后重试；流式形态一旦已下发
+     * 增量便无法撤回，故只要带图流产出过非空增量就不再回落，避免同一答案重复下发。</p>
+     *
+     * @param q              检索内部执行请求（kbId 来源）
+     * @param chatProfileId  CHAT 模型 profileId
+     * @param renderedPrompt 渲染后的系统提示词
+     * @param query         实际送入模型的用户问题
+     * @param answerImages  可直读原图载荷（为空表示纯文本作答）
+     * @return 增量流（冷流）
+     */
+    private Flux<LlmStreamDelta> answerDeltaStream(RetrievalQuery q, String chatProfileId, String renderedPrompt,
+                                                   String query, List<LlmImage> answerImages) {
+        if (CollectionUtils.isEmpty(answerImages)) {
+            return plainTextStream(q, chatProfileId, renderedPrompt, query);
+        }
+        AtomicBoolean emitted = new AtomicBoolean(false);
+        Flux<LlmStreamDelta> withImages = llmStreamClient
+                .stream(new LlmChatRequest(q.kbId(), chatProfileId, renderedPrompt, query,
+                        null, CacheType.ANSWER, answerImages))
+                .doOnNext(delta -> {
+                    if (StringUtils.isNotEmpty(delta.text())) {
+                        emitted.set(true);
+                    }
+                })
+                .onErrorResume(e -> {
+                    log.warn("原图直读作答调用失败，回落纯文本作答: kbId={}, imageCount={}",
+                            q.kbId(), answerImages.size(), e);
+                    return Flux.empty();
+                });
+        return withImages.switchIfEmpty(Flux.defer(() -> {
+            if (emitted.get()) {
+                // 已下发部分增量，回落会造成答案重复：直接结束
+                return Flux.empty();
+            }
+            log.warn("原图直读作答返回空结果，回落纯文本作答: kbId={}", q.kbId());
+            return plainTextStream(q, chatProfileId, renderedPrompt, query);
+        }));
+    }
+
+    /**
+     * 纯文本作答增量流。
+     *
+     * @param q              检索内部执行请求（kbId 来源）
+     * @param chatProfileId  CHAT 模型 profileId
+     * @param renderedPrompt 渲染后的系统提示词
+     * @param query         实际送入模型的用户问题
+     * @return 增量流（冷流）
+     */
+    private Flux<LlmStreamDelta> plainTextStream(RetrievalQuery q, String chatProfileId,
+                                                 String renderedPrompt, String query) {
+        return llmStreamClient.stream(new LlmChatRequest(
+                q.kbId(), chatProfileId, renderedPrompt, query, null, CacheType.ANSWER));
+    }
+
+    /**
+     * 答案缓存回写（仅正常完成且已累积非空文本时执行）。
+     * <p>回写失败仅告警，不影响已下发内容；取消路径不会调用本方法。</p>
+     *
+     * @param q              检索内部执行请求（kbId 来源）
+     * @param cacheKey       答案缓存键
+     * @param chatProfileId  CHAT 模型 profileId
+     * @param renderedPrompt 渲染后的提示词全文
+     * @param accumulated    已累积的完整答案
+     * @param totalTokens    模型回传的累计 token 数（未回传时为 0）
+     */
+    private void saveCacheQuietly(RetrievalQuery q, String cacheKey, String chatProfileId,
+                                  String renderedPrompt, StringBuilder accumulated, AtomicInteger totalTokens) {
+        if (accumulated.isEmpty()) {
+            return;
+        }
         try {
             llmCacheRepository.saveIfAbsent(LlmCacheEntry.create(q.kbId(), cacheKey, CacheType.ANSWER,
-                    chatProfileId, renderedPrompt, result.text(), result.totalTokens()));
+                    chatProfileId, renderedPrompt, accumulated.toString(), totalTokens.get()));
         } catch (RuntimeException e) {
             log.warn("ANSWER 缓存回写失败，答案仍正常返回: kbId={}, cacheKey={}", q.kbId(), cacheKey, e);
         }
-        return result.text();
     }
 
     /**

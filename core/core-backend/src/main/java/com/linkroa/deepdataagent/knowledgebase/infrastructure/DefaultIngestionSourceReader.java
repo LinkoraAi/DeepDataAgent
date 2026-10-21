@@ -201,7 +201,7 @@ public class DefaultIngestionSourceReader implements IngestionSourceReader {
 
     /**
      * 归一知识库语言（真相源 = {@code knowledge_base.language} 列）：
-     * 命中 11 全名值域（trim、大小写不敏感）时返回枚举规范全名（存量值如 ENGLISH 归入 English）；
+     * 命中 Chinese/English 全名值域（trim、大小写不敏感）时返回枚举规范全名（存量值如 ENGLISH 归入 English）；
      * 未命中按原文 trim 透传（历史裸语言码宽容口径，维持不变）；
      * 空白返回 {@code null}（未配置，消费方回落全局默认语言）。
      *

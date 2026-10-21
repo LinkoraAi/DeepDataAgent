@@ -91,10 +91,14 @@ public class MineruDocumentParser implements DocumentParser {
     /** 读取对象失败提示前缀。 */
     private static final String ERROR_READ_OBJECT_FAILED = "读取源文件对象失败: ";
 
-    /** 本引擎支持解析的文档类型集合（MINERU：办公文档 + 图片）。 */
+    /**
+     * 本引擎支持解析的文档类型集合（MINERU：办公文档（含表格）+ 图片）。
+     * <p>XLS / XLSX 为实测补充：MinerU 3.4.2（protocol v2）可正常解析表格文件，
+     * 此前未声明会导致表格被本地直读兜底处理（二进制不可解码时退化为占位块）。</p>
+     */
     private static final Set<FileType> SUPPORTED_TYPES = EnumSet.of(
-            FileType.PDF, FileType.DOC, FileType.DOCX, FileType.PPT, FileType.PPTX,
-            FileType.PNG, FileType.JPG, FileType.JPEG);
+            FileType.PDF, FileType.DOC, FileType.DOCX, FileType.XLS, FileType.XLSX,
+            FileType.PPT, FileType.PPTX, FileType.PNG, FileType.JPG, FileType.JPEG);
 
     /** MinerU HTTP 客户端。 */
     private final MineruClient mineruClient;
@@ -116,6 +120,16 @@ public class MineruDocumentParser implements DocumentParser {
     @Override
     public Set<FileType> supportedTypes() {
         return SUPPORTED_TYPES;
+    }
+
+    /**
+     * 获取本引擎声明的支持类型集合（不可变副本）。
+     * <p>供解析引擎能力查询与上传校验复用，避免调用方为读取能力而构造客户端实例。</p>
+     *
+     * @return 支持的文件类型集合（不可变）
+     */
+    public static Set<FileType> declaredSupportedTypes() {
+        return Set.copyOf(SUPPORTED_TYPES);
     }
 
     /**

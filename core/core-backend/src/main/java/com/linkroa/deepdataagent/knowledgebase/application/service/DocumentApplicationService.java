@@ -5,6 +5,7 @@ import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskRegistry;
 import com.linkroa.deepdataagent.knowledgebase.api.InFlightTaskType;
 import com.linkroa.deepdataagent.knowledgebase.api.IngestionCancellationApi;
 import com.linkroa.deepdataagent.knowledgebase.api.IngestionTaskSubmitter;
+import com.linkroa.deepdataagent.knowledgebase.api.ParserCapabilityApi;
 import com.linkroa.deepdataagent.knowledgebase.application.command.DeleteDocumentCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.ReparseDocumentCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.UploadDocumentCommand;
@@ -212,6 +213,9 @@ public class DocumentApplicationService {
     /** 在飞任务注册表（rag BC 实现）：任务投递前登记在飞凭据、状态收敛后移除成员，供本实例启动恢复收敛悬挂任务 */
     private final InFlightTaskRegistry inFlightTaskRegistry;
 
+    /** 解析引擎能力契约（rag BC 实现）：上传前按当前引擎能力集合做格式准入校验 */
+    private final ParserCapabilityApi parserCapabilityApi;
+
     /**
      * 构造文档应用服务。
      *
@@ -228,6 +232,7 @@ public class DocumentApplicationService {
      * @param chunkPhysicalDeleteService   切片物理删除原语
      * @param documentCleanupTaskSubmitter 文档清退任务提交端口（跨 BC 端口，实现位于 rag BC）
      * @param inFlightTaskRegistry         在飞任务注册表（跨 BC 端口，实现位于 rag BC）
+     * @param parserCapabilityApi          解析引擎能力契约（跨 BC 端口，实现位于 rag BC）
      */
     public DocumentApplicationService(DocumentRepository documentRepository,
                                       ChunkRepository chunkRepository,
@@ -241,7 +246,8 @@ public class DocumentApplicationService {
                                       IngestionTaskSubmitter ingestionTaskSubmitter,
                                       ChunkPhysicalDeleteService chunkPhysicalDeleteService,
                                       DocumentCleanupTaskSubmitter documentCleanupTaskSubmitter,
-                                      InFlightTaskRegistry inFlightTaskRegistry) {
+                                      InFlightTaskRegistry inFlightTaskRegistry,
+                                      ParserCapabilityApi parserCapabilityApi) {
         this.documentRepository = documentRepository;
         this.chunkRepository = chunkRepository;
         this.knowledgeBaseRepository = knowledgeBaseRepository;
@@ -255,6 +261,7 @@ public class DocumentApplicationService {
         this.chunkPhysicalDeleteService = chunkPhysicalDeleteService;
         this.documentCleanupTaskSubmitter = documentCleanupTaskSubmitter;
         this.inFlightTaskRegistry = inFlightTaskRegistry;
+        this.parserCapabilityApi = parserCapabilityApi;
     }
 
     /**
@@ -281,14 +288,17 @@ public class DocumentApplicationService {
      * @param command 上传命令（携带文件字节）
      * @return 上传结果（新文档已登记，或命中重复被跳过并携带既有文档；覆盖换版路径携带旧文档快照列表）
      * @throws ResourceNotFoundException 知识库不存在（404）
-     * @throws DeepDataAgentException    文件内容为空 / 格式不支持 / 大小超限 / 文档级分块策略非法 /
-     *                                   知识库处于删除流程（400）
+     * @throws DeepDataAgentException    文件内容为空 / 格式不支持 / 当前解析引擎不支持该文件类型 /
+     *                                   大小超限 / 文档级分块策略非法 / 知识库处于删除流程（400）
      * @throws ResourceConflictException 命中重复且冲突动作为 REJECT（409，消息携带重复摘要）
      */
     public UploadDocumentResult upload(UploadDocumentCommand command) {
         KnowledgeBase knowledgeBase = requireOwnedKnowledgeBase(command.kbId());
         KnowledgeBaseValidator.validateNotDeleting(knowledgeBase);
         FileType fileType = DocumentValidator.validateFileType(command.fileType());
+        // 解析引擎能力准入：引擎不可处理的类型在上传响应中直接拒绝（零对象存储、零数据库写入），
+        // 与摄入侧 DefaultDocumentParserRegistry 的路由口径同源（LOCAL 含兜底可读类型，MINERU 严格）
+        parserCapabilityApi.ensureSupported(knowledgeBase.ragEngineConfig(), fileType);
         byte[] content = command.content();
         if (ObjectUtils.isEmpty(content)) {
             throw new DeepDataAgentException("上传文件内容不能为空");

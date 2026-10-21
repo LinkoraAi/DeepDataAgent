@@ -39,7 +39,7 @@ import java.util.List;
  *                                  chunkStrategy.modeConfig.params 与图合并段等嵌套配置块
  *                                  的权威来源，值对象字段仅为便利投影
  * @param language                  知识库语言（真相源 = {@code knowledge_base.language} 列的归一语言全名，
- *                                  11 全名枚举见 {@code KbLanguage}，兼容历史裸语言码原样透传；
+ *                                  Chinese/English 枚举见 {@code KbLanguage}，兼容历史裸语言码原样透传；
  *                                  {@code null} = 未配置，消费方回落全局默认语言，；
  *                                  不再取
  *                                  {@code rag_engine_config} JSONB 的 language 键）

@@ -48,8 +48,8 @@ public class KnowledgeBaseEntity implements KbAuditable {
 
     /**
      * 知识库语言（{@code knowledge_base.language} 列）：知识库语言的唯一真相源。
-     * <p>值域为 {@code KbLanguage} 十一个语言全名（大小写不敏感归一，存量值如 ENGLISH 读取侧归入 English）；
-     * 缺省语义 = Chinese（应用层创建时恒显式写入，不依赖列库默认值 'ENGLISH'）。
+     * <p>值域为 {@code KbLanguage} 的 Chinese/English（大小写不敏感归一，存量值如 ENGLISH 读取侧归入 English）；
+     * 缺省语义 = Chinese（应用层创建时恒显式写入，不依赖列库默认值）。
      * {@code rag_engine_config} JSONB 的 language 键已弃用，与本列无关。</p>
      */
     private String language;

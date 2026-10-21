@@ -4,13 +4,17 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.linkroa.deepdataagent.rag.domain.port.LlmCallContext;
+import com.linkroa.deepdataagent.rag.domain.port.LlmCallException;
+import com.linkroa.deepdataagent.rag.domain.port.LlmFailureKind;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -23,9 +27,14 @@ import java.util.List;
  * （如 {@code https://api.siliconflow.cn/v1/rerank}）；DashScope 原生
  * text-rerank 服务登记其完整路径（如
  * {@code https://{host}/api/v1/services/rerank/text-rerank/text-rerank}）。</p>
- * <p>请求体统一为扁平 {@code {model, query, documents}}（DashScope 原生路径实测同样接受该形态）；
- * 响应体兼容两种包装：OpenAI 兼容为顶层 {@code {results: [{index, relevance_score}]}}，
- * DashScope 原生为 {@code {output: {results: [...]}}}（由 {@link #resolveResultsNode} 统一解包）。</p>
+ * <p>请求体形态按阿里云百炼《文本排序》接口文档：{@code {model, input:{query, documents}}}——
+ * {@code query} 与 {@code documents} <b>必须嵌套在 input 对象中</b>，顶层放置会被服务端拒绝为
+ * {@code InvalidParameter: Field required: input.query & Field required: input.documents}。
+ * 可选 {@code parameters}（{@code top_n} / {@code instruct}）刻意不下发：{@code top_n} 会导致
+ * 返回条数与请求条数不一致，破坏按 index 回填的等长契约；{@code instruct} 取文档默认值
+ * （问答检索任务），与 RAG 场景一致。</p>
+ * <p>响应体兼容两种包装：OpenAI 兼容为顶层 {@code {results: [{index, relevance_score}]}}，
+ * 百炼原生为 {@code {output: {results: [...]}}}（由 {@link #resolveResultsNode} 统一解包）。</p>
  * <p>刻意<b>不下发</b> {@code top_n}：一旦下发，服务端可能只返回前 N 条，响应长度与请求长度
  * 无法对齐，剩余候选会被 {@link #parseScores(JsonNode, int)} 判为协议异常。</p>
  * <p><b>不做模型类型校验</b>：agent BC 的 {@code ModelType} 只有 CHAT / EMBEDDING
@@ -41,13 +50,8 @@ public class OpenAiCompatibleRerankClient implements RerankClient {
     /** 空资源路径：端点原样使用配置值，不做任何路径追加（URL 语义见类注释） */
     private static final String EMPTY_RESOURCE_PATH = "";
 
-    /**
-     * 单次调用超时。
-     * <p>重排位于同步检索链路（不同于摄入侧分钟级的 LLM 生成调用），其负载是纯打分、
-     * 与向量化同量级，故取与 {@code OpenAiCompatibleEmbeddingClient} 一致的 60s 上限；
-     * 超过即视为服务不可用，由精排降级直出粗排。</p>
-     */
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
+    /** 调用级日志器 */
+    private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleRerankClient.class);
 
     /** JSON 序列化器 */
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -78,6 +82,9 @@ public class OpenAiCompatibleRerankClient implements RerankClient {
 
     /** 合法 index 下界 */
     private static final int INDEX_MIN = 0;
+
+    /** 请求体字段：嵌套输入对象（百炼 text-rerank 协议，query 与 documents 必须置于其内） */
+    private static final String FIELD_INPUT = "input";
 
     /** 模型配置解析端口（profileId → baseUrl / apiKey / modelName） */
     private final ModelProfileAccess modelProfileAccess;
@@ -115,9 +122,56 @@ public class OpenAiCompatibleRerankClient implements RerankClient {
             return Collections.emptyList();
         }
         ModelProfileAccess.ResolvedEndpoint endpoint = modelProfileAccess.resolve(modelProfileId);
-        JsonNode response = parseJson(modelTransport.post(endpoint, EMPTY_RESOURCE_PATH,
-                buildRequestBody(endpoint, query, passages), REQUEST_TIMEOUT));
+        JsonNode response = parseJson(postRerank(endpoint,
+                buildRequestBody(endpoint, query, passages), passages.size(), charsOf(query, passages)));
         return parseScores(response, passages.size());
+    }
+
+    /**
+     * 发起重排请求并输出调用级日志（成功 INFO / 失败 WARN）。
+     * <p>超时由通道统一持有，本方法不传自定义超时；失败统一折算为带分类的
+     * {@link LlmCallException}，消息保留既有失败口径。</p>
+     *
+     * @param endpoint  解析后的端点
+     * @param jsonBody  请求体
+     * @param batchSize 候选文档条数
+     * @param totalChars 查询与候选文档总字符数
+     * @return 原始响应体
+     */
+    private String postRerank(ModelProfileAccess.ResolvedEndpoint endpoint, String jsonBody,
+                              int batchSize, int totalChars) {
+        long startNanos = System.nanoTime();
+        try {
+            String raw = modelTransport.post(endpoint, EMPTY_RESOURCE_PATH, jsonBody);
+            LlmCallLogSupport.info(log, () -> String.format(
+                    "llm.call | stage=%s model=%s batchSize=%d chars=%d elapsedMs=%d status=OK",
+                    LlmCallContext.STAGE_RERANK, StringUtils.defaultString(endpoint.modelName()),
+                    batchSize, totalChars, LlmCallLogSupport.elapsedMillis(startNanos)));
+            return raw;
+        } catch (RuntimeException e) {
+            LlmFailureKind kind = LlmCallFailureClassifier.classify(e);
+            LlmCallLogSupport.warn(log, () -> String.format(
+                    "llm.call | stage=%s model=%s batchSize=%d chars=%d elapsedMs=%d"
+                            + " status=FAILED reason=%s",
+                    LlmCallContext.STAGE_RERANK, StringUtils.defaultString(endpoint.modelName()),
+                    batchSize, totalChars, LlmCallLogSupport.elapsedMillis(startNanos), kind), e);
+            throw new LlmCallException(kind, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 查询与候选文档的总字符数。
+     *
+     * @param query    查询文本（可空）
+     * @param passages 候选文档列表（非空）
+     * @return 字符总数
+     */
+    private static int charsOf(String query, List<String> passages) {
+        int total = LlmCallLogSupport.chars(query);
+        for (String passage : passages) {
+            total += LlmCallLogSupport.chars(passage);
+        }
+        return total;
     }
 
     /**
@@ -135,8 +189,10 @@ public class OpenAiCompatibleRerankClient implements RerankClient {
     }
 
     /**
-     * 组装重排请求体：{@code {model, query, documents:[passages]}}。
-     * <p>包级可见以便单测直接断言报文形态（口径同 {@code OpenAiCompatibleLlmClient}）。</p>
+     * 组装重排请求体：{@code {model, input:{query, documents:[passages]}}}。
+     * <p>形态严格对齐百炼《文本排序》接口文档：{@code query} 与 {@code documents}
+     * 必须嵌套在 {@code input} 对象内，顶层放置会被服务端判为字段缺失。
+     * 包级可见以便单测直接断言报文形态（口径同 {@code OpenAiCompatibleLlmClient}）。</p>
      *
      * @param endpoint 已解析的模型端点（提供 model 字段值）
      * @param query    用户查询文本（null 归一为空串，避免请求体出现 null 字面量）
@@ -147,8 +203,9 @@ public class OpenAiCompatibleRerankClient implements RerankClient {
                                    List<String> passages) {
         ObjectNode body = OBJECT_MAPPER.createObjectNode();
         body.put(FIELD_MODEL, endpoint.modelName());
-        body.put(FIELD_QUERY, StringUtils.defaultString(query));
-        var documents = body.putArray(FIELD_DOCUMENTS);
+        ObjectNode input = body.putObject(FIELD_INPUT);
+        input.put(FIELD_QUERY, StringUtils.defaultString(query));
+        var documents = input.putArray(FIELD_DOCUMENTS);
         passages.forEach(documents::add);
         try {
             return OBJECT_MAPPER.writeValueAsString(body);

@@ -5,12 +5,18 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.linkroa.deepdataagent.rag.domain.port.EmbeddingClient;
+import com.linkroa.deepdataagent.rag.domain.port.LlmCallContext;
+import com.linkroa.deepdataagent.rag.domain.port.LlmCallException;
+import com.linkroa.deepdataagent.rag.domain.port.LlmFailureKind;
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,6 +24,10 @@ import java.util.List;
  * OpenAI 兼容向量化客户端（/embeddings，无缓存直调）。
  * <p>HTTP 传输经 {@link ModelTransport}（生产实现基于 AgentScope 框架通道），
  * 真批量报文组装与 index 归位解析仍由本类负责。</p>
+ * <p><b>批量切片</b>：{@link #embedBatch} 按配置的单请求批量上限
+ * （{@code app.rag.ingestion.embed.batch-size}，缺省 16，DashScope 兼容端上限 20）
+ * 将入参切为多次 {@code /embeddings} 调用串行提交，返回列表按入参顺序拼接，
+ * 下标一一对应契约不因切片改变；调用方 MUST NOT 再自行预切片。</p>
  */
 @Component
 public class OpenAiCompatibleEmbeddingClient implements EmbeddingClient {
@@ -25,8 +35,11 @@ public class OpenAiCompatibleEmbeddingClient implements EmbeddingClient {
     /** 向量化资源路径 */
     private static final String EMBEDDINGS_PATH = "/embeddings";
 
-    /** 单次调用超时 */
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
+    /** 缺省单请求批量上限（与 DashScope 兼容端上限 20 留余量，配置缺失时的字段初值） */
+    private static final int DEFAULT_EMBED_BATCH_SIZE = 16;
+
+    /** 调用级日志器 */
+    private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleEmbeddingClient.class);
 
     /** JSON 序列化器 */
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -35,6 +48,14 @@ public class OpenAiCompatibleEmbeddingClient implements EmbeddingClient {
 
     /** 模型端点 HTTP 通道（AgentScope 框架实现，包级缝便于单测注入） */
     private final ModelTransport modelTransport;
+
+    /**
+     * 单请求批量上限（{@code app.rag.ingestion.embed.batch-size}，缺省 16；小于 1 按 1 即逐条）。
+     * <p>字段初值为单测直构实例口径，生产由 Spring 注入覆盖；提供方批量限制（如
+     * DashScope 兼容端 20）的切片职责收敛在本客户端，调用方无需预切片。</p>
+     */
+    @Value("${app.rag.ingestion.embed.batch-size:16}")
+    private int embedBatchSize = DEFAULT_EMBED_BATCH_SIZE;
 
     /**
      * 构造向量化客户端（生产装配入口）。
@@ -66,14 +87,17 @@ public class OpenAiCompatibleEmbeddingClient implements EmbeddingClient {
             throw new IllegalArgumentException("向量化文本不能为空");
         }
         ModelProfileAccess.ResolvedEndpoint endpoint = modelProfileAccess.resolve(modelProfileId);
-        JsonNode response = parseJson(modelTransport.post(endpoint, EMBEDDINGS_PATH,
-                buildRequestBody(endpoint, text), REQUEST_TIMEOUT));
+        JsonNode response = parseJson(postEmbeddings(endpoint,
+                buildRequestBody(endpoint, text), 1, LlmCallLogSupport.chars(text)));
         return parseVector(response, endpoint);
     }
 
     /**
-     * 真批量向量化：一次 {@code /embeddings} 调用提交全部文本（input 传数组），
-     * 响应 data 按 index 字段回填，保证返回列表与入参列表下标一一对应。
+     * 真批量向量化：按单请求批量上限切片，逐片以 {@code /embeddings}（input 传数组）
+     * 串行提交，每片响应 data 按 index 字段归位，各片结果按入参顺序拼接——
+     * 返回列表与入参列表下标一一对应的契约不因切片改变。
+     * <p>任一片失败即上抛（fail-fast），不回退逐条重试；400「batch size is invalid」
+     * 类提供方批量限制由本方法切片规避。</p>
      */
     @Override
     public List<float[]> embedBatch(String modelProfileId, List<String> texts) {
@@ -84,9 +108,60 @@ public class OpenAiCompatibleEmbeddingClient implements EmbeddingClient {
             throw new IllegalArgumentException("向量化文本列表不能为空");
         }
         ModelProfileAccess.ResolvedEndpoint endpoint = modelProfileAccess.resolve(modelProfileId);
-        JsonNode response = parseJson(modelTransport.post(endpoint, EMBEDDINGS_PATH,
-                buildBatchRequestBody(endpoint, texts), REQUEST_TIMEOUT));
-        return parseVectorBatch(response, endpoint, texts.size());
+        int batchSize = Math.max(embedBatchSize, 1);
+        List<float[]> vectors = new ArrayList<>(texts.size());
+        for (List<String> batch : ListUtils.partition(texts, batchSize)) {
+            JsonNode response = parseJson(postEmbeddings(endpoint,
+                    buildBatchRequestBody(endpoint, batch), batch.size(), totalChars(batch)));
+            vectors.addAll(parseVectorBatch(response, endpoint, batch.size()));
+        }
+        return vectors;
+    }
+
+    /**
+     * 发起向量化请求并输出调用级日志（成功 INFO / 失败 WARN）。
+     * <p>超时由通道统一持有，本方法不传自定义超时；失败统一折算为带分类的
+     * {@link LlmCallException}，消息保留既有「模型接口调用失败」口径。</p>
+     *
+     * @param endpoint   解析后的端点
+     * @param jsonBody   请求体
+     * @param batchSize  本次提交的文本条数
+     * @param totalChars 本次提交的文本总字符数
+     * @return 原始响应体
+     */
+    private String postEmbeddings(ModelProfileAccess.ResolvedEndpoint endpoint, String jsonBody,
+                                  int batchSize, int totalChars) {
+        long startNanos = System.nanoTime();
+        try {
+            String raw = modelTransport.post(endpoint, EMBEDDINGS_PATH, jsonBody);
+            LlmCallLogSupport.info(log, () -> String.format(
+                    "llm.call | stage=%s model=%s batchSize=%d chars=%d elapsedMs=%d status=OK",
+                    LlmCallContext.STAGE_EMBEDDING, StringUtils.defaultString(endpoint.modelName()),
+                    batchSize, totalChars, LlmCallLogSupport.elapsedMillis(startNanos)));
+            return raw;
+        } catch (RuntimeException e) {
+            LlmFailureKind kind = LlmCallFailureClassifier.classify(e);
+            LlmCallLogSupport.warn(log, () -> String.format(
+                    "llm.call | stage=%s model=%s batchSize=%d chars=%d elapsedMs=%d"
+                            + " status=FAILED reason=%s",
+                    LlmCallContext.STAGE_EMBEDDING, StringUtils.defaultString(endpoint.modelName()),
+                    batchSize, totalChars, LlmCallLogSupport.elapsedMillis(startNanos), kind), e);
+            throw new LlmCallException(kind, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 批量文本总字符数。
+     *
+     * @param texts 文本列表（非空）
+     * @return 字符总数
+     */
+    private static int totalChars(List<String> texts) {
+        int total = 0;
+        for (String text : texts) {
+            total += LlmCallLogSupport.chars(text);
+        }
+        return total;
     }
 
     /**

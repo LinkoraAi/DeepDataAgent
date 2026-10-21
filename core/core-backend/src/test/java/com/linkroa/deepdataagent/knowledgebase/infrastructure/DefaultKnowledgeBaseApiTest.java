@@ -354,10 +354,10 @@ class DefaultKnowledgeBaseApiTest {
     void should_returnNormalizedLanguage_when_findLanguageByKbId_given_paddedFullName() {
         // given：language 列值带首尾空白的小写语言全名（读取侧 trim + 大小写不敏感归一）
         when(knowledgeBaseRepository.findById(KB_ID))
-                .thenReturn(Optional.of(buildKbWithLanguage(" japanese ")));
+                .thenReturn(Optional.of(buildKbWithLanguage(" english ")));
 
         // when // then：归一为枚举规范全名
-        assertEquals("Japanese", api.findLanguageByKbId(KB_ID));
+        assertEquals("English", api.findLanguageByKbId(KB_ID));
     }
 
     @Test
@@ -372,7 +372,7 @@ class DefaultKnowledgeBaseApiTest {
 
     @Test
     void should_passThroughBareCode_when_findLanguageByKbId_given_legacyBareLanguageCode() {
-        // given：历史裸语言码宽容透传（原样 trim，由下游模板套归一按 en 套处理）
+        // given：历史裸语言码宽容透传（原样 trim，仅作为历史存量兼容）
         when(knowledgeBaseRepository.findById(KB_ID))
                 .thenReturn(Optional.of(buildKbWithLanguage(" ja ")));
 

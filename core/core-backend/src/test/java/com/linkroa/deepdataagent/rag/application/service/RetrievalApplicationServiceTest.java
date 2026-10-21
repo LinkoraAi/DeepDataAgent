@@ -42,6 +42,7 @@ import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import reactor.core.publisher.Flux;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
@@ -265,8 +266,8 @@ class RetrievalApplicationServiceTest {
      * @param rewrittenOut  Stage 0 改写产物
      */
     private void stubMixChain(RetrievalStrategyConfig cfg, String understandIn, String rewrittenOut) {
-        when(knowledgeBaseApi.isActive(KB_ID)).thenReturn(true);
-        when(knowledgeBaseApi.findRetrievalStrategyByKbId(KB_ID)).thenReturn(cfg);
+        lenient().when(knowledgeBaseApi.isActive(KB_ID)).thenReturn(true);
+        lenient().when(knowledgeBaseApi.findRetrievalStrategyByKbId(KB_ID)).thenReturn(cfg);
         when(queryUnderstandingService.rewrite(eq(understandIn), eq(cfg), eq(KB_ID), any(AtomicInteger.class)))
                 .thenReturn(rewrittenOut);
         when(queryUnderstandingService.extract(eq(rewrittenOut), any(), any(), eq(cfg), eq(KB_ID),
@@ -276,7 +277,7 @@ class RetrievalApplicationServiceTest {
         when(fusionService.fuse(anyMap(), any(FusionStrategyConfig.class))).thenReturn(RANKED);
         when(reranker.rerank(anyString(), anyList(), any(), any())).thenReturn(RANKED);
         when(contextBuilder.build(eq(KB_ID), anyList(), any(), any(ContextBudget.class))).thenReturn(KG_CONTEXT);
-        when(answerGenerator.generate(anyString(), any(KgContext.class), eq(cfg), any(RetrievalQuery.class),
+        lenient().when(answerGenerator.generate(anyString(), any(KgContext.class), eq(cfg), any(RetrievalQuery.class),
                 any(AtomicInteger.class))).thenReturn(ANSWER);
     }
 
@@ -291,10 +292,9 @@ class RetrievalApplicationServiceTest {
 
         // then：转译器零交互，Stage 0 输入为原文、Stage 5 送入改写后 query（与基线逐字段一致）
         assertEquals(ANSWER, result.answer());
-        assertFalse(result.degraded());
         verifyNoInteractions(queryImageTranscriber);
         verify(queryUnderstandingService).rewrite(eq(QUERY), eq(cfg), eq(KB_ID), any(AtomicInteger.class));
-        verify(answerGenerator).generate(eq(REWRITTEN), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
+        verify(answerGenerator).generate(eq(QUERY), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
                 any(AtomicInteger.class));
     }
 
@@ -321,7 +321,6 @@ class RetrievalApplicationServiceTest {
         verify(answerGenerator).generate(eq(QUERY), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
                 any(AtomicInteger.class));
         assertEquals(ANSWER, result.answer());
-        assertFalse(result.degraded());
     }
 
     @Test
@@ -336,10 +335,9 @@ class RetrievalApplicationServiceTest {
 
         // then：流程按原文继续，Stage 5 仍取改写后 query（等同基线口径）
         assertEquals(ANSWER, result.answer());
-        assertFalse(result.degraded());
         verify(queryImageTranscriber).transcribe(KB_ID, QUERY, List.of(ATTACHMENT));
         verify(queryUnderstandingService).rewrite(eq(QUERY), eq(cfg), eq(KB_ID), any(AtomicInteger.class));
-        verify(answerGenerator).generate(eq(REWRITTEN), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
+        verify(answerGenerator).generate(eq(QUERY), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
                 any(AtomicInteger.class));
     }
 
@@ -374,10 +372,9 @@ class RetrievalApplicationServiceTest {
 
         // then：转译器零交互，链路与「无附图基线」逐字段一致
         assertEquals(ANSWER, result.answer());
-        assertFalse(result.degraded());
         verifyNoInteractions(queryImageTranscriber);
         verify(queryUnderstandingService).rewrite(eq(QUERY), eq(cfg), eq(KB_ID), any(AtomicInteger.class));
-        verify(answerGenerator).generate(eq(REWRITTEN), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
+        verify(answerGenerator).generate(eq(QUERY), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
                 any(AtomicInteger.class));
     }
 
@@ -398,7 +395,6 @@ class RetrievalApplicationServiceTest {
 
         // then
         assertEquals(ANSWER, result.answer());
-        assertFalse(result.degraded());
         verifyNoInteractions(queryImageTranscriber);
         verify(queryUnderstandingService).rewrite(eq(QUERY), eq(cfg), eq(KB_ID), any(AtomicInteger.class));
     }
@@ -452,7 +448,7 @@ class RetrievalApplicationServiceTest {
         assertEquals(12, recallCaptor.getValue().graphEdgeTop());
         assertEquals(2, recallCaptor.getValue().graphEdgeChunkLimit());
         ArgumentCaptor<RetrievalQuery> answerCaptor = ArgumentCaptor.forClass(RetrievalQuery.class);
-        verify(answerGenerator).generate(eq(REWRITTEN), eq(KG_CONTEXT), eq(cfg), answerCaptor.capture(),
+        verify(answerGenerator).generate(eq(QUERY), eq(KG_CONTEXT), eq(cfg), answerCaptor.capture(),
                 any(AtomicInteger.class));
         assertEquals(12, answerCaptor.getValue().graphEdgeTop());
         assertEquals(2, answerCaptor.getValue().graphEdgeChunkLimit());
@@ -475,7 +471,7 @@ class RetrievalApplicationServiceTest {
         when(reranker.rerank(REWRITTEN, RANKED, cfg, KB_ID)).thenReturn(RANKED);
         when(contextBuilder.build(eq(KB_ID), eq(RANKED), eq(KG_RESULT), any(ContextBudget.class)))
                 .thenReturn(KG_CONTEXT);
-        when(answerGenerator.generate(eq(REWRITTEN), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
+        when(answerGenerator.generate(eq(QUERY), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
                 any(AtomicInteger.class))).thenReturn(ANSWER);
 
         // when
@@ -483,7 +479,6 @@ class RetrievalApplicationServiceTest {
 
         // then
         assertEquals(ANSWER, result.answer());
-        assertFalse(result.degraded());
         assertEquals(List.of("[1] policy.pdf", "[2] manual.pdf"), result.references());
         assertSame(KG_CONTEXT, result.context());
         assertEquals(KG_RESULT.entities(), result.rawData().get("entities"));
@@ -498,7 +493,7 @@ class RetrievalApplicationServiceTest {
         inOrder.verify(fusionService).fuse(anyMap(), any(FusionStrategyConfig.class));
         inOrder.verify(reranker).rerank(REWRITTEN, RANKED, cfg, KB_ID);
         inOrder.verify(contextBuilder).build(eq(KB_ID), eq(RANKED), eq(KG_RESULT), any(ContextBudget.class));
-        inOrder.verify(answerGenerator).generate(eq(REWRITTEN), eq(KG_CONTEXT), eq(cfg),
+        inOrder.verify(answerGenerator).generate(eq(QUERY), eq(KG_CONTEXT), eq(cfg),
                 any(RetrievalQuery.class), any(AtomicInteger.class));
     }
 
@@ -535,7 +530,7 @@ class RetrievalApplicationServiceTest {
         verify(queryUnderstandingService).rewrite(eq(QUERY), eq(cfg), eq(KB_ID), rewriteCounter.capture());
         verify(queryUnderstandingService).extract(eq(REWRITTEN), any(), any(), eq(cfg), eq(KB_ID),
                 extractCounter.capture());
-        verify(answerGenerator).generate(eq(REWRITTEN), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
+        verify(answerGenerator).generate(eq(QUERY), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
                 generateCounter.capture());
         assertNotNull(rewriteCounter.getValue());
         assertSame(rewriteCounter.getValue(), extractCounter.getValue());
@@ -675,7 +670,6 @@ class RetrievalApplicationServiceTest {
         RetrievalResult result = retrievalApplicationService.search(request());
 
         // then
-        assertFalse(result.degraded());
         assertEquals(ANSWER, result.answer());
         verify(recallService).recall(any(RetrievalQuery.class), eq(cfg));
         verify(fusionService).fuse(anyMap(), any(FusionStrategyConfig.class));
@@ -692,7 +686,7 @@ class RetrievalApplicationServiceTest {
                 .thenReturn(LONG_QUERY);
         when(queryUnderstandingService.extract(eq(LONG_QUERY), any(), any(), eq(cfg), eq(KB_ID),
                 any(AtomicInteger.class))).thenReturn(new KeywordPair(List.of(), List.of()));
-        when(answerGenerator.generate(eq(LONG_QUERY), any(KgContext.class), eq(cfg), any(RetrievalQuery.class),
+        when(answerGenerator.generate(eq(QUERY), any(KgContext.class), eq(cfg), any(RetrievalQuery.class),
                 any(AtomicInteger.class))).thenReturn(FAIL_ANSWER);
 
         // when
@@ -700,7 +694,7 @@ class RetrievalApplicationServiceTest {
 
         // then
         ArgumentCaptor<KgContext> contextCaptor = ArgumentCaptor.forClass(KgContext.class);
-        verify(answerGenerator).generate(eq(LONG_QUERY), contextCaptor.capture(), eq(cfg),
+        verify(answerGenerator).generate(eq(QUERY), contextCaptor.capture(), eq(cfg),
                 any(RetrievalQuery.class), any(AtomicInteger.class));
         KgContext passedContext = contextCaptor.getValue();
         assertEquals("", passedContext.contextData());
@@ -713,12 +707,11 @@ class RetrievalApplicationServiceTest {
                 "关键词失败终止的空上下文 retainedChunkIds 应为空表");
         verifyNoInteractions(recallService, fusionService, reranker, contextBuilder);
         assertEquals(FAIL_ANSWER, result.answer());
-        assertFalse(result.degraded());
         assertTrue(result.references().isEmpty());
     }
 
     @Test
-    void should_markDegradedAndKeepMainReturn_when_search_given_recallThrows() {
+    void should_keepMainReturn_when_search_given_recallThrows() {
         // given
         RetrievalStrategyConfig cfg = mixConfig();
         KeywordPair pair = new KeywordPair(List.of("发货超时"), List.of("订单"));
@@ -740,7 +733,6 @@ class RetrievalApplicationServiceTest {
         RetrievalResult result = retrievalApplicationService.search(request());
 
         // then
-        assertTrue(result.degraded());
         assertEquals(ANSWER, result.answer());
         assertSame(KG_CONTEXT, result.context());
         // 召回降级为图谱空结果：Stage 4 仍以空 KgSearchResult 承载继续
@@ -776,7 +768,6 @@ class RetrievalApplicationServiceTest {
         RetrievalResult result = retrievalApplicationService.search(request());
 
         // then：融合异常按候选原始顺序直排进入精排（chunkId 101/102/103 保持召回序）
-        assertTrue(result.degraded());
         ArgumentCaptor<List<RankedChunk>> rankedCaptor = ArgumentCaptor.forClass(List.class);
         verify(reranker).rerank(eq(REWRITTEN), rankedCaptor.capture(), eq(cfg), eq(KB_ID));
         assertEquals(List.of(101L, 102L, 103L),
@@ -807,9 +798,8 @@ class RetrievalApplicationServiceTest {
         RetrievalResult result = retrievalApplicationService.search(request());
 
         // then：Stage 4 异常 → 空上下文承载图谱结果继续答案
-        assertTrue(result.degraded());
         ArgumentCaptor<KgContext> contextCaptor = ArgumentCaptor.forClass(KgContext.class);
-        verify(answerGenerator).generate(eq(REWRITTEN), contextCaptor.capture(), eq(cfg),
+        verify(answerGenerator).generate(eq(QUERY), contextCaptor.capture(), eq(cfg),
                 any(RetrievalQuery.class), any(AtomicInteger.class));
         assertEquals("", contextCaptor.getValue().contextData());
         assertSame(KG_RESULT, contextCaptor.getValue().kgResult());
@@ -863,10 +853,9 @@ class RetrievalApplicationServiceTest {
         assertEquals(ANSWER, result.answer());
         assertSame(fourArgContext, result.context());
         assertEquals(fourArgContext.referenceList(), result.references());
-        assertFalse(result.degraded());
         // 上下文原样透传 Stage 5：装入集不因编排层发生增删改
         ArgumentCaptor<KgContext> contextCaptor = ArgumentCaptor.forClass(KgContext.class);
-        verify(answerGenerator).generate(eq(REWRITTEN), contextCaptor.capture(), eq(cfg),
+        verify(answerGenerator).generate(eq(QUERY), contextCaptor.capture(), eq(cfg),
                 any(RetrievalQuery.class), any(AtomicInteger.class));
         assertEquals(List.of(102L, 101L, 201L), contextCaptor.getValue().retainedChunkIds());
     }
@@ -894,7 +883,6 @@ class RetrievalApplicationServiceTest {
         RetrievalResult result = retrievalApplicationService.search(request());
 
         // then
-        assertTrue(result.degraded());
         assertNull(result.answer());
         assertSame(KG_CONTEXT, result.context());
         assertEquals(KG_CONTEXT.referenceList(), result.references());
@@ -988,7 +976,6 @@ class RetrievalApplicationServiceTest {
         assertEquals(RetrievalStrategyType.NAIVE, cfgCaptor.getValue().strategyType());
         assertFalse(Boolean.TRUE.equals(cfgCaptor.getValue().rewriteQuestion()));
         assertNull(cfgCaptor.getValue().fusionConfig());
-        assertFalse(result.degraded());
         assertEquals(ANSWER, result.answer());
     }
 
@@ -1096,8 +1083,8 @@ class RetrievalApplicationServiceTest {
         assertEquals(RetrievalQuery.DEFAULT_TOP_K, effective.topK());
         assertEquals(RetrievalQuery.DEFAULT_TOP_K, effective.chunkTopK());
         assertEquals(RetrievalQuery.DEFAULT_MAX_TOTAL_TOKENS, effective.maxTotalTokens());
-        // Stage 5 同样消费改写后 query
-        verify(answerGenerator).generate(eq(REWRITTEN), any(KgContext.class), eq(cfg),
+        // Stage 5 锚定用户原始提问（改写文本只服务检索链路）
+        verify(answerGenerator).generate(eq(QUERY), any(KgContext.class), eq(cfg),
                 any(RetrievalQuery.class), any(AtomicInteger.class));
     }
 
@@ -1126,7 +1113,6 @@ class RetrievalApplicationServiceTest {
         RetrievalResult result = retrievalApplicationService.search(request());
 
         // then：正文全量、引用仅对象键、身份与分值取自图谱有序切片
-        assertFalse(result.degraded());
         assertEquals(1, result.chunkViews().size());
         RetrievalChunkView view = result.chunkViews().get(0);
         assertEquals(102L, view.chunkId());
@@ -1169,8 +1155,8 @@ class RetrievalApplicationServiceTest {
     }
 
     @Test
-    void should_returnViewsWithoutContentAndNotMarkDegraded_when_search_given_chunkFetchFailed() {
-        // given：明细回取抛异常（旁路降级，不污染检索链路 degraded 口径）
+    void should_returnViewsWithoutContent_when_search_given_chunkFetchFailed() {
+        // given：明细回取抛异常（旁路降级，不污染检索主链路）
         stubMixChain();
         when(knowledgeBaseApi.findChunksByKbIdAndChunkIds(eq(KB_ID), anyList()))
                 .thenThrow(new RuntimeException("切片表不可用"));
@@ -1178,8 +1164,7 @@ class RetrievalApplicationServiceTest {
         // when
         RetrievalResult result = retrievalApplicationService.search(request());
 
-        // then：明细仍按上下文序产出（正文与引用为空），答案与降级标记零变化
-        assertFalse(result.degraded());
+        // then：明细仍按上下文序产出（正文与引用为空），答案零变化
         assertEquals(ANSWER, result.answer());
         assertEquals(1, result.chunkViews().size());
         assertEquals(102L, result.chunkViews().get(0).chunkId());
@@ -1227,7 +1212,7 @@ class RetrievalApplicationServiceTest {
         // then：答案与完整形态同口径，上下文构建与作答均发生，明细零回取
         assertEquals(ANSWER, answer);
         verify(contextBuilder).build(eq(KB_ID), eq(RANKED), eq(KG_RESULT), any(ContextBudget.class));
-        verify(answerGenerator).generate(eq(REWRITTEN), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
+        verify(answerGenerator).generate(eq(QUERY), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
                 any(AtomicInteger.class));
         verify(knowledgeBaseApi, never()).findChunksByKbIdAndChunkIds(any(), anyList());
     }
@@ -1247,6 +1232,60 @@ class RetrievalApplicationServiceTest {
 
         // then
         assertNull(answer);
+    }
+
+    /**
+     * 建流前闸门：非本人归属折叠为 404，且不再触碰 ACTIVE 校验与下游。
+     */
+    @Test
+    void should_throwNotFoundAndSkipActiveCheck_when_assertRetrievable_given_notOwner() {
+        // given
+        when(knowledgeBaseApi.isOwnedBy(KB_ID, OWNER_ID)).thenReturn(false);
+
+        // when & then
+        ResourceNotFoundException exception = assertThrows(ResourceNotFoundException.class,
+                () -> retrievalApplicationService.assertRetrievable(KB_ID));
+        assertEquals("知识库不存在", exception.getMessage());
+        verify(knowledgeBaseApi, never()).isActive(any());
+        verify(knowledgeBaseApi, never()).findRetrievalStrategyByKbId(any());
+    }
+
+    /**
+     * 建流前闸门：知识库非 ACTIVE 时拒绝，且不读取检索策略快照。
+     */
+    @Test
+    void should_throwWhenInactive_when_assertRetrievable_given_inactiveKnowledgeBase() {
+        // given
+        when(knowledgeBaseApi.isActive(KB_ID)).thenReturn(false);
+
+        // when & then
+        assertThrows(DeepDataAgentException.class,
+                () -> retrievalApplicationService.assertRetrievable(KB_ID));
+        verify(knowledgeBaseApi, never()).findRetrievalStrategyByKbId(any());
+    }
+
+    /**
+     * 流式答案形态：顺序透传增量，且整段跳过切片明细回取（与同步答案形态同口径）。
+     */
+    @Test
+    void should_streamDeltasAndSkipChunkFetch_when_generateAnswerStream_given_mixChain() {
+        // given
+        RetrievalStrategyConfig cfg = mixConfig();
+        stubMixChain(cfg, QUERY, REWRITTEN);
+        when(answerGenerator.generateStream(eq(QUERY), eq(KG_CONTEXT), eq(cfg),
+                any(RetrievalQuery.class), any(AtomicInteger.class)))
+                .thenReturn(Flux.just("AB", "CD"));
+
+        // when
+        List<String> parts = retrievalApplicationService.generateAnswerStream(request(), cfg)
+                .deltas()
+                .collectList()
+                .block();
+
+        // then
+        assertNotNull(parts);
+        assertEquals(List.of("AB", "CD"), parts);
+        verify(knowledgeBaseApi, never()).findChunksByKbIdAndChunkIds(any(), anyList());
     }
 
     /**
@@ -1513,7 +1552,7 @@ class RetrievalApplicationServiceTest {
         when(reranker.rerank(REWRITTEN, RANKED, cfg, KB_ID)).thenReturn(RANKED);
         when(contextBuilder.build(eq(KB_ID), eq(RANKED), eq(KG_RESULT), any(ContextBudget.class)))
                 .thenReturn(KG_CONTEXT);
-        when(answerGenerator.generate(eq(REWRITTEN), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
+        when(answerGenerator.generate(eq(QUERY), eq(KG_CONTEXT), eq(cfg), any(RetrievalQuery.class),
                 any(AtomicInteger.class))).thenReturn(ANSWER);
     }
 

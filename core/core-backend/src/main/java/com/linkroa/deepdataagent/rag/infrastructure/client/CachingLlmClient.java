@@ -3,6 +3,7 @@ package com.linkroa.deepdataagent.rag.infrastructure.client;
 import com.linkroa.deepdataagent.rag.domain.enums.CacheType;
 import com.linkroa.deepdataagent.rag.domain.model.LlmCacheEntry;
 import com.linkroa.deepdataagent.rag.domain.port.LlmCacheKeyProvider;
+import com.linkroa.deepdataagent.rag.domain.port.LlmCallContext;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatRequest;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatResult;
 import com.linkroa.deepdataagent.rag.domain.port.LlmClient;
@@ -103,8 +104,8 @@ public class CachingLlmClient implements LlmClient {
                 llmCacheRepository.findByKbIdAndCacheKey(request.kbId(), cacheType, cacheKey);
         if (cached.isPresent()) {
             LlmCacheEntry entry = cached.get();
-            log.debug("llm_cache 命中回放: kbId={}, cacheType={}, cacheKey={}",
-                    request.kbId(), cacheType, cacheKey);
+            log.info("llm.cache.hit | kbId={}, chunkId={}, cacheType={}, cacheKey={}, stage={}",
+                    request.kbId(), request.attributionChunkId(), cacheType, cacheKey, stageOf(request));
             // 命中回放路径同样登记归属（design D2）：回放不触达回写，缓存侧无信号，此处是唯一登记点
             registerAttribution(request, cacheType, cacheKey);
             return new LlmChatResult(entry.response(),
@@ -187,6 +188,19 @@ public class CachingLlmClient implements LlmClient {
                             + "cacheKey={}, 累计失败次数={}",
                     request.kbId(), chunkId, cacheType, cacheKey, attributionFailureCount.sum(), failed);
         }
+    }
+
+    /**
+     * 本次调用所属阶段（缺失回落 {@link LlmCallContext#STAGE_OTHER}）。
+     *
+     * @param request 本次 LLM 请求
+     * @return 阶段标识
+     */
+    private static String stageOf(LlmChatRequest request) {
+        if (ObjectUtils.isEmpty(request.callContext())) {
+            return LlmCallContext.STAGE_OTHER;
+        }
+        return request.callContext().stage();
     }
 
     /**

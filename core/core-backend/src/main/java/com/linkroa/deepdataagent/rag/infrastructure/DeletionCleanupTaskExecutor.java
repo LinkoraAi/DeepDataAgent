@@ -154,14 +154,14 @@ public class DeletionCleanupTaskExecutor {
     }
 
     /**
-     * 停机：拒收新提交 → 第一时间清空本实例注册表键 → 宽限期内等待在飞任务收尾 →
+     * 停机：拒收新提交 → 宽限期内等待在飞任务收尾 →
      * 宽限期满按状态一致性校验对未结束任务置 {@code DELETE_FAILED} 并移除成员 → 收尾后中断残留线程。
+     * <p>本实例注册表键的清空不在此处：销毁回调时点缓存生命周期已停止（操作必失败），
+     * 已由 {@code InFlightTaskConverger.onContextClosed()} 在容器关闭事件时点先行完成。</p>
      */
     @PreDestroy
     public void shutdown() {
         shutdown = true;
-        // 停机链首个动作：先于宽限等待清空本实例注册表键，消除滚动发布期间新旧进程并存的误判
-        inFlightTaskConverger.clearInstanceRegistryQuietly();
         ExecutorService current = this.executor;
         this.executor = null;
         if (ObjectUtils.isEmpty(current)) {

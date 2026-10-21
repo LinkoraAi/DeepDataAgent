@@ -37,19 +37,10 @@ export const DOC_ACTIVE_STATUSES = ['PENDING', 'PROCESSING', 'DELETING'];
 /** 文件类型白名单（FileType，13 类） */
 export const FILE_TYPES = ['PDF', 'DOC', 'DOCX', 'XLS', 'XLSX', 'PPT', 'PPTX', 'TXT', 'MD', 'CSV', 'PNG', 'JPG', 'JPEG'] as const;
 
-/** 知识库语言（KbLanguage，首字母大写全名，默认 Chinese） */
+/** 知识库语言（KbLanguage，仅中文/英文两项，默认 Chinese；控制生成知识图谱的语言） */
 export const KB_LANGUAGES: Array<{ value: string; label: string }> = [
   { value: 'Chinese', label: '中文' },
   { value: 'English', label: '英语' },
-  { value: 'Japanese', label: '日语' },
-  { value: 'Korean', label: '韩语' },
-  { value: 'Vietnamese', label: '越南语' },
-  { value: 'French', label: '法语' },
-  { value: 'German', label: '德语' },
-  { value: 'Spanish', label: '西班牙语' },
-  { value: 'Arabic', label: '阿拉伯语' },
-  { value: 'Turkish', label: '土耳其语' },
-  { value: 'Dutch', label: '荷兰语' },
 ];
 
 /** 切片模式（DocumentChunkMode，7 种；仅 GENERAL 携带参数） */
@@ -145,10 +136,16 @@ export const AGENT_STATUS: EnumDict = {
   archived: { label: '已归档', theme: 'default' },
 };
 
-/** 模型类型（ModelType，线格式 int：1=CHAT、2=EMBEDDING） */
+/**
+ * 模型类型（ModelType，线格式 int）：
+ * 1=CHAT_LLM 对话LLM、2=CHAT_VLM 视觉对话、3=EMBEDDING 嵌入、4=RERANK 重排。
+ * 码值与后端 model-type-taxonomy 契约一致，禁止按顺序推导。
+ */
 export const MODEL_TYPES = [
-  { value: 1, label: '对话模型' },
-  { value: 2, label: '嵌入模型' },
+  { value: 1, label: '对话LLM' },
+  { value: 2, label: '视觉对话' },
+  { value: 3, label: '嵌入模型' },
+  { value: 4, label: '重排模型' },
 ] as const;
 
 /** API 格式（ApiFormat，大写枚举名，大小写敏感） */

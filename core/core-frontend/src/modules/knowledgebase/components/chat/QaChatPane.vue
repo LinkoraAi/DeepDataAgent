@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { MessagePlugin } from 'tdesign-vue-next';
 import EmptyGuide from '@/shared/components/EmptyGuide.vue';
 import { errorMessage } from '@/shared/composables/useAsync';
-import { retrieveAnswer } from '../../api/retrieval';
-import type { QueryImage } from '../../api/retrieval';
+import { streamAnswer } from '../../api/retrieval';
+import type { QueryImage, StreamAnswerHandlers } from '../../api/retrieval';
+import type { SseHandle } from '@/shared/api/sse';
 import {
   MAX_QUERY_IMAGE_BYTES,
   MAX_QUERY_IMAGES,
@@ -17,12 +18,13 @@ import { renderAnswerMarkdown } from '../../markdown';
 
 /**
  * 知识问答面板（知识库详情「知识问答」页签，单库问答）。
- * <p>同步请求形态：发送后等待答案端点返回，期间禁用输入与发送按钮并提供「生成中」气泡占位。
- * 可附最多 3 张内联图片（通路 A 附图转译），前端按后端同源口径校验：类型限
- * image/jpeg|png|gif|webp、单张解码后 ≤4MB，提交前经 FileReader 转 base64 并剥除 data: 前缀。
- * 附件零持久化——随请求发出即清空，刷新页面不保留历史。</p>
- * <p>答案形态响应只有 answer 一项：为 null 表示答案生成降级，界面 MUST 展示明确降级文案而非空白；
- * 请求失败经 MessagePlugin 直显后端原因。</p>
+ * <p>SSE 流式形态：发送后由答案端点逐步下发增量，界面按节流频率渲染 markdown，
+ * 用户可随时停止生成（关闭连接并保留已渲染内容）。可附最多 3 张内联图片（通路 A 附图转译），
+ * 前端按后端同源口径校验：类型限 image/jpeg|png|gif|webp、单张解码后 ≤4MB，
+ * 提交前经 FileReader 转 base64 并剥除 data: 前缀。附件零持久化——随请求发出即清空。</p>
+ * <p>终结事件只有两种：{@code answer.completed}（只含完整答案）与
+ * {@code answer.error}。缓存命中时没有增量、只有终结帧，界面用全文覆盖累积文本。
+ * 引用信息由模型在答案正文的 References 段中生成，前端不再展示独立来源入口。</p>
  */
 const props = defineProps<{
   /** 知识库ID */
@@ -35,16 +37,14 @@ interface QaMessage {
   id: number;
   /** 角色：用户提问 / 助手回答 */
   role: 'user' | 'assistant';
-  /** 正文（降级态为固定提示文案） */
+  /** 正文（模型输出的完整答案，含 References 段） */
   text: string;
-  /** 助手答案的 markdown 渲染结果（仅在答案到达时算一次，避免每次重渲染重复解析；用户/降级消息为空串） */
+  /** 助手答案的 markdown 渲染结果（仅在答案到达时算一次，避免每次重渲染重复解析；用户消息为空串） */
   html: string;
   /** 用户消息附图缩略预览（data URL，仅本地展示） */
   previews: QaPreview[];
   /** 助手消息是否仍在等待答案 */
   pending: boolean;
-  /** 助手消息是否为答案生成降级 */
-  degraded: boolean;
 }
 
 /** 附图缩略预览。 */
@@ -61,17 +61,20 @@ interface QaAttachment extends QueryImageDraft {
   previewUrl: string;
 }
 
-/** 答案生成降级提示（后端 answer=null 的唯一空值形态）。 */
-const DEGRADED_ANSWER_TEXT = '本次未能生成答案（模型降级）';
-
 /** 会话消息列表。 */
 const messages = ref<QaMessage[]>([]);
 /** 输入框文本。 */
 const inputText = ref('');
 /** 待发送附图。 */
 const attachments = ref<QaAttachment[]>([]);
-/** 发送中（等待同步答案）。 */
+/** 生成中（从开流到终结，含准备阶段）。 */
 const sending = ref(false);
+/** 当前答案流句柄（停止生成、切换知识库或卸载时关闭）。 */
+let streamHandle: SseHandle | null = null;
+/** markdown 增量渲染节流定时器。 */
+let renderTimer: ReturnType<typeof setTimeout> | null = null;
+/** 增量渲染节流间隔（毫秒）：避免每个 token 都触发一次全量 markdown 解析。 */
+const RENDER_THROTTLE_MS = 70;
 /** 附件读取中。 */
 const reading = ref(false);
 /** 文件选择器引用。 */
@@ -164,8 +167,8 @@ function removeAttachment(index: number): void {
   attachments.value.splice(index, 1);
 }
 
-/** 发送问题：调用答案端点并同步等待，降级与失败均有明确反馈。 */
-async function send(): Promise<void> {
+/** 发送问题：以 SSE 流式接收答案，增量按节流渲染，降级与失败均有明确反馈。 */
+function send(): void {
   if (sending.value) {
     return;
   }
@@ -180,37 +183,114 @@ async function send(): Promise<void> {
   }));
   const previews: QaPreview[] = attachments.value.map((item) => ({ name: item.name, url: item.previewUrl }));
   messages.value.push({
-    id: nextId(), role: 'user', text: question, html: '', previews, pending: false, degraded: false,
+    id: nextId(), role: 'user', text: question, html: '', previews, pending: false,
   });
   attachments.value = [];
   inputText.value = '';
   messages.value.push({
-    id: nextId(), role: 'assistant', text: '', html: '', previews: [], pending: true, degraded: false,
+    id: nextId(), role: 'assistant', text: '', html: '', previews: [], pending: true,
   });
-  const replyIndex = messages.value.length - 1;
+  const reply = messages.value[messages.value.length - 1];
   sending.value = true;
-  await scrollToListEnd();
-  try {
-    const response = await retrieveAnswer({
-      kbId: props.kbId,
-      query: question,
-      images: images.length > 0 ? images : undefined,
-    });
-    const reply = messages.value[replyIndex];
-    reply.degraded = response.answer === null;
-    reply.text = response.answer ?? DEGRADED_ANSWER_TEXT;
-    // 答案到达即一次性渲染 markdown（降级文案为我方固定提示，按纯文本展示）
-    reply.html = response.answer === null ? '' : renderAnswerMarkdown(response.answer);
-    reply.pending = false;
-  } catch (e) {
-    // 失败不保留占位气泡，原因经 MessagePlugin 直显
-    messages.value.splice(replyIndex, 1);
-    MessagePlugin.error(`问答失败：${errorMessage(e)}`);
-  } finally {
-    sending.value = false;
-    await scrollToListEnd();
-  }
+  void scrollToListEnd();
+
+  const handlers: StreamAnswerHandlers = {
+    onStarted: () => {
+      reply.pending = true;
+    },
+    onDelta: (delta) => {
+      reply.text += delta;
+      scheduleRender(reply);
+      void scrollToListEnd();
+    },
+    onCompleted: (answer) => {
+      // 缓存命中时没有增量：以终结帧全文覆盖累积文本（引用信息已在正文 References 段中）
+      reply.text = answer;
+      reply.pending = false;
+      renderNow(reply);
+      finishStream();
+    },
+    onError: (message) => {
+      // 失败不保留占位气泡，原因经 MessagePlugin 直显
+      const index = messages.value.findIndex((item) => item.id === reply.id);
+      if (index >= 0) {
+        messages.value.splice(index, 1);
+      }
+      MessagePlugin.error(`问答失败：${message}`);
+      finishStream();
+    },
+  };
+  streamHandle = streamAnswer(
+    { kbId: props.kbId, query: question, images: images.length > 0 ? images : undefined },
+    handlers,
+  );
 }
+
+/** 停止生成：关闭事件流并保留已渲染内容（不删除气泡）。 */
+function stop(): void {
+  if (streamHandle !== null) {
+    streamHandle.close();
+    streamHandle = null;
+  }
+  const last = messages.value[messages.value.length - 1];
+  if (last !== undefined && last.role === 'assistant' && last.pending) {
+    last.pending = false;
+    if (last.text === '') {
+      last.text = '已停止生成';
+    }
+    renderNow(last);
+  }
+  sending.value = false;
+}
+
+/** 结束一次流式会话（正常完成或异常终结后的公共收尾）。 */
+function finishStream(): void {
+  streamHandle = null;
+  sending.value = false;
+  void scrollToListEnd();
+}
+
+/**
+ * 节流渲染：窗口内多次增量只触发一次 markdown 解析。
+ * @param message 目标助手消息
+ */
+function scheduleRender(message: QaMessage): void {
+  if (renderTimer !== null) {
+    return;
+  }
+  renderTimer = setTimeout(() => {
+    renderTimer = null;
+    message.html = renderAnswerMarkdown(message.text);
+  }, RENDER_THROTTLE_MS);
+}
+
+/**
+ * 立即渲染（终结、停止时使用），并清除待执行的节流任务。
+ * @param message 目标助手消息
+ */
+function renderNow(message: QaMessage): void {
+  if (renderTimer !== null) {
+    clearTimeout(renderTimer);
+    renderTimer = null;
+  }
+  message.html = renderAnswerMarkdown(message.text);
+}
+
+/** 组件卸载时关闭事件流，避免后台继续消耗模型调用与更新已卸载状态。 */
+onBeforeUnmount(() => {
+  stop();
+});
+
+/** 切换知识库时关闭当前流并清空本地会话（问答不跨库保留）。 */
+watch(
+  () => props.kbId,
+  () => {
+    stop();
+    messages.value = [];
+    attachments.value = [];
+    inputText.value = '';
+  },
+);
 </script>
 
 <template>
@@ -223,11 +303,11 @@ async function send(): Promise<void> {
         class="qa-row"
         :class="message.role === 'user' ? 'qa-row--user' : 'qa-row--assistant'"
       >
-        <div class="qa-bubble" :class="{ 'qa-bubble--degraded': message.degraded }">
-          <p v-if="message.pending" class="qa-bubble__pending">正在检索并生成答案……</p>
-          <!-- 助手答案按 markdown 渲染；用户提问与降级文案保持纯文本插值（不参与 HTML 渲染） -->
+        <div class="qa-bubble">
+          <p v-if="message.pending && message.text === ''" class="qa-bubble__pending">正在检索并生成答案……</p>
+          <!-- 助手答案按 markdown 渲染（含 References 段）；用户提问保持纯文本插值（不参与 HTML 渲染） -->
           <div
-            v-else-if="message.role === 'assistant' && !message.degraded"
+            v-else-if="message.role === 'assistant'"
             class="qa-bubble__md"
             v-html="message.html"
           />
@@ -263,7 +343,7 @@ async function send(): Promise<void> {
         class="qa-pane__input"
         :disabled="sending"
         :autosize="{ minRows: 3, maxRows: 6 }"
-        placeholder="输入问题，回车换行，点击发送（同步等待答案）"
+        placeholder="输入问题，回车换行，点击发送（流式生成答案）"
       />
 
       <div class="qa-pane__actions">
@@ -276,7 +356,8 @@ async function send(): Promise<void> {
         >
           添加图片（{{ attachments.length }}/{{ MAX_QUERY_IMAGES }}）
         </t-button>
-        <t-button theme="primary" :loading="sending" :disabled="!canSend" @click="send">发送</t-button>
+        <t-button v-if="sending" theme="default" @click="stop">停止生成</t-button>
+        <t-button v-else theme="primary" :disabled="!canSend" @click="send">发送</t-button>
       </div>
 
       <input
@@ -334,11 +415,6 @@ async function send(): Promise<void> {
 
 .qa-row--user .qa-bubble {
   background: var(--td-brand-color-1, #e8f1ff);
-}
-
-.qa-bubble--degraded {
-  background: var(--td-warning-color-1, #fffbed);
-  color: var(--td-text-color-secondary, rgba(0, 0, 0, 0.6));
 }
 
 .qa-bubble__text {

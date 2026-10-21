@@ -29,7 +29,7 @@ import java.util.Set;
  * 提取的纯文本按空行分段切分为多个 TEXT 内容块。本实现只产出纯文本块、不产出坐标标签
  * （坐标抽取能力由远程 MinerU 承担），meta 统一携带 page=0 占位。输出与 MinerU 均为
  * ContentBlockVO 五类统一结构，是后续分块层对解析引擎无感知的统一输入。
- * 图片类型不在本引擎支持集内：独立图片文件由本地直读兜底的视觉直通承载
+ * 图片类型不在本引擎支持集内：LOCAL 引擎下独立图片文件由本地直读兜底的视觉直通承载
  * （{@link LocalReadFallbackDocumentParser}），不经 Tika。</p>
  * <p><b>空文本处置</b>：解析成功但未提取到任何文本（空文件 / 近空文本）时不再抛异常，
  * 而是产出含文件名的占位 TEXT 块，保证文档终态可 PROCESSED 且切片数 ≥ 1；仅真实解析失败
@@ -76,6 +76,16 @@ public class LocalTikaDocumentParser implements DocumentParser {
     @Override
     public Set<FileType> supportedTypes() {
         return SUPPORTED_TYPES;
+    }
+
+    /**
+     * 获取本引擎声明的支持类型集合（不可变副本）。
+     * <p>供解析引擎能力查询与上传校验复用，避免调用方为读取能力而构造解析器实例。</p>
+     *
+     * @return 支持的文件类型集合（不可变）
+     */
+    public static Set<FileType> declaredSupportedTypes() {
+        return Set.copyOf(SUPPORTED_TYPES);
     }
 
     /**

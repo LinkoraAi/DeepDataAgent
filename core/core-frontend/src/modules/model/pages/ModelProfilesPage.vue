@@ -10,6 +10,7 @@ import { errorMessage, useAsync } from '@/shared/composables/useAsync';
 import { usePagePagination } from '@/shared/composables/usePagination';
 import { confirmDangerous } from '@/shared/composables/useConfirm';
 import { MODEL_PROFILE_STATUS, MODEL_TYPES } from '@/shared/enums/dict';
+import { compactTime } from '@/shared/utils/time';
 import type { PaginatedResp } from '@/shared/types/api';
 import { deleteModelProfile, disableModelProfile, enableModelProfile, listModelProfiles } from '../api';
 import type { ModelProfileResponse } from '../api';
@@ -17,8 +18,8 @@ import { modelTypeLabel } from '../mappers';
 import ModelFormDrawer from '../components/ModelFormDrawer.vue';
 
 /**
- * 模型配置列表页：后端页码分页（keyword/status/page/size）+ 关键字搜索、类型与状态筛选。
- * 类型筛选说明：后端列表无 modelType 查询参数，故类型过滤作用于当前页数据（管理端量级可接受）。
+ * 模型配置列表页：后端页码分页（keyword/status/modelType/page/size）+ 关键字搜索、类型与状态筛选。
+ * 类型筛选已下推服务端（modelType 查询参数），跨页结果一致。
  */
 const rows = ref<ModelProfileResponse[]>([]);
 const keyword = ref('');
@@ -43,24 +44,16 @@ const acting = actionTask.loading;
 /** 状态筛选选项（ENABLED/DISABLED 大写枚举名） */
 const statusOptions = Object.entries(MODEL_PROFILE_STATUS).map(([value, item]) => ({ label: item.label, value }));
 
-/** 类型筛选选项（值空串表示全部；后端无 modelType 查询参数，见顶部说明） */
+/** 类型筛选选项（值空串表示全部） */
 const typeOptions: Array<{ label: string; value: number | '' }> = [
   { label: '全部类型', value: '' },
   ...MODEL_TYPES.map((item) => ({ label: item.label, value: item.value })),
 ];
 
-/** 当前页按类型过滤后的展示行 */
-const visibleRows = computed<ModelProfileResponse[]>(() =>
-  modelType.value === '' ? rows.value : rows.value.filter((item) => item.modelType === modelType.value),
-);
+/** 展示行（类型过滤已下推服务端，此处直接使用当前页数据） */
+const visibleRows = computed<ModelProfileResponse[]>(() => rows.value);
 
-/** 时间文本收敛到分钟（后端为 ISO-8601 带时区串）。 */
-function toMinute(value: string | null | undefined): string {
-  if (!value) {
-    return '-';
-  }
-  return value.slice(0, 16).replace('T', ' ');
-}
+
 
 const columns = [
   { colKey: 'displayName', title: '显示名称', width: 150, ellipsis: true },
@@ -79,6 +72,7 @@ async function load(): Promise<void> {
     listModelProfiles({
       keyword: keyword.value.trim() || undefined,
       status: status.value || undefined,
+      modelType: modelType.value === '' ? undefined : modelType.value,
       page: page.value,
       size: size.value,
     }),
@@ -250,7 +244,7 @@ onMounted(() => {
         <template #status="{ row }">
           <StatusTag :code="row.status" :dict="MODEL_PROFILE_STATUS" />
         </template>
-        <template #updatedAt="{ row }">{{ toMinute(row.updatedAt) }}</template>
+        <template #updatedAt="{ row }">{{ compactTime(row.updatedAt) }}</template>
         <template #action="{ row }">
           <RowActions :actions="rowActions(row)" @select="(key: string) => onRowAction(row, key)" />
         </template>

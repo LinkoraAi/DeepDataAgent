@@ -39,14 +39,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * 图合并领域服务（实体/关系去重合并主流程）。
  *
  * <p><b>流程</b>：批次内聚合（同名实体 / 同无向端点对关系先内存归一，自环边丢弃计数）
- * → Phase 1 实体合并（阶段内并行，Semaphore 闸门限流）→ Phase 2 关系合并。
- * 任一阶段存在失败即上抛首个异常（其余 addSuppressed），由上层任务将摄入置败（取消与失败语义）。
- * 条目级事务不回滚；残留由重解析的旧代收敛与文档删除链的收敛承担。</p>
+ * → Phase 1 实体合并 → Phase 2 关系合并。每阶段三段式：逐条目事务外计算（并行，Semaphore
+ * 闸门限流，含幂等短路、摘要与旧向量复用判定）→ 待嵌入条目批量向量化（阶段内一次
+ * {@code embedBatch}，由嵌入客户端按批量口径 16 条/批切片，发起前设取消闸门）→
+ * 逐条目写回短事务（并行，闸门限流）。任一阶段存在失败即上抛首个异常（其余 addSuppressed），
+ * 由上层任务将摄入置败（取消与失败语义）。条目级事务不回滚；残留由重解析的旧代收敛与
+ * 文档删除链的收敛承担。</p>
  *
  * <p><b>并发与锁</b>：跨实例并发的正确性由<b>数据库行锁</b>承担——每个条目形如
  * 「事务外普通读（仅为构造 LLM 上下文与复用旧向量，MUST NOT 作为写回基准）→ 事务外远程调用 →
@@ -245,10 +249,64 @@ public class GraphMergeService {
         Map<String, BatchEdge> edgeMap = aggregateEdges(ctx.kbId(),
                 normalizeEdgeEndpointNames(extractedEdges, ctx.kbId(), report), report);
         Semaphore gate = new Semaphore(ctx.params().concurrencyGate());
-        runPhase("实体合并", nodeMap.values(), node -> mergeOneEntity(ctx, node, report), gate);
-        runPhase("关系合并", edgeMap.values(), edge -> mergeOneEdge(ctx, edge, report), gate);
+        mergeEntityPhase(ctx, nodeMap.values(), report, gate);
+        mergeRelationPhase(ctx, edgeMap.values(), report, gate);
         log.info("图合并完成：kbId=[{}]，documentId=[{}]，报告=[{}]", ctx.kbId(), ctx.documentId(), report.toReport());
         return report.toReport();
+    }
+
+    /**
+     * 实体阶段三段式管线：逐条目事务外计算（并行、闸门）→ 待嵌入条目批量向量化
+     * （阶段内一次 {@code embedBatch}，短路/复用条目不消耗批量配额）→ 逐条目写回短事务。
+     * <p>写回粒度与批量改造前完全同构（逐条目 FOR UPDATE 重读、权威幂等复核、事务内取消闸门、
+     * 唯一键冲突重试）——批量只改变向量生成的远程调用形态，MUST NOT 引入批粒度写。</p>
+     *
+     * @param ctx     图合并上下文
+     * @param nodes   批内聚合后的实体集合
+     * @param report  可变计数报告
+     * @param gate    并发闸门（计算段与写回段共用）
+     */
+    private void mergeEntityPhase(GraphMergeContext ctx, Collection<EntityNode> nodes,
+                                  MutableReport report, Semaphore gate) {
+        List<EntityPending> pendings = runPhaseCollecting("实体合并-计算", nodes,
+                node -> prepareEntity(ctx, node, report), gate);
+        batchFillVectors("实体合并", pendings, ctx);
+        runPhase("实体合并-写回", pendings, pending -> finishEntity(ctx, pending, report), gate);
+    }
+
+    /**
+     * 关系阶段三段式管线（与 {@link #mergeEntityPhase} 同构）。
+     *
+     * @param ctx     图合并上下文
+     * @param edges   批内聚合后的关系集合
+     * @param report  可变计数报告
+     * @param gate    并发闸门
+     */
+    private void mergeRelationPhase(GraphMergeContext ctx, Collection<BatchEdge> edges,
+                                    MutableReport report, Semaphore gate) {
+        List<EdgePending> pendings = runPhaseCollecting("关系合并-计算", edges,
+                edge -> prepareEdge(ctx, edge, report), gate);
+        batchFillVectors("关系合并", pendings, ctx);
+        runPhase("关系合并-写回", pendings, pending -> finishEdge(ctx, pending, report), gate);
+    }
+
+    /**
+     * 批量向量化段的阶段级失败包装：与计算/写回段同一「阶段名+失败原因」消息口径
+     * （批量段由编排线程直接执行、不经 {@code runPhase} 聚合），取消异常亦收敛到该口径。
+     *
+     * @param phaseName 阶段名（如 {@code 实体合并}）
+     * @param pendings  阶段计算产物列表
+     * @param ctx       图合并上下文
+     * @param <P>       待向量化条目类型
+     * @throws IllegalStateException 批量段任一运行时失败（含取消）
+     */
+    private <P extends VectorPending> void batchFillVectors(String phaseName, List<P> pendings,
+                                                            GraphMergeContext ctx) {
+        try {
+            fillPendingVectors(pendings, ctx);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException(phaseName + "-批量向量化失败：" + e.getMessage(), e);
+        }
     }
 
     /**
@@ -414,8 +472,7 @@ public class GraphMergeService {
     }
 
     /**
-     * 阶段执行框架：条目级并行提交到摄入执行器，Semaphore 闸门限制远程调用并发；
-     * 全部完成后聚合失败——存在失败即上抛首个异常（其余 addSuppressed），实现阶段级 fail-closed。
+     * 阶段执行框架（无收集形态）：委托 {@link #runPhaseCollecting}，丢弃逐条目返回值。
      *
      * @param phaseName 阶段名（异常消息定位）
      * @param items     待处理条目
@@ -425,24 +482,48 @@ public class GraphMergeService {
      * @throws IllegalStateException 任一处理任务抛出异常
      */
     private <T> void runPhase(String phaseName, Collection<T> items, Consumer<T> operation, Semaphore gate) {
+        runPhaseCollecting(phaseName, items, item -> {
+            operation.accept(item);
+            return null;
+        }, gate);
+    }
+
+    /**
+     * 阶段执行框架（结果收集形态）：条目级并行提交到摄入执行器，Semaphore 闸门限制远程调用并发；
+     * 全部完成后聚合失败——存在失败即上抛首个异常（其余 addSuppressed），实现阶段级 fail-closed；
+     * 成功时按入参顺序返回各条目<b>非 null</b> 计算结果（返回 null 表示条目已被短路剔除）。
+     *
+     * @param phaseName 阶段名（异常消息定位）
+     * @param items     待处理条目
+     * @param operation 条目计算逻辑（内部自行持锁；返回 null 即剔除该条目）
+     * @param gate      并发闸门
+     * @param <T>       条目类型
+     * @param <R>       条目结果类型
+     * @return 非 null 结果列表（保持入参顺序）
+     * @throws IllegalStateException 任一处理任务抛出异常
+     */
+    private <T, R> List<R> runPhaseCollecting(String phaseName, Collection<T> items, Function<T, R> operation,
+                                              Semaphore gate) {
         if (ObjectUtils.isEmpty(items)) {
-            return;
+            return List.of();
         }
+        List<T> snapshot = new ArrayList<>(items);
         ConcurrentLinkedQueue<Throwable> failures = new ConcurrentLinkedQueue<>();
-        List<CompletableFuture<Void>> futures = new ArrayList<>(items.size());
-        for (T item : items) {
-            futures.add(CompletableFuture.runAsync(() -> {
+        List<CompletableFuture<R>> futures = new ArrayList<>(snapshot.size());
+        for (T item : snapshot) {
+            futures.add(CompletableFuture.supplyAsync(() -> {
                 try {
                     gate.acquire();
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     failures.add(e);
-                    return;
+                    return null;
                 }
                 try {
-                    operation.accept(item);
+                    return operation.apply(item);
                 } catch (Exception e) {
                     failures.add(e);
+                    return null;
                 } finally {
                     gate.release();
                 }
@@ -456,6 +537,73 @@ public class GraphMergeService {
                 first.addSuppressed(errors.get(i));
             }
             throw new IllegalStateException(phaseName + "失败：" + first.getMessage(), first);
+        }
+        List<R> results = new ArrayList<>(snapshot.size());
+        for (CompletableFuture<R> future : futures) {
+            R value = future.join();
+            if (ObjectUtils.isNotEmpty(value)) {
+                results.add(value);
+            }
+        }
+        return results;
+    }
+
+    /**
+     * 阶段内批量向量化：收集「待嵌入」条目（向量为 null）的内容，一次
+     * {@code embedBatch} 调用（客户端内部按嵌入批量口径切片，单批不超过 16 条），
+     * 返回列表按固定下标一一对应回填。
+     * <p>护栏：①发起批量前检查取消闸门——命中即整阶段中止，剩余批次不再发起；
+     * ②结果数量与入参不一致或含 null 槽位即快速失败（下标契约破坏属端口违约，
+     * MUST NOT 猜测回填）；③复用旧向量与短路条目不进入收集，不消耗批量配额。</p>
+     *
+     * @param pendings 阶段计算产物列表（可为空）
+     * @param ctx      图合并上下文（嵌入模型与取消检查）
+     * @param <P>      待向量化条目类型
+     */
+    private <P extends VectorPending> void fillPendingVectors(List<P> pendings, GraphMergeContext ctx) {
+        if (ObjectUtils.isEmpty(pendings)) {
+            return;
+        }
+        List<P> awaiting = new ArrayList<>(pendings.size());
+        for (P pending : pendings) {
+            if (ObjectUtils.isEmpty(pending.vector())) {
+                awaiting.add(pending);
+            }
+        }
+        if (awaiting.isEmpty()) {
+            return;
+        }
+        // 批量发起前取消闸门：命中取消时不再付出远程调用，与条目级闸门同一收敛路径
+        failIfCancelled(ctx);
+        List<String> texts = new ArrayList<>(awaiting.size());
+        for (P pending : awaiting) {
+            texts.add(pending.content());
+        }
+        List<float[]> vectors = embeddingClient.embedBatch(ctx.embeddingModelProfileId(), texts);
+        if (ObjectUtils.isEmpty(vectors) || vectors.size() != texts.size()) {
+            throw new IllegalStateException("批量向量化结果与入参下标契约不符：输入条数=[" + texts.size()
+                    + "]，结果条数=[" + (ObjectUtils.isEmpty(vectors) ? 0 : vectors.size()) + "]");
+        }
+        for (int i = 0; i < awaiting.size(); i++) {
+            float[] vector = vectors.get(i);
+            if (ObjectUtils.isEmpty(vector)) {
+                throw new IllegalStateException("批量向量化结果下标[" + i + "]为空向量");
+            }
+            awaiting.get(i).setVector(vector);
+        }
+    }
+
+    /**
+     * 取消闸门：删除链已置取消时中止当前条目（抛出自阶段级 fail-closed 统一收敛）。
+     * <p>调用点有两处：条目入口（尽早停止摘要/向量化远程调用）与写回事务内
+     * （关闭检查与提交之间的竞态窗口，保证删除后不再产生图谱行）。</p>
+     *
+     * @param ctx 图合并上下文
+     * @throws IllegalStateException 已取消
+     */
+    private static void failIfCancelled(GraphMergeContext ctx) {
+        if (ctx.isCancelled()) {
+            throw new IllegalStateException("摄入已取消，图合并中止");
         }
     }
 
@@ -509,19 +657,22 @@ public class GraphMergeService {
     }
 
     /**
-     * 合并单个实体（1 把实体锁 → 事务外普通读构造上下文 → 事务外摘要与向量化 → 写回事务内加锁读-改-写）。
-     * <p>写回事务内的加锁读是账本与描述的<b>唯一写回基准</b>；事务外读到的是过期快照，仅用于给 LLM
-     * 提供既有描述上下文与判断旧向量可否复用，其结果 MUST NOT 参与写回值的计算——否则并发合并下
-     * 后写者会以过期基准覆盖先写者的贡献。</p>
-     * <p><b>同事务写入前提</b>：实体图行与其向量账本行在同一写回事务内 upsert，
-     * 不存在上游 LightRAG 顾虑的「账本跑在边前面」的先后偏差，幂等判定与账本收缩可放心以
-     * 向量账本为唯一权威。</p>
+     * 实体计算段（三段式第 1 段，事务外）：条目入口闸门 → 实体锁内普通读快照 → 幂等短路 →
+     * 摘要 → content 生成 → 旧向量复用判定，产出写回段所需的不可变中间态。
+     * <p>短路条目计入 {@code entitiesSkipped} 并返回 {@code null}（被阶段收集器剔除，
+     * 不进批量嵌入、不写回）；需新嵌入的条目以 null 向量入册，由
+     * {@link #fillPendingVectors} 阶段批量回填。</p>
+     * <p>事务外读到的是过期快照，仅用于给 LLM 提供既有描述上下文与判断旧向量可否复用，
+     * 其结果 MUST NOT 参与写回值的计算——否则并发合并下后写者会以过期基准覆盖先写者的贡献。</p>
      *
      * @param ctx      图合并上下文
      * @param incoming 聚合后的本批实体
      * @param report   可变计数报告
+     * @return 写回中间态；短路时返回 null
      */
-    private void mergeOneEntity(GraphMergeContext ctx, EntityNode incoming, MutableReport report) {
+    private EntityPending prepareEntity(GraphMergeContext ctx, EntityNode incoming, MutableReport report) {
+        // 条目入口闸门：删除链已置取消时不再进入摘要/向量化，更不写回
+        failIfCancelled(ctx);
         String name = incoming.entityName();
         ReentrantLock lock = lockFor(entityLockKey(ctx.kbId(), name));
         lock.lock();
@@ -535,7 +686,7 @@ public class GraphMergeService {
             // 权威判定仍在写回事务内以加锁读值重做（此处仅为避免远程调用，不参与任何写回值计算）
             if (isEntityIdempotentShortCircuit(contextNode, contextVector, incoming)) {
                 report.entitiesSkipped.incrementAndGet();
-                return;
+                return null;
             }
             EntityNode contextMerged = ObjectUtils.isEmpty(contextNode) ? incoming : contextNode.merge(incoming);
             String summary = descriptionSummarizer.summarize(ctx, name, contextMerged.properties().entityType(),
@@ -543,10 +694,39 @@ public class GraphMergeService {
             String descriptionCandidate = StringUtils.defaultIfBlank(summary, contextMerged.effectiveDescription());
             String content = tokenCounter.truncate(EntityInfoVector.buildContent(name, descriptionCandidate),
                     params.embeddingTokenLimit());
-            float[] vector = reuseEntityVector(contextVector, content, ctx);
-            // 写回事务：加锁重读当前账本 → 以当前值重算 → upsert（行锁覆盖整个读-改-写窗口）
+            return new EntityPending(incoming, name, summary, content, reuseEntityVector(contextVector, content));
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * 实体写回段（三段式第 3 段）：实体锁内执行写回事务——加锁重读当前账本 → 以当前值重算 →
+     * 图行与向量行同事务 upsert（行锁覆盖整个读-改-写窗口）。
+     * <p><b>同事务写入前提</b>：实体图行与其向量账本行在同一写回事务内 upsert，
+     * 不存在上游 LightRAG 顾虑的「账本跑在边前面」的先后偏差，幂等判定与账本收缩可放心以
+     * 向量账本为唯一权威。批量改造 MUST NOT 拆分该事务。</p>
+     *
+     * @param ctx     图合并上下文
+     * @param pending 计算段产物（向量已由批量段回填或为复用旧向量）
+     * @param report  可变计数报告
+     */
+    private void finishEntity(GraphMergeContext ctx, EntityPending pending, MutableReport report) {
+        // 写回段入口闸门：计算与批量期间删除链可能已置取消，此时不再付出写回
+        failIfCancelled(ctx);
+        String name = pending.name();
+        EntityNode incoming = pending.incoming();
+        String summary = pending.summary();
+        String content = pending.content();
+        float[] vector = pending.vector();
+        ReentrantLock lock = lockFor(entityLockKey(ctx.kbId(), name));
+        lock.lock();
+        try {
+            GraphMergeParams params = ctx.params();
             AtomicBoolean skipped = new AtomicBoolean(false);
             runWriteTransactionWithRetry(() -> {
+                // 写回事务内二次闸门：关闭「条目入口检查通过、删除链随后置态」的竞态窗口
+                failIfCancelled(ctx);
                 skipped.set(false);
                 EntityNode current = entityNodeRepository.lockByKbIdAndNames(ctx.kbId(), List.of(name))
                         .stream().findFirst().orElse(null);
@@ -590,118 +770,137 @@ public class GraphMergeService {
     }
 
     /**
-     * 合并单条关系（1 把边锁 → 事务外普通读构造上下文 → 事务外摘要与向量化
-     * → 写回事务内加锁读-改-写）。
-     * <p>关系合并不再触碰实体行（不补建占位端点、不回补端点账本），仅持边锁。</p>
+     * 关系计算段（三段式第 1 段，事务外）：条目入口闸门 → 边锁内普通读快照 → 幂等短路 →
+     * 摘要 → edgeContent 生成 → 旧向量复用判定，产出写回段所需的不可变中间态。
+     * <p>关系合并不再触碰实体行（不补建占位端点、不回补端点账本），仅持边锁；
+     * 短路条目计入 {@code relationsSkipped} 并返回 {@code null}。</p>
      *
      * @param ctx      图合并上下文
      * @param incoming 批内聚合后的本批关系（骨架方向恒为归一方向 + 贡献记录全额列表）
      * @param report   可变计数报告
+     * @return 写回中间态；短路时返回 null
      */
-    private void mergeOneEdge(GraphMergeContext ctx, BatchEdge incoming, MutableReport report) {
+    private EdgePending prepareEdge(GraphMergeContext ctx, BatchEdge incoming, MutableReport report) {
+        // 条目入口闸门：删除链已置取消时不再进入摘要/向量化，更不写回
+        failIfCancelled(ctx);
         List<String> pair = incoming.edge().normalizedPair();
         ReentrantLock lock = lockFor(edgeLockKey(ctx.kbId(), pair.get(0), pair.get(1)));
         lock.lock();
         try {
-            mergeOneEdgeLocked(ctx, incoming, pair, report);
+            GraphMergeParams params = ctx.params();
+            RelationEdge skeleton = incoming.edge();
+            List<RelationContribution> records = incoming.records();
+            // 事务外普通读（不加锁）：仅供构造 LLM 摘要上下文、复用旧向量与幂等重放快路径，
+            // MUST NOT 作为写回基准
+            List<RelationEdge> contextRows = relationEdgeRepository.findByKbIdAndUnorderedPair(
+                    ctx.kbId(), pair.get(0), pair.get(1));
+            RelationInfoVector contextVector = relationInfoVectorRepository.findByKbIdAndUnorderedPair(
+                    ctx.kbId(), pair.get(0), pair.get(1)).orElse(null);
+            List<Long> batchSources = distinctNonNullSources(records);
+            // 幂等重放快路径：事务外快照已满足全部短路条件 → 直接跳过，不付出无谓的 LLM 摘要与 embedding；
+            // 权威判定仍在写回事务内以加锁读值重做（此处仅为避免远程调用，不参与任何写回值计算）
+            if (isRelationIdempotentShortCircuit(skeleton, contextRows, contextVector, records, batchSources)) {
+                report.relationsSkipped.incrementAndGet();
+                return null;
+            }
+            RelationEdge contextMerged = coalesceEdge(skeleton, contextRows, records,
+                    ObjectUtils.isEmpty(contextVector) ? List.of() : contextVector.chunkIds());
+            List<String> descCandidates = new ArrayList<>();
+            for (RelationEdge row : contextRows) {
+                addIfPresent(descCandidates, row.properties().description());
+            }
+            addIfPresent(descCandidates, skeleton.properties().description());
+            String summary = descriptionSummarizer.summarize(ctx,
+                    pair.get(0) + RELATION_NAME_CONNECTOR + pair.get(1),
+                    String.join(",", safeKeywordsOf(contextMerged)), descCandidates);
+            String descriptionCandidate = StringUtils.defaultIfBlank(summary, contextMerged.properties().description());
+            String edgeContent = tokenCounter.truncate(RelationInfoVector.buildContent(
+                    contextMerged.properties().keywords(), pair.get(0), pair.get(1), descriptionCandidate),
+                    params.embeddingTokenLimit());
+            return new EdgePending(incoming, pair, batchSources, summary, edgeContent,
+                    reuseRelationVector(contextVector, edgeContent));
         } finally {
             lock.unlock();
         }
     }
 
     /**
-     * 关系合并主体（已持有边锁）。
-     * <p>三段链：事务外普通读（仅构造 LLM 上下文）→ 事务外摘要与向量化 →
-     * 写回事务内「加锁重读当前边行与边向量账本 → 以当前值重算 weight 与账本 → 写回」。
-     * 权重累加的过滤基准恒为<strong>写回事务内加锁读到</strong>的向量账本 chunk_ids
+     * 关系写回段（三段式第 3 段，已持有边锁的读-改-写）：写回事务内
+     * 「加锁重读当前边行与边向量账本 → 以当前值重算 weight 与账本 → 图行与向量行同事务写回」。
+     * <p>权重累加的过滤基准恒为<strong>写回事务内加锁读到</strong>的向量账本 chunk_ids
      * （与幂等短路同一份依据）；公式：{@code keepRow + 批骨架 + 批记录全额}，
      * 新边按「空账本骨架（weight=0、账本=[]）+ 批记录全额」起步——重喂同一批记录增量为 0（幂等）。
      * 不再折叠反向残留伪记录（方向已在抽取聚合出口归一，反向行无从产生）。</p>
      * <p><b>同事务写入前提</b>：关系图行与其向量账本行在同一写回事务内 upsert，
      * 不存在上游 LightRAG 顾虑的「账本跑在图边前面」（chunks 已写、边未写的部分写入），
-     * 故过滤基准可放心取向量账本而非图行展示列。</p>
+     * 故过滤基准可放心取向量账本而非图行展示列。批量改造 MUST NOT 拆分该事务。</p>
      *
-     * @param ctx      图合并上下文
-     * @param incoming 批内聚合后的本批关系
-     * @param pair     无向归一端点对（字典序）
-     * @param report   可变计数报告
+     * @param ctx     图合并上下文
+     * @param pending 计算段产物（向量已由批量段回填或为复用旧向量）
+     * @param report  可变计数报告
      */
-    private void mergeOneEdgeLocked(GraphMergeContext ctx, BatchEdge incoming, List<String> pair,
-                                    MutableReport report) {
-        GraphMergeParams params = ctx.params();
-        RelationEdge skeleton = incoming.edge();
-        List<RelationContribution> records = incoming.records();
-        // 事务外普通读（不加锁）：仅供构造 LLM 摘要上下文、复用旧向量与幂等重放快路径，
-        // MUST NOT 作为写回基准
-        List<RelationEdge> contextRows = relationEdgeRepository.findByKbIdAndUnorderedPair(
-                ctx.kbId(), pair.get(0), pair.get(1));
-        RelationInfoVector contextVector = relationInfoVectorRepository.findByKbIdAndUnorderedPair(
-                ctx.kbId(), pair.get(0), pair.get(1)).orElse(null);
-        List<Long> batchSources = distinctNonNullSources(records);
-        // 幂等重放快路径：事务外快照已满足全部短路条件 → 直接跳过，不付出无谓的 LLM 摘要与 embedding；
-        // 权威判定仍在写回事务内以加锁读值重做（此处仅为避免远程调用，不参与任何写回值计算）
-        if (isRelationIdempotentShortCircuit(skeleton, contextRows, contextVector, records, batchSources)) {
-            report.relationsSkipped.incrementAndGet();
-            return;
-        }
-        RelationEdge contextMerged = coalesceEdge(skeleton, contextRows, records,
-                ObjectUtils.isEmpty(contextVector) ? List.of() : contextVector.chunkIds());
-        List<String> descCandidates = new ArrayList<>();
-        for (RelationEdge row : contextRows) {
-            addIfPresent(descCandidates, row.properties().description());
-        }
-        addIfPresent(descCandidates, skeleton.properties().description());
-        String summary = descriptionSummarizer.summarize(ctx,
-                pair.get(0) + RELATION_NAME_CONNECTOR + pair.get(1),
-                String.join(",", safeKeywordsOf(contextMerged)), descCandidates);
-        String descriptionCandidate = StringUtils.defaultIfBlank(summary, contextMerged.properties().description());
-        String edgeContent = tokenCounter.truncate(RelationInfoVector.buildContent(
-                contextMerged.properties().keywords(), pair.get(0), pair.get(1), descriptionCandidate),
-                params.embeddingTokenLimit());
-        float[] edgeVector = reuseRelationVector(contextVector, edgeContent, ctx);
-        // 写回事务：加锁重读当前边行与边向量账本 → 以当前值重算 → 写回（行锁覆盖整个读-改-写窗口）
-        AtomicBoolean skipped = new AtomicBoolean(false);
-        runWriteTransactionWithRetry(() -> {
-            skipped.set(false);
-            List<RelationEdge> rows = relationEdgeRepository.lockByKbIdAndUnorderedPair(
-                    ctx.kbId(), pair.get(0), pair.get(1));
-            RelationInfoVector currentVector = relationInfoVectorRepository.lockByKbIdAndUnorderedPair(
-                    ctx.kbId(), pair.get(0), pair.get(1)).orElse(null);
-            List<Long> currentLedgerChunkIds = ObjectUtils.isEmpty(currentVector) ? List.of()
-                    : currentVector.chunkIds();
-            // 幂等短路：基准为加锁读到的当前账本（对事务外快路径的权威复核）
-            if (isRelationIdempotentShortCircuit(skeleton, rows, currentVector, records, batchSources)) {
-                skipped.set(true);
-                return;
+    private void finishEdge(GraphMergeContext ctx, EdgePending pending, MutableReport report) {
+        // 写回段入口闸门：计算与批量期间删除链可能已置取消，此时不再付出写回
+        failIfCancelled(ctx);
+        BatchEdge incoming = pending.incoming();
+        List<String> pair = pending.pair();
+        List<Long> batchSources = pending.batchSources();
+        String summary = pending.summary();
+        String edgeContent = pending.content();
+        float[] edgeVector = pending.vector();
+        ReentrantLock lock = lockFor(edgeLockKey(ctx.kbId(), pair.get(0), pair.get(1)));
+        lock.lock();
+        try {
+            GraphMergeParams params = ctx.params();
+            RelationEdge skeleton = incoming.edge();
+            List<RelationContribution> records = incoming.records();
+            AtomicBoolean skipped = new AtomicBoolean(false);
+            runWriteTransactionWithRetry(() -> {
+                // 写回事务内二次闸门：关闭「条目入口检查通过、删除链随后置态」的竞态窗口
+                failIfCancelled(ctx);
+                skipped.set(false);
+                List<RelationEdge> rows = relationEdgeRepository.lockByKbIdAndUnorderedPair(
+                        ctx.kbId(), pair.get(0), pair.get(1));
+                RelationInfoVector currentVector = relationInfoVectorRepository.lockByKbIdAndUnorderedPair(
+                        ctx.kbId(), pair.get(0), pair.get(1)).orElse(null);
+                List<Long> currentLedgerChunkIds = ObjectUtils.isEmpty(currentVector) ? List.of()
+                        : currentVector.chunkIds();
+                // 幂等短路：基准为加锁读到的当前账本（对事务外快路径的权威复核）
+                if (isRelationIdempotentShortCircuit(skeleton, rows, currentVector, records, batchSources)) {
+                    skipped.set(true);
+                    return;
+                }
+                RelationEdge merged = coalesceEdge(skeleton, rows, records, currentLedgerChunkIds);
+                String finalDescription = StringUtils.defaultIfBlank(summary, merged.properties().description());
+                // 账本与展示列分叉：向量账本恒取截断前的全量来源并集；截断只作用于图行展示列
+                List<Long> fullEdgeSources = merged.properties().sourceIds();
+                List<Long> keptEdgeSources = truncateSourceIds(fullEdgeSources, params, ctx.kbId(),
+                        OBJECT_LABEL_RELATION + pair.get(0) + EDGE_KEY_SEPARATOR + pair.get(1) + OBJECT_LABEL_SUFFIX);
+                // 写入方向恒取批内归一方向（字典序 pair），MUST NOT 沿用 merged（可能取自历史反向行）的方向；
+                // 方向仅是端点字段顺序，properties 描述「这一对」，对调无损（与已退役的有损折叠机制不同）——
+                // 属性（权重/描述/关键词/来源账本/展示来源）仍取合并结果。
+                // 来源文件路径列表落库前归一：去重保序 + 上限截断 + 溢出占位（与重建路径共用同一口径）
+                List<String> finalEdgeFilePaths = GraphSourceFilePaths.normalize(merged.properties().filePaths(),
+                        params.sourceFilePathsLimit(), params.sourceFilePathsPlaceholder());
+                RelationEdge finalEdge = new RelationEdge(ctx.kbId(), pair.get(0), pair.get(1),
+                        new RelationProperties(merged.properties().weight(), finalDescription,
+                                merged.properties().keywords(), keptEdgeSources, finalEdgeFilePaths));
+                List<Long> mergedEdgeChunkIds = ObjectUtils.isEmpty(currentVector) ? fullEdgeSources
+                        : unionIds(currentVector.chunkIds(), fullEdgeSources);
+                RelationInfoVector finalEdgeVector = RelationInfoVector.create(ctx.kbId(), pair.get(0), pair.get(1),
+                        edgeContent, mergedEdgeChunkIds, edgeVector);
+                relationEdgeRepository.upsertAll(List.of(finalEdge), ctx.operator());
+                relationInfoVectorRepository.upsertAll(List.of(finalEdgeVector), ctx.operator());
+            }, OBJECT_LABEL_RELATION + pair.get(0) + EDGE_KEY_SEPARATOR + pair.get(1) + OBJECT_LABEL_SUFFIX);
+            if (skipped.get()) {
+                report.relationsSkipped.incrementAndGet();
+            } else {
+                report.relationsWritten.incrementAndGet();
+                // 提交后收口（关系侧）：仅在确有写入时以「知识库 + 归一端点对」身份触发，异常降级同上。
+                reconcileRelationSafely(ctx, pair, report);
             }
-            RelationEdge merged = coalesceEdge(skeleton, rows, records, currentLedgerChunkIds);
-            String finalDescription = StringUtils.defaultIfBlank(summary, merged.properties().description());
-            // 账本与展示列分叉：向量账本恒取截断前的全量来源并集；截断只作用于图行展示列
-            List<Long> fullEdgeSources = merged.properties().sourceIds();
-            List<Long> keptEdgeSources = truncateSourceIds(fullEdgeSources, params, ctx.kbId(),
-                    OBJECT_LABEL_RELATION + pair.get(0) + EDGE_KEY_SEPARATOR + pair.get(1) + OBJECT_LABEL_SUFFIX);
-            // 写入方向恒取批内归一方向（字典序 pair），MUST NOT 沿用 merged（可能取自历史反向行）的方向；
-            // 方向仅是端点字段顺序，properties 描述「这一对」，对调无损（与已退役的有损折叠机制不同）——
-            // 属性（权重/描述/关键词/来源账本/展示来源）仍取合并结果。
-            // 来源文件路径列表落库前归一：去重保序 + 上限截断 + 溢出占位（与重建路径共用同一口径）
-            List<String> finalEdgeFilePaths = GraphSourceFilePaths.normalize(merged.properties().filePaths(),
-                    params.sourceFilePathsLimit(), params.sourceFilePathsPlaceholder());
-            RelationEdge finalEdge = new RelationEdge(ctx.kbId(), pair.get(0), pair.get(1),
-                    new RelationProperties(merged.properties().weight(), finalDescription,
-                            merged.properties().keywords(), keptEdgeSources, finalEdgeFilePaths));
-            List<Long> mergedEdgeChunkIds = ObjectUtils.isEmpty(currentVector) ? fullEdgeSources
-                    : unionIds(currentVector.chunkIds(), fullEdgeSources);
-            RelationInfoVector finalEdgeVector = RelationInfoVector.create(ctx.kbId(), pair.get(0), pair.get(1),
-                    edgeContent, mergedEdgeChunkIds, edgeVector);
-            relationEdgeRepository.upsertAll(List.of(finalEdge), ctx.operator());
-            relationInfoVectorRepository.upsertAll(List.of(finalEdgeVector), ctx.operator());
-        }, OBJECT_LABEL_RELATION + pair.get(0) + EDGE_KEY_SEPARATOR + pair.get(1) + OBJECT_LABEL_SUFFIX);
-        if (skipped.get()) {
-            report.relationsSkipped.incrementAndGet();
-        } else {
-            report.relationsWritten.incrementAndGet();
-            // 提交后收口（关系侧）：仅在确有写入时以「知识库 + 归一端点对」身份触发，异常降级同上。
-            reconcileRelationSafely(ctx, pair, report);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -789,7 +988,7 @@ public class GraphMergeService {
      * 从图边行集合中选出保留方向的既有行：方向已在抽取聚合出口归一后，同一无向端点对至多
      * 命中一行；优先与批骨架同向者（等值即归一序），兼容读取历史多行时取首行。
      * <p><b>读侧语义，与写入方向无关</b>：本方法的职责仅是「让历史反向行的属性也参与合并」
-     * （读侧不丢属性）；写回最终方向恒由 {@link #mergeOneEdgeLocked} 取批内归一方向 {@code pair}
+     * （读侧不丢属性）；写回最终方向恒由 {@link #finishEdge} 取批内归一方向 {@code pair}
      * 决定（见 graph-write-consistency D7），不沿用此处选中行的方向。</p>
      *
      * @param skeleton 批内聚合后的边骨架
@@ -860,6 +1059,211 @@ public class GraphMergeService {
          */
         BatchEdge {
             records = ObjectUtils.isEmpty(records) ? new ArrayList<>() : records;
+        }
+    }
+
+    /**
+     * 待向量化条目契约（三段式批量段共用）：{@code content} 为嵌入输入内容，
+     * {@code vector} 为 null 表示「待批量嵌入」、非 null 表示「复用既存向量不消耗批量配额」。
+     */
+    private interface VectorPending {
+
+        /**
+         * 待向量化内容（已按 embedding token 上限截断）。
+         *
+         * @return 向量化内容
+         */
+        String content();
+
+        /**
+         * 当前向量槽位。
+         *
+         * @return 可复用的旧向量；待批量嵌入时为 null
+         */
+        float[] vector();
+
+        /**
+         * 回填批量段取回的向量。
+         *
+         * @param vector 向量分量数组（非空）
+         */
+        void setVector(float[] vector);
+    }
+
+    /**
+     * 实体阶段「计算 → 写回」中间态：事务外算得的不可变值（本批实体、实体名、
+     * 摘要候选、向量化内容）+ 可变向量槽（复用旧向量或由 {@code fillPendingVectors} 批量回填）。
+     */
+    private static final class EntityPending implements VectorPending {
+
+        /** 聚合后的本批实体（写回段的 incoming 基准） */
+        private final EntityNode incoming;
+
+        /** 实体名（条目身份） */
+        private final String name;
+
+        /** LLM 摘要候选（可为空串/null——写回段以 defaultIfBlank 回落合并描述） */
+        private final String summary;
+
+        /** 向量化内容（已截断） */
+        private final String content;
+
+        /** 向量槽：null=待批量嵌入，非 null=复用既存向量 */
+        private float[] vector;
+
+        /**
+         * 构造实体中间态。
+         *
+         * @param incoming 聚合后的本批实体
+         * @param name     实体名
+         * @param summary  LLM 摘要候选
+         * @param content  向量化内容
+         * @param vector   复用的旧向量（无则 null）
+         */
+        EntityPending(EntityNode incoming, String name, String summary, String content, float[] vector) {
+            this.incoming = incoming;
+            this.name = name;
+            this.summary = summary;
+            this.content = content;
+            this.vector = vector;
+        }
+
+        /**
+         * 聚合后的本批实体。
+         *
+         * @return 本批实体
+         */
+        EntityNode incoming() {
+            return incoming;
+        }
+
+        /**
+         * 实体名。
+         *
+         * @return 实体名
+         */
+        String name() {
+            return name;
+        }
+
+        /**
+         * LLM 摘要候选。
+         *
+         * @return 摘要候选（可空）
+         */
+        String summary() {
+            return summary;
+        }
+
+        @Override
+        public String content() {
+            return content;
+        }
+
+        @Override
+        public float[] vector() {
+            return vector;
+        }
+
+        @Override
+        public void setVector(float[] vector) {
+            this.vector = vector;
+        }
+    }
+
+    /**
+     * 关系阶段「计算 → 写回」中间态（与 {@link EntityPending} 同构）：不可变的计算值
+     * （批内聚合关系、归一端点对、本批非空来源、摘要候选、向量化内容）+ 可变向量槽。
+     */
+    private static final class EdgePending implements VectorPending {
+
+        /** 批内聚合后的本批关系（骨架 + 贡献记录） */
+        private final BatchEdge incoming;
+
+        /** 无向归一端点对（字典序） */
+        private final List<String> pair;
+
+        /** 本批非空来源（幂等短路与计权过滤的入参侧数据） */
+        private final List<Long> batchSources;
+
+        /** LLM 摘要候选（可为空串/null） */
+        private final String summary;
+
+        /** 向量化内容（已截断） */
+        private final String content;
+
+        /** 向量槽：null=待批量嵌入，非 null=复用既存向量 */
+        private float[] vector;
+
+        /**
+         * 构造关系中间态。
+         *
+         * @param incoming     批内聚合后的本批关系
+         * @param pair         无向归一端点对
+         * @param batchSources 本批非空来源
+         * @param summary      LLM 摘要候选
+         * @param content      向量化内容
+         * @param vector       复用的旧向量（无则 null）
+         */
+        EdgePending(BatchEdge incoming, List<String> pair, List<Long> batchSources, String summary,
+                    String content, float[] vector) {
+            this.incoming = incoming;
+            this.pair = pair;
+            this.batchSources = batchSources;
+            this.summary = summary;
+            this.content = content;
+            this.vector = vector;
+        }
+
+        /**
+         * 批内聚合后的本批关系。
+         *
+         * @return 本批关系
+         */
+        BatchEdge incoming() {
+            return incoming;
+        }
+
+        /**
+         * 无向归一端点对。
+         *
+         * @return 端点对（字典序）
+         */
+        List<String> pair() {
+            return pair;
+        }
+
+        /**
+         * 本批非空来源。
+         *
+         * @return 来源列表
+         */
+        List<Long> batchSources() {
+            return batchSources;
+        }
+
+        /**
+         * LLM 摘要候选。
+         *
+         * @return 摘要候选（可空）
+         */
+        String summary() {
+            return summary;
+        }
+
+        @Override
+        public String content() {
+            return content;
+        }
+
+        @Override
+        public float[] vector() {
+            return vector;
+        }
+
+        @Override
+        public void setVector(float[] vector) {
+            this.vector = vector;
         }
     }
 
@@ -1058,35 +1462,36 @@ public class GraphMergeService {
     }
 
     /**
-     * 实体向量复用：旧行内容与本次目标内容一致时复用旧向量，省去一次 embedding 远程调用。
+     * 实体向量复用判定：旧行内容与本次目标内容一致时复用旧向量，省去一次 embedding 远程调用。
+     * <p>批量改造后本方法 MUST NOT 发起远程调用：不一致时返回 {@code null}
+     * 表示「待阶段批量嵌入」，由 {@link #fillPendingVectors} 统一补向量。</p>
      *
      * @param existing 旧向量行（可为 null）
      * @param content  本次向量化内容
-     * @param ctx      图合并上下文
-     * @return 向量分量数组
+     * @return 可复用的旧向量；需新嵌入时返回 null
      */
-    private float[] reuseEntityVector(EntityInfoVector existing, String content, GraphMergeContext ctx) {
+    private static float[] reuseEntityVector(EntityInfoVector existing, String content) {
         if (ObjectUtils.isNotEmpty(existing) && ObjectUtils.isNotEmpty(existing.vector())
                 && StringUtils.equals(existing.content(), content)) {
             return existing.vector();
         }
-        return embeddingClient.embed(ctx.embeddingModelProfileId(), content);
+        return null;
     }
 
     /**
-     * 关系向量复用：旧行内容与本次目标内容一致时复用旧向量。
+     * 关系向量复用判定：旧行内容与本次目标内容一致时复用旧向量，否则返回 {@code null}
+     * 交由阶段批量嵌入统一补向量（远程调用约束同 {@link #reuseEntityVector}）。
      *
      * @param existing 旧向量行（可为 null）
      * @param content  本次向量化内容
-     * @param ctx      图合并上下文
-     * @return 向量分量数组
+     * @return 可复用的旧向量；需新嵌入时返回 null
      */
-    private float[] reuseRelationVector(RelationInfoVector existing, String content, GraphMergeContext ctx) {
+    private static float[] reuseRelationVector(RelationInfoVector existing, String content) {
         if (ObjectUtils.isNotEmpty(existing) && ObjectUtils.isNotEmpty(existing.vector())
                 && StringUtils.equals(existing.content(), content)) {
             return existing.vector();
         }
-        return embeddingClient.embed(ctx.embeddingModelProfileId(), content);
+        return null;
     }
 
     /**

@@ -77,6 +77,17 @@ public interface DocumentRepository {
     List<Long> findIdsByKbId(Long kbId, int limit);
 
     /**
+     * 整库删除受理：把库内非终态文档批量置为 {@code DELETING}（单条条件 UPDATE）。
+     * <p>与知识库 {@code ACTIVE → DELETING} 同事务执行：排队中的任务在出队领取时
+     * （PENDING → PROCESSING）即失败放弃，解析中的任务在阶段边界状态检查处自灭，
+     * 从源头保证「删库后不再有摄入写入」。</p>
+     *
+     * @param kbId 知识库ID（可空，空返回 0）
+     * @return 受影响行数
+     */
+    int markNonTerminalDeletingByKbId(Long kbId);
+
+    /**
      * 按 ID 集合批量物理删除文档（标准 deleteByIds，无 @TableLogic，行消失即「已删除」）。
      *
      * @param ids 文档 ID 集合（空集合直接返回 0）

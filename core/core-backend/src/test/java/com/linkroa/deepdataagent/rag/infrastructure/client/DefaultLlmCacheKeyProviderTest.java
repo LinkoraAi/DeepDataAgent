@@ -1,6 +1,7 @@
 package com.linkroa.deepdataagent.rag.infrastructure.client;
 
 import com.linkroa.deepdataagent.rag.domain.enums.CacheType;
+import com.linkroa.deepdataagent.rag.domain.port.LlmCallContext;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatRequest;
 import com.linkroa.deepdataagent.rag.domain.port.LlmImage;
 import org.junit.jupiter.api.Test;
@@ -59,6 +60,28 @@ class DefaultLlmCacheKeyProviderTest {
     /** 被测键计算器（构造注入 Mock 解析端口） */
     @InjectMocks
     private DefaultLlmCacheKeyProvider provider;
+
+    /**
+     * 场景：同一提示词，一个携带调用上下文、另一个不携带。
+     * 预期：缓存键逐字节一致——调用上下文仅用于日志归因，不参与键计算。
+     */
+    @Test
+    void should_ignoreCallContext_when_cacheKeyOf_given_samePromptDifferentContext() {
+        // given
+        stubModelResolve();
+        LlmChatRequest withoutContext = new LlmChatRequest(KB_ID, PROFILE_ID, "SYS", "CTX PROMPT", null,
+                CacheType.EXTRACT);
+        LlmChatRequest withContext = new LlmChatRequest(KB_ID, PROFILE_ID, "SYS", "CTX PROMPT", null,
+                CacheType.EXTRACT, List.of(), null,
+                LlmCallContext.of(LlmCallContext.STAGE_EXTRACT, 9L, 3, 1));
+
+        // when
+        String baselineKey = provider.cacheKeyOf(withoutContext);
+        String contextualKey = provider.cacheKeyOf(withContext);
+
+        // then
+        assertEquals(baselineKey, contextualKey, "调用上下文不得参与缓存键计算");
+    }
 
     /**
      * 场景：纯文本请求且温度为空（引入图片维度与归因字段前的既有形态）。

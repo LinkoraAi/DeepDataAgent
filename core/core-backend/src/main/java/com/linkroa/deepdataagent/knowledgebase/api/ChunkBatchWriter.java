@@ -32,7 +32,7 @@ import java.util.Map;
  * {@link #markProcessed} 成功终态（PROCESSING → PROCESSED，仅由管线收尾写入）、
  * {@link #markFailed} 失败回写（仅 PROCESSING 生效）、
  * {@link #failNonTerminal(String) 非终态批量收敛}（PENDING / PROCESSING → FAILED；
- * 保留能力，启动恢复已改为按本实例在飞注册表键逐条一致性校验收敛，本方法当前无生产调用点）。
+ * 启动恢复的数据库兜底路径，无条件扫尾，不依赖在飞注册表凭据）。
  * {@link #replaceForDocument} 要求文档处于 PROCESSING，脱离处理中状态的迟到回写在数据库层被拒。</p>
  */
 public interface ChunkBatchWriter {
@@ -96,11 +96,10 @@ public interface ChunkBatchWriter {
     /**
      * 非终态批量收敛：把全部未删除且状态为非终态（{@code PENDING / PROCESSING}）的文档一次性置为
      * {@code FAILED} 并写入失败原因。
-     * <p><b>保留能力，当前无生产调用点</b>：启动恢复链路已改按本实例在飞注册表键逐条读取残留，
-     * 经数据库权威状态一致性校验后条件置态，本方法不再被启动链路使用，也不再自称「启动清理专用」。
-     * 原崩溃残留收敛语义保留：进程崩溃重启后内存队列已丢失，DB 中冻结的「已入队未开始」与「在飞」
-     * 文档均无对应任务，统一以本方法收敛为 FAILED，不重建队列、不自动重跑，由用户手动重新解析。
-     * 批量单条 UPDATE，天然幂等（无命中影响 0 行）。</p>
+     * <p><b>生产调用点：启动恢复的数据库兜底路径</b>——进程崩溃重启或进程被强杀后内存队列已丢失，
+     * DB 中冻结的「已入队未开始」与「在飞」文档均无对应任务；本方法无条件扫尾置 {@code FAILED}，
+     * 覆盖在飞注册表键缺失（优雅停机清键 / 缓存数据丢失 / 强杀）等一切凭据丢失场景。
+     * 不重建队列、不自动重跑，由用户手动重新解析。批量单条 UPDATE，天然幂等（无命中影响 0 行）。</p>
      *
      * @param errorMessage 失败原因描述（写入 {@code document.errorMessage}），空白时抛业务异常
      * @return 实际置为 FAILED 的文档数（0 表示无残留）

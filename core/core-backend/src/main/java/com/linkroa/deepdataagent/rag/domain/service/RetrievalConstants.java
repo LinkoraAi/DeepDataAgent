@@ -30,13 +30,10 @@ public final class RetrievalConstants {
     /** 每通道向量召回数量默认值（参考 QueryParam） */
     public static final int DEFAULT_TOP_K = 20;
 
-    /** 引用列表最大条数（参考引用列表，{@code [n] 来源文件名}） */
-    public static final int REFERENCE_MAX_COUNT = 5;
-
     /**
      * 全局兜底语言全名（由历史裸语言码 {@code zh} 退役为全局兜底缺省值）。
      * <p>知识库未配置语言且全局摄入语言配置缺失时的最终兜底；同时参与检索侧
-     * 关键词 / 改写缓存键的语言维度 MD5 口径。值域为 11 语言全名（见
+     * 关键词 / 改写缓存键的语言维度 MD5 口径。值域为 Chinese/English（见
      * {@code KbLanguage}），模板套按「{@code Chinese} 用 zh 套、其余语言用 en 套」选择。</p>
      */
     public static final String DEFAULT_LANGUAGE = "Chinese";

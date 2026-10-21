@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.agent.infrastructure.persistence.entity.ModelProfileEntity;
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.ibatis.annotations.Mapper;
 
 import java.time.OffsetDateTime;
@@ -43,14 +44,15 @@ public interface ModelProfileMapper extends BaseMapper<ModelProfileEntity> {
                 .last("LIMIT 1"));
     }
 
-    default List<ModelProfileEntity> selectByCondition(Long ownerId, String keyword, String status, long offset, int size) {
-        return selectList(buildCondition(ownerId, keyword, status)
+    default List<ModelProfileEntity> selectByCondition(Long ownerId, String keyword, String status,
+                                                       List<Integer> modelTypes, long offset, int size) {
+        return selectList(buildCondition(ownerId, keyword, status, modelTypes)
                 .orderByAsc(ModelProfileEntity::getCreatedAt)
                 .last("LIMIT " + size + " OFFSET " + offset));
     }
 
-    default long countByCondition(Long ownerId, String keyword, String status) {
-        return selectCount(buildCondition(ownerId, keyword, status));
+    default long countByCondition(Long ownerId, String keyword, String status, List<Integer> modelTypes) {
+        return selectCount(buildCondition(ownerId, keyword, status, modelTypes));
     }
 
     default int updateStatus(String profileId, String status) {
@@ -60,10 +62,12 @@ public interface ModelProfileMapper extends BaseMapper<ModelProfileEntity> {
                 .eq(ModelProfileEntity::getProfileId, profileId));
     }
 
-    private LambdaQueryWrapper<ModelProfileEntity> buildCondition(Long ownerId, String keyword, String status) {
+    private LambdaQueryWrapper<ModelProfileEntity> buildCondition(Long ownerId, String keyword, String status,
+                                                                  List<Integer> modelTypes) {
         return Wrappers.<ModelProfileEntity>lambdaQuery()
                 .eq(ModelProfileEntity::getOwnerId, ownerId)
                 .like(keyword != null && !keyword.isBlank(), ModelProfileEntity::getDisplayName, keyword)
-                .eq(status != null && !status.isBlank(), ModelProfileEntity::getStatus, status);
+                .eq(status != null && !status.isBlank(), ModelProfileEntity::getStatus, status)
+                .in(CollectionUtils.isNotEmpty(modelTypes), ModelProfileEntity::getModelType, modelTypes);
     }
 }

@@ -99,7 +99,8 @@ public class MediaChunkTemplateService {
             throw new IllegalArgumentException("文本块无需媒体模板装配");
         }
         Map<String, String> vars = buildTemplateVars(type, block, description);
-        return PromptCatalog.render(selectTemplate(type), language, vars);
+        String templateBody = MediaChunkTemplates.resolve(selectTemplate(type), language);
+        return PromptCatalog.renderBody(templateBody, vars);
     }
 
     /**

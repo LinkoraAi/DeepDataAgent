@@ -21,16 +21,16 @@ import java.util.Map;
 
 /**
  * 本地解析共用支撑：文本分块、占位块构造、图片签名嗅探与直通产物构造、UTF-8 可解码判定与 MD5 摘要。
- * <p>供本地 Tika 解析（{@link LocalTikaDocumentParser}）与本地直读兜底
- * （{@link LocalReadFallbackDocumentParser}）共享，保证内容块形态一致，避免两处实现漂移。</p>
- * <p><b>占位块口径</b>：解析/兜底产物无有效文本时（引擎不支持该类型且源内容<b>非图片</b>不可解码，
- * 或引擎支持该类型但内容为空/近空），统一产出正文含文件名的占位 TEXT 块，
- * 保证文档终态可 PROCESSED 且切片数 ≥ 1；占位块仅用于「引擎不支持该类型」与
- * 「解析成功但无有效文本」两种情形，真实解析失败（协议错误 / 服务不可用）仍由调用方抛出。</p>
+ * <p>供本地 Tika 解析（{@link LocalTikaDocumentParser}）、本地直读兜底
+ * （{@link LocalReadFallbackDocumentParser}）与远程 MinerU 解析（{@link MineruDocumentParser}）共享，
+ * 保证内容块形态一致，避免多处实现漂移。</p>
+ * <p><b>占位块口径</b>：解析产物<b>可解码但无有效文本</b>时（空文件 / 近空文本），统一产出正文含文件名的
+ * 占位 TEXT 块，保证文档终态可 PROCESSED 且切片数 ≥ 1。
+ * 「引擎不支持该类型且不可解码」不属于本口径——LOCAL 兜底路径由
+ * {@link LocalReadFallbackDocumentParser} 抛出可读异常如实上报；MINERU 严格模式在路由阶段直接拒绝。</p>
  * <p><b>图片直通例外</b>：被字节签名识别为图片的独立文件不再落入「不可解码→占位」——
  * 由 {@link #imagePassthrough} 产出 IMAGE 内容块 + 自身字节载荷，接入引擎无关的通用视觉链路
- * （持久化 → 绑定 → 真看图描述 → 模板切片），见 openspec capability
- * {@code rag/local-image-visual-passthrough}。</p>
+ * （持久化 → 绑定 → 真看图描述 → 模板切片）。</p>
  */
 final class LocalReadParseSupport {
 
@@ -127,21 +127,21 @@ final class LocalReadParseSupport {
     /**
      * 尝试以 UTF-8 严格解码字节为文本。
      * <p>任何非法字节序列（典型如图片/二进制）抛出解码异常即视为「不可解码」返回 {@code null}；
-     * 解码结果空白（空文件 / 近空文本）同样返回 {@code null}，交由调用方走占位块。</p>
+     * 解码成功但结果空白（空文件 / 近空文本）<b>原样返回空白串</b>，由调用方按「无有效文本」处置
+     * （与「不可解码」区分开：前者可产出占位块，后者说明引擎不支持该类型，应按失败如实上报）。</p>
      *
      * @param bytes 源文件字节
-     * @return 解码文本；不可解码或空白时返回 {@code null}
+     * @return 解码文本（可能为空白）；不可解码时返回 {@code null}
      */
     static String decodeUtf8OrNull(byte[] bytes) {
         if (ObjectUtils.isEmpty(bytes)) {
-            return null;
+            return "";
         }
         CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT);
         try {
-            String text = decoder.decode(ByteBuffer.wrap(bytes)).toString();
-            return StringUtils.isBlank(text) ? null : text;
+            return decoder.decode(ByteBuffer.wrap(bytes)).toString();
         } catch (CharacterCodingException e) {
             return null;
         }
@@ -181,9 +181,9 @@ final class LocalReadParseSupport {
      * 构造图片视觉直通产物：恰含一个 IMAGE 内容块 + 以文件基名为键的图片字节载荷。
      * <p><b>对齐契约</b>：图片载荷键与块 meta 的 {@code img_path} 同为文件基名——两侧净化后
      * 恒为同一基名，保证摄入 Worker 的媒体引用绑定（Stage 1a 持久化 → meta 注入）必命中。</p>
-     * <p><b>哈希口径</b>：图片文档无「解析文本」可摘要，{@code parsedTextHash} 取<b>源字节 MD5</b>
-     * （见 design D3）——该哈希仅作解析幂等与观测参考，与知识库判重的原始字节 SHA-256
-     * 同名异物（持久化为独立一等列），MUST NOT 互相替代或比对。</p>
+     * <p><b>哈希口径</b>：图片文档无「解析文本」可摘要，{@code parsedTextHash} 取<b>源字节 MD5</b>——
+     * 该哈希仅作解析幂等与观测参考，与知识库判重的原始字节 SHA-256 同名异物
+     * （持久化为独立一等列），MUST NOT 互相替代或比对。</p>
      *
      * @param content  图片源字节（非空；调用方已确保签名命中）
      * @param baseName 文件基名（对象键末段，如 {@code photo.png}）

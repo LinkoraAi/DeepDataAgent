@@ -60,9 +60,16 @@ public interface ModelProfileCommandConvert {
         return ApiFormat.valueOf(value);
     }
 
+    /**
+     * 解析模型类型码值：缺省按对话LLM（与库默认值 1 一致）；越界码值由
+     * {@link ModelType#fromCode(int)} 抛出 {@link IllegalArgumentException}（映射为 400）。
+     *
+     * @param code 请求中的模型类型业务码，可空
+     * @return 模型类型枚举
+     */
     private static ModelType parseModelType(Integer code) {
         if (code == null) {
-            return ModelType.CHAT;
+            return ModelType.CHAT_LLM;
         }
         return ModelType.fromCode(code);
     }

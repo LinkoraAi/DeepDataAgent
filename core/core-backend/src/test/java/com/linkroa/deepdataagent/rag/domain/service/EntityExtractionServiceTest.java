@@ -8,9 +8,11 @@ import com.linkroa.deepdataagent.rag.domain.model.EntityNode;
 import com.linkroa.deepdataagent.rag.domain.model.LlmCacheEntry;
 import com.linkroa.deepdataagent.rag.domain.model.PersistedChunkVO;
 import com.linkroa.deepdataagent.rag.domain.model.RelationEdge;
+import com.linkroa.deepdataagent.rag.domain.port.LlmCallException;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatRequest;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatResult;
 import com.linkroa.deepdataagent.rag.domain.port.LlmClient;
+import com.linkroa.deepdataagent.rag.domain.port.LlmFailureKind;
 import com.linkroa.deepdataagent.rag.domain.repository.ChunkExtractCacheRepository;
 import com.linkroa.deepdataagent.rag.domain.repository.LlmCacheRepository;
 import org.apache.commons.lang3.StringUtils;
@@ -72,7 +74,7 @@ import static org.mockito.Mockito.when;
  * 同块同名取描述更长者、类型过滤与 sidecar 注入在重放路径同样生效、缓存缺失返回空、
  * 分块间记录不串扰、重放全程零 LLM 调用）；以及扇出中断完整性
  * （fix-rag-concurrency-integrity / D1、D2：闸门等待被中断计为阶段失败且 cause 携带真实
- * 原因、单块业务异常的部分成功语义不扩散至中断、循环中取消先收口已提交任务再上抛）。
+ * 原因、分块级模型调用失败即阶段失败（对齐 LightRAG，不再有部分成功语义）、循环中取消先收口已提交任务再上抛）。
  *
  * @author DeepDataAgent
  */
@@ -131,7 +133,15 @@ class EntityExtractionServiceTest {
     @BeforeEach
     void setUp() {
         service = new EntityExtractionService(llmClient, Runnable::run, new ObjectMapper(),
-                chunkExtractCacheRepository, llmCacheRepository);
+                chunkExtractCacheRepository, llmCacheRepository, EntityExtractionServiceTest::estimatedTokens);
+    }
+
+    /**
+     * 简易 token 估算（字符数 / 4）：常规用例远低于补漏预算，预检恒放行；
+     * 超预算用例另行注入大额计数器。
+     */
+    private static int estimatedTokens(String text) {
+        return text == null ? 0 : text.length() / 4;
     }
 
     @Test
@@ -760,21 +770,124 @@ class EntityExtractionServiceTest {
     }
 
     @Test
-    void should_keepSucceededChunks_when_extract_given_oneChunkFails() {
-        // given：两个 chunk，第一块 LLM 抛异常，第二块正常
-        String good = entityRow("Bob", "Person", "Bob desc.") + "\n" + COMPLETION_DELIMITER;
+    void should_throwAndStopDispatch_when_extract_given_oneChunkFails() {
+        // given：第一块模型调用超时失败；失败后不再派发第二块
         when(llmClient.chat(any(LlmChatRequest.class)))
-                .thenThrow(new RuntimeException("LLM 暂时不可用"))
-                .thenReturn(new LlmChatResult(good, 10));
+                .thenThrow(new LlmCallException(LlmFailureKind.TIMEOUT, "模型接口调用失败: timeout"));
 
         // when
-        EntityExtractionResult result = service.extract(defaultContext(),
-                List.of(textChunk("chunk one"), persisted(new ChunkVO(2, "chunk two", 10, null))));
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> service.extract(defaultContext(),
+                        List.of(textChunk("chunk one"), persisted(new ChunkVO(2, "chunk two", 10, null)))));
 
-        // then：失败块被跳过，成功块数据保留
-        assertEquals(1, result.nodes().size());
-        assertEquals("Bob", result.nodes().get(0).entityName());
+        // then：阶段失败携带失败分块序号与失败分类；第二个块未发起调用（停止派发）
+        assertTrue(thrown.getMessage().contains("sequence=[1]"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("TIMEOUT"), thrown.getMessage());
+        verify(llmClient, times(1)).chat(any(LlmChatRequest.class));
+    }
+
+    /**
+     * 场景：分块首轮成功、补漏轮次失败。
+     * 预期：补漏失败与首轮失败同口径，整篇判定抽取阶段失败。
+     */
+    @Test
+    void should_throw_when_extract_given_gleaningRoundFails() {
+        // given：首轮返回一条实体但没有完成信号，补漏轮次超时
+        String firstRound = entityRow("Bob", "Person", "Bob desc.");
+        when(llmClient.chat(any(LlmChatRequest.class)))
+                .thenReturn(new LlmChatResult(firstRound, 10))
+                .thenThrow(new LlmCallException(LlmFailureKind.TIMEOUT, "模型接口调用失败: timeout"));
+
+        // when
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> service.extract(contextWithGleaning(1), List.of(textChunk("chunk one"))));
+
+        // then：补漏失败同样导致阶段失败，首轮成果不保留
+        assertTrue(thrown.getMessage().contains("sequence=[1]"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("TIMEOUT"), thrown.getMessage());
         verify(llmClient, times(2)).chat(any(LlmChatRequest.class));
+    }
+
+    /**
+     * 场景：模型响应正常但不含任何可识别记录。
+     * 预期：按零记录处理，阶段成功（不判定为失败）。
+     */
+    @Test
+    void should_succeedWithZeroRecords_when_extract_given_responseWithoutRecords() {
+        // given：一段无法识别的普通文本
+        when(llmClient.chat(any(LlmChatRequest.class)))
+                .thenReturn(new LlmChatResult("no recognizable records", 3));
+
+        // when
+        EntityExtractionResult result = service.extract(defaultContext(), List.of(textChunk("some text")));
+
+        // then：阶段成功、产物为空
+        assertTrue(result.nodes().isEmpty());
+        assertTrue(result.edges().isEmpty());
+    }
+
+    // ------------------------------------------------------------------ 记录上限配置与补漏预算预检
+
+    /**
+     * 场景：上下文显式携带自定义记录上限（77/33）。
+     * 预期：上限值注入用户提示词（替代内置默认 50/20），供模型按配置封顶输出。
+     */
+    @Test
+    void should_injectConfiguredRecordCaps_when_extract_given_ctxWithCustomCaps() {
+        // given
+        EntityExtractionContext ctx = new EntityExtractionContext(KB_ID, DOC_ID, PROFILE_ID, "en",
+                List.of(), false, 0, 4, FILE_PATH, null, null, null, 77, 33);
+        String response = entityRow("Alice", "Person", "Alice desc.") + "\n" + COMPLETION_DELIMITER;
+        when(llmClient.chat(any(LlmChatRequest.class))).thenReturn(new LlmChatResult(response, 10));
+        ArgumentCaptor<LlmChatRequest> captor = ArgumentCaptor.forClass(LlmChatRequest.class);
+
+        // when
+        service.extract(ctx, List.of(textChunk("Alice met Bob")));
+
+        // then：提示词同时携带总上限与实体上限
+        verify(llmClient).chat(captor.capture());
+        String userPrompt = captor.getValue().userPrompt();
+        assertTrue(userPrompt.contains("77"), "总记录上限未注入提示词");
+        assertTrue(userPrompt.contains("33"), "实体记录上限未注入提示词");
+    }
+
+    /**
+     * 场景：补漏轮重放载荷（系统提示词 + 续抽提示词）超输入 token 预算。
+     * 预期：跳过补漏（WARN），仅发起首轮调用，首轮成果照常保留。
+     */
+    @Test
+    void should_skipGleaningKeepingFirstRound_when_extract_given_replayPayloadOverBudget() {
+        // given：gleaning 1 轮、首轮响应无完成信号（常规路径本应续抽），但计数器恒报超预算
+        EntityExtractionContext ctx = new EntityExtractionContext(KB_ID, DOC_ID, PROFILE_ID, "en",
+                List.of(), false, 1, 4, FILE_PATH, null, null);
+        String first = entityRow("Alice", "Person", "Alice desc.");
+        when(llmClient.chat(any(LlmChatRequest.class))).thenReturn(new LlmChatResult(first, 10));
+        EntityExtractionService overBudgetService = new EntityExtractionService(llmClient, Runnable::run,
+                new ObjectMapper(), chunkExtractCacheRepository, llmCacheRepository,
+                text -> EntityExtractionService.MAX_EXTRACT_INPUT_TOKENS + 1);
+
+        // when
+        EntityExtractionResult result = overBudgetService.extract(ctx, List.of(textChunk("Alice met Bob")));
+
+        // then：只有首轮调用发生，首轮实体保留
+        verify(llmClient, times(1)).chat(any(LlmChatRequest.class));
+        assertEquals(1, result.nodes().size());
+        assertEquals("Alice", result.nodes().get(0).entityName());
+    }
+
+    /**
+     * 场景：上下文非正数上限入参。
+     * 预期：紧凑构造器回退内置默认 50/20（实体上限不越总上限）。
+     */
+    @Test
+    void should_fallbackToDefaultCaps_when_Context_given_nonPositiveCaps() {
+        // given / when
+        EntityExtractionContext ctx = new EntityExtractionContext(KB_ID, DOC_ID, PROFILE_ID, "en",
+                List.of(), false, 0, 4, FILE_PATH, null, null, null, -1, 0);
+
+        // then
+        assertEquals(EntityExtractionContext.DEFAULT_MAX_TOTAL_RECORDS, ctx.maxTotalRecords());
+        assertEquals(EntityExtractionContext.DEFAULT_MAX_ENTITY_RECORDS, ctx.maxEntityRecords());
     }
 
     // ------------------------------------------------------------------ 扇出中断完整性（change fix-rag-concurrency-integrity / D1、D2）
@@ -808,30 +921,6 @@ class EntityExtractionServiceTest {
     }
 
     /**
-     * 场景（回归护栏 / D1 分流）：单块业务异常（模型失败）而非中断。
-     * 预期：业务异常仍走既有「告警跳过、允许部分成功」路径、MUST NOT 计入中断收集器，
-     * 其余块正常聚合，文档判定成功（守护既有部分成功语义不被改坏）。
-     */
-    @Test
-    void should_stillSucceed_when_extract_given_singleChunkBusinessFailure() {
-        // given：第一块 LLM 抛业务异常，第二块正常返回
-        String good = entityRow("Bob", "Person", "Bob desc.") + "\n" + COMPLETION_DELIMITER;
-        when(llmClient.chat(any(LlmChatRequest.class)))
-                .thenThrow(new IllegalStateException("模型响应非法"))
-                .thenReturn(new LlmChatResult(good, 10));
-
-        // when：不抛异常（业务失败 ≠ 中断，阶段判定成功）
-        EntityExtractionResult result = service.extract(defaultContext(),
-                List.of(textChunk("chunk one"), persisted(new ChunkVO(2, "chunk two", 10, null))));
-
-        // then：失败块跳过、成功块正常聚合且溯源回填真实分块主键
-        assertEquals(1, result.nodes().size());
-        assertEquals("Bob", result.nodes().get(0).entityName());
-        assertEquals(List.of(1002L), result.nodes().get(0).properties().sourceIds());
-        verify(llmClient, times(2)).chat(any(LlmChatRequest.class));
-    }
-
-    /**
      * 场景（D2）：提交循环中途命中取消。
      * 预期：命中取消时先等待已提交任务收口再上抛——取消异常抛出后，已提交任务已完整
      * 执行完毕（MUST NOT 留「无人等待的孤儿扇出」）；未提交的分块不再提交、不发起调用。
@@ -842,7 +931,8 @@ class EntityExtractionServiceTest {
         // （测试替身不改生产线程口径：生产扇出统一走受管执行器，此处仅模拟其异步性）
         List<Runnable> capturedTasks = Collections.synchronizedList(new ArrayList<>());
         EntityExtractionService lazyService = new EntityExtractionService(llmClient, capturedTasks::add,
-                new ObjectMapper(), chunkExtractCacheRepository, llmCacheRepository);
+                new ObjectMapper(), chunkExtractCacheRepository, llmCacheRepository,
+                EntityExtractionServiceTest::estimatedTokens);
         // 取消检查器：入口第 1 次与首块提交前的第 2 次放行，第二块提交前（第 3 次）命中取消
         AtomicInteger cancellationChecks = new AtomicInteger();
         BooleanSupplier cancelOnThirdCheck = () -> cancellationChecks.getAndIncrement() >= 2;
@@ -1277,7 +1367,7 @@ class EntityExtractionServiceTest {
     }
 
     /**
-     * 场景：语言全名 {@code Japanese}（非中文）的库执行文本模式抽取。
+     * 场景：语言全名 {@code English}（非中文）的库执行文本模式抽取。
      * 预期：{@link LlmClient} 收到的系统提示词含英文例句集（Alice/ACME），
      * 与 en 模板套指令语言一致。
      */
@@ -1288,13 +1378,13 @@ class EntityExtractionServiceTest {
                 .thenReturn(new LlmChatResult(COMPLETION_DELIMITER, 1));
 
         // when
-        service.extract(contextWithLanguageAndMode("Japanese", false), List.of(textChunk("body")));
+        service.extract(contextWithLanguageAndMode("English", false), List.of(textChunk("body")));
 
         // then
         String systemPrompt = capturedFirstSystemPrompt();
         assertTrue(systemPrompt.contains("Alice"), "非 Chinese 语言库应注入英文例句（Alice）");
         assertTrue(systemPrompt.contains("ACME Corp"), "英文例句应含 ACME Corp 组织样例");
-        assertFalse(systemPrompt.contains("张三"), "Japanese 库不应注入中文例句");
+        assertFalse(systemPrompt.contains("张三"), "English 库不应注入中文例句");
     }
 
     /**
@@ -1319,25 +1409,23 @@ class EntityExtractionServiceTest {
     }
 
     /**
-     * 场景：语言全名 {@code Japanese} 的库执行抽取，上下文携带前后空白（trim 口径验证）。
-     * 预期：{@link LlmClient} 收到的系统提示词中 {language} 为 trim 后的 {@code Japanese}
-     * （不回退历史「English」标签）。
+     * 场景：语言全名 {@code English} 的库执行抽取，上下文携带前后空白（trim 口径验证）。
+     * 预期：{@link LlmClient} 收到的系统提示词中 {language} 为 trim 后的 {@code English}。
      */
     @Test
-    void should_injectTrimmedLanguageFullName_when_extract_given_paddedJapaneseLanguage() {
+    void should_injectTrimmedLanguageFullName_when_extract_given_paddedEnglishLanguage() {
         // given
         when(llmClient.chat(any(LlmChatRequest.class)))
                 .thenReturn(new LlmChatResult(COMPLETION_DELIMITER, 1));
 
         // when
-        service.extract(contextWithLanguageAndMode("  Japanese  ", false), List.of(textChunk("body")));
+        service.extract(contextWithLanguageAndMode("  English  ", false), List.of(textChunk("body")));
 
         // then：未 trim 将呈现为带空白的原串；错误回退将出现 English 标签
         String systemPrompt = capturedFirstSystemPrompt();
-        assertTrue(systemPrompt.contains("must be written in `Japanese`"),
+        assertTrue(systemPrompt.contains("must be written in `English`"),
                 "{language} 应注入 trim 后的知识库语言全名");
-        assertFalse(systemPrompt.contains("`  Japanese  `"), "语言前后空白应被 trim");
-        assertFalse(systemPrompt.contains("must be written in `English`"), "不得回退为历史 English 标签");
+        assertFalse(systemPrompt.contains("`  English  `"), "语言前后空白应被 trim");
     }
 
     /**

@@ -1,10 +1,15 @@
 package com.linkroa.deepdataagent.rag.infrastructure.client;
 
 import com.linkroa.deepdataagent.agent.domain.model.ModelIndicator;
+import com.linkroa.deepdataagent.rag.domain.port.LlmCallContext;
+import com.linkroa.deepdataagent.rag.domain.port.LlmCallException;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatRequest;
 import com.linkroa.deepdataagent.rag.domain.port.LlmChatResult;
 import com.linkroa.deepdataagent.rag.domain.port.LlmClient;
+import com.linkroa.deepdataagent.rag.domain.port.LlmFailureKind;
 import com.linkroa.deepdataagent.rag.domain.port.LlmImage;
+import com.linkroa.deepdataagent.rag.domain.port.LlmStreamClient;
+import com.linkroa.deepdataagent.rag.domain.port.LlmStreamDelta;
 import io.agentscope.core.message.Base64Source;
 import io.agentscope.core.message.ContentBlock;
 import io.agentscope.core.message.ImageBlock;
@@ -21,13 +26,17 @@ import io.agentscope.core.model.ModelRegistry;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 
 /**
@@ -40,19 +49,48 @@ import java.util.function.Function;
  * <p>带图片的请求以 {@link TextBlock} + {@link ImageBlock}
  * （{@link Base64Source} 承载 base64）组装多模态 user 消息，图片仅进入 user message，
  * 不污染 system；对外端口与结果语义（文本聚合、total tokens 记账）与裸 HTTP 通道时期一致。</p>
- * <p>刻意<b>不下发</b> {@code user}/{@code n} 等破坏确定性的字段、固定 {@code stream=false}
- * 且关闭框架重试（{@code maxAttempts=1}），保持「同 prompt 同结果、失败即降级」的既有语义。</p>
+ * <p>刻意<b>不下发</b> {@code user}/{@code n} 等破坏确定性的字段；固定 {@code stream=true} 流式聚合
+ * （SSE 分片按到达顺序拼接为完整文本，结果与非流式等价）；固定下发
+ * {@code enable_thinking=false} 全局关闭思考模式（qwen3 系端点默认开启思考，
+ * 分钟级耗时根因，见 {@link OpenAiCompatibleLlmClient#PARAM_ENABLE_THINKING}）。</p>
+ * <p>超时与重试统一交给 AgentScope 框架默认策略（单次 5 分钟、最多 3 次尝试、指数退避、
+ * 仅对超时/连接/429/5xx 重试）；本类不再定义任何私有超时常量，也不在外层设置早于框架超时的
+ * 阻塞上限。流式下框架超时的约束对象是<b>分片间静默间隔</b>（{@code Flux.timeout} 每信号重置语义）：
+ * 持续产出的长回复不受总时长限制，该超时只检测死连接。每次调用结束输出一行结构化调用级日志，
+ * 口径为<b>最小化字段</b>：阶段与文档定位符、模型名、输入体量（字符数）、耗时、状态、尝试次数、
+ * 响应体量与 token 用量、输入 MD5 前缀；MUST NOT 输出端点主机、提示词正文与温度等敏感或超长字段
+ * （回放原文经 promptMd5 关联 llm_cache），任何情况下不落凭证。</p>
  *
  * @author DeepDataAgent
  */
 @Component("openAiCompatibleLlmClient")
-public class OpenAiCompatibleLlmClient implements LlmClient {
+public class OpenAiCompatibleLlmClient implements LlmClient, LlmStreamClient {
 
-    /** 单次调用超时（摄入为后台任务，放宽到分钟级；经框架 ExecutionConfig 承载） */
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(180);
+    /** 调用级日志器 */
+    private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleLlmClient.class);
 
-    /** 同步收口外框上限（略大于框架内部超时，防止响应流逃逸导致调用线程悬挂） */
-    private static final Duration BLOCK_TIMEOUT = REQUEST_TIMEOUT.plusSeconds(5);
+    /** 框架默认执行配置（超时、尝试次数、退避基线的唯一来源） */
+    private static final ExecutionConfig FRAMEWORK_DEFAULTS = ExecutionConfig.MODEL_DEFAULTS;
+
+    /** 对话调用固定流式标志：生成选项与调用级日志的单一事实源 */
+    private static final boolean STREAM = true;
+
+    /** 首字时间戳未设置哨兵（尚无任何文本增量） */
+    private static final long FIRST_TOKEN_UNSET = 0L;
+
+    /** 首字延迟缺省值：无文本增量时不适用于观测 */
+    private static final long NO_FIRST_TOKEN_MS = -1L;
+
+    /** 调用形态：聚合返回（{@link #chat(LlmChatRequest)}） */
+    private static final String MODE_AGGREGATE = "aggregate";
+
+    /** 调用形态：增量直出（{@link #stream(LlmChatRequest)}） */
+    private static final String MODE_STREAM = "stream";
+
+    /**
+     * OpenAI 兼容协议思考模式开关字段名（请求体 {@code enable_thinking}）。
+     */
+    private static final String PARAM_ENABLE_THINKING = "enable_thinking";
 
     private final ModelProfileAccess modelProfileAccess;
 
@@ -134,15 +172,231 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
         }
         ModelProfileAccess.ResolvedEndpoint endpoint = modelProfileAccess.resolve(request.modelProfileId());
         Model model = modelFactory.apply(endpoint);
+        long startNanos = System.nanoTime();
+        AtomicInteger retryCount = new AtomicInteger();
         List<ChatResponse> responses;
         try {
-            responses = model.stream(buildMessages(request), List.of(), buildOptions(request))
+            responses = openResponseStream(request, model, retryCount)
                     .collectList()
-                    .block(BLOCK_TIMEOUT);
+                    .block();
         } catch (RuntimeException e) {
-            throw new RuntimeException("模型接口调用失败: " + e.getMessage(), e);
+            LlmFailureKind kind = LlmCallFailureClassifier.classify(e);
+            logFailure(request, endpoint, startNanos, retryCount.get(), kind, false, NO_FIRST_TOKEN_MS, e);
+            throw new LlmCallException(kind, "模型接口调用失败: " + e.getMessage(), e);
         }
-        return toChatResult(responses);
+        LlmChatResult result;
+        try {
+            result = toChatResult(responses);
+        } catch (RuntimeException e) {
+            LlmFailureKind kind = LlmFailureKind.UNKNOWN;
+            logFailure(request, endpoint, startNanos, retryCount.get(), kind, false, NO_FIRST_TOKEN_MS, e);
+            throw new LlmCallException(kind, "模型接口调用失败: " + e.getMessage(), e);
+        }
+        logSuccess(request, endpoint, startNanos, retryCount.get(), result, false, NO_FIRST_TOKEN_MS);
+        return result;
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>与 {@link #chat(LlmChatRequest)} 共用同一条框架调用与重试配置，区别仅在于不对分片做聚合：
+     * 每个分片映射为一个 {@link LlmStreamDelta} 向下游推送。调用级日志在流终结时输出
+     * （成功为 INFO、失败为 WARN），并携带首字延迟与流式标记，便于区分聚合调用。</p>
+     * <p>取消语义：调用方 dispose 订阅即中断框架流，不再产生后续分片与日志（不记为失败）。</p>
+     */
+    @Override
+    public Flux<LlmStreamDelta> stream(LlmChatRequest request) {
+        if (ObjectUtils.isEmpty(request)) {
+            throw new IllegalArgumentException("LLM 请求不能为空");
+        }
+        ModelProfileAccess.ResolvedEndpoint endpoint = modelProfileAccess.resolve(request.modelProfileId());
+        Model model = modelFactory.apply(endpoint);
+        long startNanos = System.nanoTime();
+        AtomicInteger retryCount = new AtomicInteger();
+        AtomicLong firstTokenNanos = new AtomicLong(FIRST_TOKEN_UNSET);
+        AtomicInteger totalTokens = new AtomicInteger();
+        StringBuilder aggregated = new StringBuilder();
+        return openResponseStream(request, model, retryCount)
+                .map(response -> toStreamDelta(response, firstTokenNanos, totalTokens))
+                .doOnNext(delta -> aggregated.append(delta.text()))
+                .doOnComplete(() -> logSuccess(request, endpoint, startNanos, retryCount.get(),
+                        new LlmChatResult(aggregated.toString(), totalTokens.get()), true,
+                        firstTokenMillis(firstTokenNanos, startNanos)))
+                .doOnError(error -> logFailure(request, endpoint, startNanos, retryCount.get(),
+                        LlmCallFailureClassifier.classify(error), true,
+                        firstTokenMillis(firstTokenNanos, startNanos), error))
+                .onErrorMap(error -> new LlmCallException(LlmCallFailureClassifier.classify(error),
+                        "模型接口调用失败: " + error.getMessage(), error));
+    }
+
+    /**
+     * 打开框架响应流（对话与流式两个入口共用的唯一发起点）。
+     *
+     * @param request    对话请求
+     * @param model      已解析的框架模型
+     * @param retryCount 重试计数器（框架重试判定命中时递增）
+     * @return 框架响应分片流（冷流，订阅时才真正发起调用）
+     */
+    private static Flux<ChatResponse> openResponseStream(LlmChatRequest request, Model model,
+                                                         AtomicInteger retryCount) {
+        return model.stream(buildMessages(request), List.of(), buildOptions(request, retryCount));
+    }
+
+    /**
+     * 单个框架响应分片 → 流式增量（文本块按序拼接，token 用量取该分片的非空 usage）。
+     *
+     * @param response        框架响应分片
+     * @param firstTokenNanos 首字时间戳持有者（首次出现非空文本时写入）
+     * @param totalTokens     累计 token 持有者（仅在该分片回传 usage 时更新）
+     * @return 流式增量
+     */
+    private static LlmStreamDelta toStreamDelta(ChatResponse response, AtomicLong firstTokenNanos,
+                                                AtomicInteger totalTokens) {
+        StringBuilder text = new StringBuilder();
+        List<ContentBlock> blocks = response.getContent();
+        if (CollectionUtils.isNotEmpty(blocks)) {
+            for (ContentBlock block : blocks) {
+                if (block instanceof TextBlock textBlock) {
+                    text.append(StringUtils.defaultString(textBlock.getText()));
+                }
+            }
+        }
+        ChatUsage usage = response.getUsage();
+        Integer usageTokens = null;
+        if (ObjectUtils.isNotEmpty(usage) && usage.getTotalTokens() > 0) {
+            totalTokens.set(usage.getTotalTokens());
+            usageTokens = usage.getTotalTokens();
+        }
+        if (!text.isEmpty()) {
+            firstTokenNanos.compareAndSet(FIRST_TOKEN_UNSET, System.nanoTime());
+        }
+        return new LlmStreamDelta(text.toString(), usageTokens);
+    }
+
+    /**
+     * 计算首字延迟毫秒数（未出现任何文本时返回 {@link #NO_FIRST_TOKEN_MS}）。
+     *
+     * @param firstTokenNanos 首字时间戳持有者
+     * @param startNanos      调用起始纳秒时间戳
+     * @return 首字延迟毫秒；无文本时为哨兵值
+     */
+    private static long firstTokenMillis(AtomicLong firstTokenNanos, long startNanos) {
+        long first = firstTokenNanos.get();
+        if (first == FIRST_TOKEN_UNSET) {
+            return NO_FIRST_TOKEN_MS;
+        }
+        return Math.round((first - startNanos) / 1_000_000.0);
+    }
+
+    /**
+     * 输出调用成功日志（INFO）。
+     *
+     * @param request      对话请求
+     * @param endpoint     解析后的端点
+     * @param startNanos   调用起始纳秒时间戳
+     * @param retryCount   已发生的重试次数
+     * @param result       调用结果
+     * @param streaming    是否为增量直出调用（{@code stream} 端口）
+     * @param firstTokenMs 首字延迟毫秒（聚合调用或无文本增量时为 {@link #NO_FIRST_TOKEN_MS}）
+     */
+    private void logSuccess(LlmChatRequest request, ModelProfileAccess.ResolvedEndpoint endpoint,
+                            long startNanos, int retryCount, LlmChatResult result,
+                            boolean streaming, long firstTokenMs) {
+        LlmCallLogSupport.info(log, () -> String.format(
+                "llm.call | stage=%s docId=%s seq=%s round=%s model=%s sysChars=%d userChars=%d"
+                        + " images=%d stream=%s mode=%s firstTokenMs=%d elapsedMs=%d"
+                        + " status=OK attempts=%d respChars=%d totalTokens=%d promptMd5=%s",
+                stageOf(request), docIdOf(request), sequenceOf(request), roundOf(request),
+                StringUtils.defaultString(endpoint.modelName()),
+                LlmCallLogSupport.chars(request.systemPrompt()), LlmCallLogSupport.chars(request.userPrompt()),
+                CollectionUtils.size(request.images()), STREAM, modeOf(streaming), firstTokenMs,
+                LlmCallLogSupport.elapsedMillis(startNanos),
+                attemptsOf(retryCount), LlmCallLogSupport.chars(result.text()), result.totalTokens(),
+                LlmCallLogSupport.digest(request.systemPrompt() + request.userPrompt())));
+    }
+
+    /**
+     * 输出调用失败日志（WARN，附原始异常）。
+     *
+     * @param request      对话请求
+     * @param endpoint     解析后的端点
+     * @param startNanos   调用起始纳秒时间戳
+     * @param retryCount   已发生的重试次数
+     * @param kind         失败分类
+     * @param streaming    是否为增量直出调用（{@code stream} 端口）
+     * @param firstTokenMs 首字延迟毫秒（聚合调用或无文本增量时为 {@link #NO_FIRST_TOKEN_MS}）
+     * @param cause        原始异常
+     */
+    private void logFailure(LlmChatRequest request, ModelProfileAccess.ResolvedEndpoint endpoint,
+                            long startNanos, int retryCount, LlmFailureKind kind,
+                            boolean streaming, long firstTokenMs, Throwable cause) {
+        LlmCallLogSupport.warn(log, () -> String.format(
+                "llm.call | stage=%s docId=%s seq=%s round=%s model=%s sysChars=%d userChars=%d"
+                        + " images=%d stream=%s mode=%s firstTokenMs=%d elapsedMs=%d"
+                        + " status=FAILED reason=%s attempts=%d promptMd5=%s",
+                stageOf(request), docIdOf(request), sequenceOf(request), roundOf(request),
+                StringUtils.defaultString(endpoint.modelName()),
+                LlmCallLogSupport.chars(request.systemPrompt()), LlmCallLogSupport.chars(request.userPrompt()),
+                CollectionUtils.size(request.images()), STREAM, modeOf(streaming), firstTokenMs,
+                LlmCallLogSupport.elapsedMillis(startNanos),
+                kind, attemptsOf(retryCount),
+                LlmCallLogSupport.digest(request.systemPrompt() + request.userPrompt())), cause);
+    }
+
+    /**
+     * 调用形态展示值（聚合 / 增量直出）。
+     *
+     * @param streaming 是否为增量直出
+     * @return 形态标识
+     */
+    private static String modeOf(boolean streaming) {
+        return streaming ? MODE_STREAM : MODE_AGGREGATE;
+    }
+
+    /**
+     * 计算尝试次数：首次 + 已发生重试，且不超过框架配置上限。
+     *
+     * @param retryCount 已发生重试次数
+     * @return 尝试次数
+     */
+    private static int attemptsOf(int retryCount) {
+        Integer maxAttempts = FRAMEWORK_DEFAULTS.getMaxAttempts();
+        int ceiling = ObjectUtils.isEmpty(maxAttempts) ? retryCount + 1 : maxAttempts;
+        return Math.min(retryCount + 1, ceiling);
+    }
+
+    /**
+     * 调用阶段（缺失回落 OTHER）。
+     */
+    private static String stageOf(LlmChatRequest request) {
+        LlmCallContext context = request.callContext();
+        return ObjectUtils.isEmpty(context) ? LlmCallContext.STAGE_OTHER : context.stage();
+    }
+
+    /**
+     * 文档标识（缺失返回占位符）。
+     */
+    private static Object docIdOf(LlmChatRequest request) {
+        LlmCallContext context = request.callContext();
+        return ObjectUtils.isEmpty(context) || ObjectUtils.isEmpty(context.documentId())
+                ? "-" : context.documentId();
+    }
+
+    /**
+     * 分块序号（缺失返回占位符）。
+     */
+    private static Object sequenceOf(LlmChatRequest request) {
+        LlmCallContext context = request.callContext();
+        return ObjectUtils.isEmpty(context) || ObjectUtils.isEmpty(context.chunkSequence())
+                ? "-" : context.chunkSequence();
+    }
+
+    /**
+     * 抽取轮次（缺失返回占位符）。
+     */
+    private static Object roundOf(LlmChatRequest request) {
+        LlmCallContext context = request.callContext();
+        return ObjectUtils.isEmpty(context) || ObjectUtils.isEmpty(context.round())
+                ? "-" : context.round();
     }
 
     /**
@@ -182,24 +436,68 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     }
 
     /**
-     * 组装生成选项：非流式、超时 180s、关闭重试（保持「失败即降级」现语义）、
-     * 温度仅在显式给出时下发（缺省沿用提供方默认值）。
+     * 组装生成选项：流式聚合、全局关闭思考模式、框架默认超时与重试、温度仅在显式给出时下发。
+     * <p>执行配置的数值全部取自 {@link ExecutionConfig#MODEL_DEFAULTS}，本类不覆盖任何
+     * 超时或尝试次数；仅在默认重试判定外再包一层计数，用于调用级日志的尝试次数统计。</p>
+     * <p><b>思考模式</b>：恒定经 {@code additionalBodyParam} 下发
+     * {@code enable_thinking=false}（由 openai 扩展的 ChatFormatter 合入请求体）。
+     * 单分块耗时被拉长到分钟级；RAG 侧调用（抽取/描述/关键词）均为格式严格的
+     * 短答案任务，思考收益为零，故在客户端层全局关闭。</p>
+     * <p><b>流式语义</b>：{@code stream=true} 下框架 {@code Flux.timeout} 的 5 分钟约束对象是
+     * 相邻分片的静默间隔（每信号重置计时器），不再限制回复总时长；持续产出的长回复合法，
+     * 仅挂死的死连接会按超时分类进入既有重试。</p>
      * <p>包级可见以便单测直接断言选项形态。</p>
      *
      * @param request 对话请求
      * @return 框架生成选项
      */
     static GenerateOptions buildOptions(LlmChatRequest request) {
+        return buildOptions(request, new AtomicInteger());
+    }
+
+    /**
+     * 组装生成选项（携带重试计数器）。
+     *
+     * @param request    对话请求
+     * @param retryCount 重试计数器（默认重试判定命中时递增）
+     * @return 框架生成选项
+     */
+    static GenerateOptions buildOptions(LlmChatRequest request, AtomicInteger retryCount) {
         GenerateOptions.Builder options = GenerateOptions.builder()
-                .stream(false)
-                .executionConfig(ExecutionConfig.builder()
-                        .timeout(REQUEST_TIMEOUT)
-                        .maxAttempts(1)
-                        .build());
+                .stream(STREAM)
+                .additionalBodyParam(PARAM_ENABLE_THINKING, false)
+                .executionConfig(defaultExecutionConfig(retryCount));
         if (ObjectUtils.isNotEmpty(request.temperature())) {
             options.temperature(request.temperature());
         }
         return options.build();
+    }
+
+    /**
+     * 以框架默认值构建执行配置，仅追加重试计数观测。
+     *
+     * @param retryCount 重试计数器（可空表示不计数）
+     * @return 执行配置
+     */
+    private static ExecutionConfig defaultExecutionConfig(AtomicInteger retryCount) {
+        return ExecutionConfig.builder()
+                .timeout(FRAMEWORK_DEFAULTS.getTimeout())
+                .maxAttempts(FRAMEWORK_DEFAULTS.getMaxAttempts())
+                .initialBackoff(FRAMEWORK_DEFAULTS.getInitialBackoff())
+                .maxBackoff(FRAMEWORK_DEFAULTS.getMaxBackoff())
+                .backoffMultiplier(FRAMEWORK_DEFAULTS.getBackoffMultiplier())
+                .retryOn(error -> {
+                    // 框架默认判定 + 超时兜底：Flux.timeout 产出的是 ModelException，默认判定
+                    // 只认 TimeoutException/IO/HTTP 异常类型，会把框架自身的超时排除在重试之外
+                    boolean retryable = ObjectUtils.isEmpty(FRAMEWORK_DEFAULTS.getRetryOn())
+                            || FRAMEWORK_DEFAULTS.getRetryOn().test(error)
+                            || LlmCallFailureClassifier.classify(error) == LlmFailureKind.TIMEOUT;
+                    if (retryable && ObjectUtils.isNotEmpty(retryCount)) {
+                        retryCount.incrementAndGet();
+                    }
+                    return retryable;
+                })
+                .build();
     }
 
     /**

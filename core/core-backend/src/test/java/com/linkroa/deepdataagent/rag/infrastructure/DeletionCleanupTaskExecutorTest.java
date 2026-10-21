@@ -262,7 +262,7 @@ class DeletionCleanupTaskExecutorTest {
     }
 
     @Test
-    void should_clearRegistryFirst_when_shutdown_given_inFlightTasks() {
+    void should_notClearRegistryInDestroyChain_when_shutdown_given_inFlightTasks() {
         // given：停机宽限 0（不等待），且在飞登记器内确有本实例残留
         ReflectionTestUtils.setField(executor, "shutdownGraceSeconds", 0L);
         assertTrue(inFlightRegistry.tryRegister(KB_KEY));
@@ -270,8 +270,9 @@ class DeletionCleanupTaskExecutorTest {
         // when
         executor.shutdown();
 
-        // then：停机链首个动作即清空本实例注册表键（消除滚动发布期间新旧进程并存误判）
-        verify(inFlightTaskConverger, times(1)).clearInstanceRegistryQuietly();
+        // then：注册表键清空已迁出销毁回调（该时点缓存已停止、操作必失败），
+        // 由 InFlightTaskConverger.onContextClosed 在容器关闭事件时点承载——停机链不得再自行调用
+        verify(inFlightTaskConverger, never()).clearInstanceRegistryQuietly();
     }
 
     @Test
@@ -304,16 +305,16 @@ class DeletionCleanupTaskExecutorTest {
     }
 
     @Test
-    void should_stillClearRegistry_when_shutdown_given_executorNotInitialized() {
+    void should_shutDownQuietly_when_shutdown_given_executorNotInitialized() {
         // given：未走 @PostConstruct 的执行器（executor 尚未初始化）
         DeletionCleanupTaskExecutor notInitialized =
                 new DeletionCleanupTaskExecutor(inFlightRegistry, inFlightTaskConverger);
 
         // when
-        notInitialized.shutdown();
+        assertDoesNotThrow(notInitialized::shutdown);
 
-        // then：清空注册表键先于执行器判空，未初始化亦须先消除本实例键
-        verify(inFlightTaskConverger, times(1)).clearInstanceRegistryQuietly();
+        // then：未初始化停机为安全空操作；键清空已不在销毁链（由容器关闭事件承载），不得触发
+        verify(inFlightTaskConverger, never()).clearInstanceRegistryQuietly();
     }
 
     /**

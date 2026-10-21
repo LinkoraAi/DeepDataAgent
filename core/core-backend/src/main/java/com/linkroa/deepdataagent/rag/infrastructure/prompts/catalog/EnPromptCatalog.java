@@ -290,6 +290,7 @@ public final class EnPromptCatalog {
         - Physical or theoretical significance
         - Relationship to other mathematical concepts
         - Practical applications or use cases
+        - Write all natural-language field values (`detailed_description` and `entity_info.summary`) in {language}; keep JSON keys in English.
         Always use specific mathematical terminology.",
         "entity_info": {
             "entity_name": "{entity_name}",
@@ -318,6 +319,7 @@ public final class EnPromptCatalog {
         - Relationship to other mathematical concepts mentioned in the context
         - Practical applications or use cases
         - How the equation relates to the broader discussion or framework
+        - Write all natural-language field values (`detailed_description` and `entity_info.summary`) in {language}; keep JSON keys in English.
         Always use specific mathematical terminology.",
         "entity_info": {
             "entity_name": "{entity_name}",
@@ -352,6 +354,7 @@ public final class EnPromptCatalog {
         - Relationships between components
         - Context and significance
         - Relevant details for knowledge retrieval
+        - Write all natural-language field values (`detailed_description` and `entity_info.summary`) in {language}; keep JSON keys in English.
         Always use specific terminology appropriate for {content_type} content.",
         "entity_info": {
             "entity_name": "{entity_name}",
@@ -376,6 +379,7 @@ public final class EnPromptCatalog {
         - Context and significance in relation to surrounding content
         - How this content connects to or supports the broader discussion
         - Relevant details for knowledge retrieval
+        - Write all natural-language field values (`detailed_description` and `entity_info.summary`) in {language}; keep JSON keys in English.
         Always use specific terminology appropriate for {content_type} content.",
         "entity_info": {
             "entity_name": "{entity_name}",
@@ -487,7 +491,7 @@ public final class EnPromptCatalog {
     {reference_list_str}
     ```
     """;
-    /** 模板 <code>naive_rag_response</code> 正文（迁移自 prompts/document-engine/en/naive-rag-response.md） */
+    /** 模板 <code>naive_rag_response</code> 正文（与 LightRAG v1.5.6-179 {@code prompt.py} 逐字一致） */
     public static final String NAIVE_RAG_RESPONSE = """
     ---Role---
 
@@ -527,10 +531,13 @@ public final class EnPromptCatalog {
       - Do not generate footnotes section or any comment, summary, or explanation after the references.
 
     5. Reference Section Example:
+    ```
+    ### References
 
     - [1] Document Title One
     - [2] Document Title Two
     - [3] Document Title Three
+    ```
 
     6. Additional Instructions: {user_prompt}
 
@@ -619,7 +626,7 @@ public final class EnPromptCatalog {
 
     Please briefly summarize the main content, data characteristics, and important findings of the table.
     """;
-    /** 模板 <code>rag_response</code> 正文（迁移自 prompts/document-engine/en/rag-response.md） */
+    /** 模板 <code>rag_response</code> 正文（与 LightRAG v1.5.6-179 {@code prompt.py} 逐字一致） */
     public static final String RAG_RESPONSE = """
     ---Role---
 
@@ -659,11 +666,13 @@ public final class EnPromptCatalog {
       - Do not generate footnotes section or any comment, summary, or explanation after the references.
 
     5. Reference Section Example:
+    ```
+    ### References
 
     - [1] Document Title One
     - [2] Document Title Two
     - [3] Document Title Three
-
+    ```
 
     6. Additional Instructions: {user_prompt}
 
@@ -719,6 +728,7 @@ public final class EnPromptCatalog {
         - Statistical insights and trends
         - Relationships between data elements
         - Significance of the data presented
+        - Write all natural-language field values (`detailed_description` and `entity_info.summary`) in {language}; keep JSON keys in English.
         Always use specific names and values instead of general references.",
         "entity_info": {
             "entity_name": "{entity_name}",
@@ -748,6 +758,7 @@ public final class EnPromptCatalog {
         - Relationships between data elements
         - Significance of the data presented in relation to surrounding context
         - How the table supports or illustrates concepts from the surrounding content
+        - Write all natural-language field values (`detailed_description` and `entity_info.summary`) in {language}; keep JSON keys in English.
         Always use specific names and values instead of general references.",
         "entity_info": {
             "entity_name": "{entity_name}",
@@ -780,7 +791,8 @@ public final class EnPromptCatalog {
         - Explain relationships and connections between elements
         - Note colors, visual style, and layout patterns where relevant
         - Include technical details if relevant (equations, measurements, data values, etc.)
-        - Always use specific names instead of pronouns",
+        - Always use specific names instead of pronouns
+        - Write all natural-language field values (`detailed_description` and `entity_info.summary`) in {language}; keep JSON keys in English.",
         "entity_info": {
             "entity_name": "{entity_name}",
             "entity_type": "image",
@@ -811,7 +823,8 @@ public final class EnPromptCatalog {
         - Note colors, visual style, and layout patterns where relevant
         - Include technical details if relevant (equations, measurements, data values, etc.)
         - Reference connections to the surrounding content when relevant
-        - Always use specific names instead of pronouns",
+        - Always use specific names instead of pronouns
+        - Write all natural-language field values (`detailed_description` and `entity_info.summary`) in {language}; keep JSON keys in English.",
         "entity_info": {
             "entity_name": "{entity_name}",
             "entity_type": "image",

@@ -87,6 +87,8 @@ export const RRF_K_MIN = 1;
 export const RRF_K_MAX = Number.MAX_SAFE_INTEGER;
 /** 重排保留条数下限（topK 为正整数，留空表示不限制） */
 export const RERANK_TOP_K_MIN = 1;
+/** 重排保留条数默认值（开启重排时的常用保留量，仍可在面板中清空表示不限制） */
+export const DEFAULT_RERANK_TOP_K = 10;
 /** 通道稠密权重输入下限（后端校验为开区间 (0,1)，控件边界仅允许贴近 0） */
 export const CHANNEL_WEIGHT_FLOOR = 0;
 /** 通道稠密权重输入上限（后端校验为开区间 (0,1)，控件边界仅允许贴近 1） */
@@ -111,7 +113,7 @@ function defaultChannelWeights(): Record<string, number> {
 }
 
 /**
- * 默认检索策略配置：NAIVE / 不改写 / 结果数量 20 / 阈值不过滤（0）/ 重排关闭 / RRF（K=60）。
+ * 默认检索策略配置：NAIVE / 不改写 / 结果数量 20 / 阈值不过滤（0）/ 重排关闭（topK 预填 10）/ RRF（K=60）。
  * <p>产物为「完整草稿形态」——嵌套配置与各通道权重均已补齐，可直接绑定表单，
  * 也是 parseStrategyJson 防御回退的基准。</p>
  * @returns 默认配置对象（每次新建，不与外部共享引用）
@@ -122,7 +124,7 @@ export function defaultRetrievalConfig(): RetrievalDraft {
     rewriteQuestion: false,
     resultChunkCount: DEFAULT_RESULT_CHUNK_COUNT,
     similarThreshold: SIMILAR_THRESHOLD_MIN,
-    rerankConfig: { enabled: false, modelProfileId: '', topK: undefined },
+    rerankConfig: { enabled: false, modelProfileId: '', topK: DEFAULT_RERANK_TOP_K },
     fusionConfig: { fusionType: FUSION_RRF, rrfK: DEFAULT_RRF_K, channelDenseWeight: defaultChannelWeights() },
   };
 }
@@ -278,7 +280,7 @@ export function parseStrategyJson(raw: string | null | undefined): RetrievalDraf
     rerankConfig: {
       enabled: readBoolean(rerankNode?.enabled, false),
       modelProfileId: readString(rerankNode?.modelProfileId, ''),
-      topK: isPositiveNumber(rerankNode?.topK) ? Math.trunc(rerankNode.topK) : undefined,
+      topK: isPositiveNumber(rerankNode?.topK) ? Math.trunc(rerankNode.topK) : DEFAULT_RERANK_TOP_K,
     },
     fusionConfig: {
       fusionType: isInOptions(fusionType, FUSION_TYPES) ? fusionType : FUSION_RRF,

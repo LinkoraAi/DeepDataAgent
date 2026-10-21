@@ -8,7 +8,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.Duration;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -76,7 +75,8 @@ class OpenAiCompatibleRerankClientTest {
 
     /**
      * 场景：两条候选的请求体组装。
-     * 预期：报文为 {@code {model, query, documents}}，documents 顺序与入参一致且不含 top_n。
+     * 预期：报文为 {@code {model, input:{query, documents}}}（query 与 documents 嵌套在 input 内，
+     * 对齐百炼《文本排序》接口文档），documents 顺序与入参一致且不含 top_n。
      */
     @Test
     void should_produceModelQueryDocumentsBody_when_buildRequestBody_given_twoPassages() {
@@ -85,13 +85,13 @@ class OpenAiCompatibleRerankClientTest {
                 List.of(PASSAGE_1, PASSAGE_2));
 
         // then
-        assertEquals("{\"model\":\"bge-reranker-v2\",\"query\":\"重排模型怎么配置\","
-                + "\"documents\":[\"正文一\",\"正文二\"]}", body);
+        assertEquals("{\"model\":\"bge-reranker-v2\",\"input\":{\"query\":\"重排模型怎么配置\","
+                + "\"documents\":[\"正文一\",\"正文二\"]}}", body);
     }
 
     /**
      * 场景：查询文本为 null。
-     * 预期：query 字段归一为空串，请求体不出现 null 字面量。
+     * 预期：input.query 归一为空串，请求体不出现 null 字面量。
      */
     @Test
     void should_putEmptyQuery_when_buildRequestBody_given_nullQuery() {
@@ -99,7 +99,7 @@ class OpenAiCompatibleRerankClientTest {
         String body = OpenAiCompatibleRerankClient.buildRequestBody(endpoint(), null, List.of(PASSAGE_1));
 
         // then
-        assertTrue(body.contains("\"query\":\"\""), "null 查询应归一为空串: " + body);
+        assertTrue(body.contains("\"input\":{\"query\":\"\""), "null 查询应归一为 input 内空串: " + body);
     }
 
     /**
@@ -308,7 +308,7 @@ class OpenAiCompatibleRerankClientTest {
     void should_issueSingleTransportCall_when_scoreBatch_given_multiplePassages() {
         // given
         when(modelProfileAccess.resolve(PROFILE_ID)).thenReturn(endpoint());
-        when(modelTransport.post(any(), anyString(), anyString(), any(Duration.class)))
+        when(modelTransport.post(any(), anyString(), anyString()))
                 .thenReturn("{\"results\":["
                         + "{\"index\":1,\"relevance_score\":0.7},"
                         + "{\"index\":0,\"relevance_score\":0.9}]}");
@@ -319,7 +319,7 @@ class OpenAiCompatibleRerankClientTest {
         // then
         assertEquals(0.9D, scores.get(0), DELTA);
         assertEquals(0.7D, scores.get(1), DELTA);
-        verify(modelTransport, times(1)).post(any(), eq(RERANK_PATH), anyString(), any(Duration.class));
+        verify(modelTransport, times(1)).post(any(), eq(RERANK_PATH), anyString());
     }
 
     /**
@@ -330,7 +330,7 @@ class OpenAiCompatibleRerankClientTest {
     void should_propagateFailure_when_scoreBatch_given_transportThrows() {
         // given
         when(modelProfileAccess.resolve(PROFILE_ID)).thenReturn(endpoint());
-        when(modelTransport.post(any(), anyString(), anyString(), any(Duration.class)))
+        when(modelTransport.post(any(), anyString(), anyString()))
                 .thenThrow(new RuntimeException("模型接口调用失败: status=500, body=oops"));
 
         // when / then

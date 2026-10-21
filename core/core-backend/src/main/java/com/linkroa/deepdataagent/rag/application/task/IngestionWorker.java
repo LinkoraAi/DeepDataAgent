@@ -245,6 +245,22 @@ public class IngestionWorker {
     @Value("${app.rag.ingestion.extraction.max-gleaning:1}")
     private int extractionMaxGleaning;
 
+    /** 实体/关系抽取分块并发度（{@code app.rag.ingestion.extraction.concurrency}，缺省 1；<=1 即逐块串行）。 */
+    @Value("${app.rag.ingestion.extraction.concurrency:1}")
+    private int extractionConcurrency;
+
+    /**
+     * 单块输出实体+关系记录总条数软上限（{@code app.rag.ingestion.extraction.max-total-records}，
+     */
+    @Value("${app.rag.ingestion.extraction.max-total-records:50}")
+    private int extractionMaxTotalRecords;
+
+    /**
+     * 单块输出实体记录条数软上限（{@code app.rag.ingestion.extraction.max-entity-records}，
+     */
+    @Value("${app.rag.ingestion.extraction.max-entity-records:20}")
+    private int extractionMaxEntityRecords;
+
     /** 应用级 source_ids 保留上限（知识库级 JSONB 配置可逐项覆盖本值）。 */
     @Value("${app.rag.graph.source-ids-limit:200}")
     private int graphSourceIdsLimit;
@@ -262,7 +278,7 @@ public class IngestionWorker {
     private String graphSourceFilePathsPlaceholder;
 
     /** 多模态描述并发上限（虚拟线程 + Semaphore；&lt;=1 即回落逐块串行）。 */
-    @Value("${app.rag.ingestion.describe.concurrency:4}")
+    @Value("${app.rag.ingestion.describe.concurrency:1}")
     private int describeConcurrency;
 
     /**
@@ -448,6 +464,9 @@ public class IngestionWorker {
         GraphArtifacts artifacts = runStage(IngestionStage.EXTRACT, timings,
                 () -> extractArtifacts(ctx, prelude.chatProfile(), chunks, sequenceToChunkId,
                         enrichments, cacheHits));
+        // Stage 4→5 边界：抽取完成后删除链若已置 DELETING，必须在此掐灭——
+        // 图合并写入没有切片回写那样的 PROCESSING 前置，进入后即可产生图谱残留
+        checkCancelledOrThrow(documentId);
         if (CollectionUtils.isEmpty(artifacts.nodes()) && CollectionUtils.isEmpty(artifacts.edges())) {
             log.info("文档未抽取到实体与关系，跳过图合并, documentId={}", documentId);
             logCompletion(documentId, timings, chunks.size(), artifacts, null, cacheHits.get());
@@ -1027,8 +1046,8 @@ public class IngestionWorker {
                                                            AtomicInteger cacheHits) {
         return new EntityExtractionContext(ctx.kbId(), ctx.documentId(), chatProfile, effectiveLanguage(ctx),
                 ctx.entityTypes(), extractionJsonMode, extractionMaxGleaning,
-                EntityExtractionContext.DEFAULT_CONCURRENCY, ctx.fileName(), cancelCheck,
-                mediaPrimaryEntityName, cacheHits);
+                extractionConcurrency, ctx.fileName(), cancelCheck,
+                mediaPrimaryEntityName, cacheHits, extractionMaxTotalRecords, extractionMaxEntityRecords);
     }
 
     /**

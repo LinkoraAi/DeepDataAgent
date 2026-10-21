@@ -50,7 +50,7 @@ class ChunkPersistenceServiceTest {
     private static final String PROFILE_ID = "embed-profile-1";
 
     /** 默认单批条数（与 @Value 缺省一致，逐用例可覆写） */
-    private static final int DEFAULT_BATCH_SIZE = 32;
+    private static final int DEFAULT_BATCH_SIZE = 16;
 
     @Mock
     private ChunkBatchWriter chunkBatchWriter;
@@ -111,7 +111,7 @@ class ChunkPersistenceServiceTest {
 
     @Test
     void should_embedAllChunksInSingleBatch_when_replaceForDocument_given_chunksWithinBatchSize() {
-        // given：2 片 ≤ 批大小 32 → 一次批量调用，返回按入参下标对齐
+        // given：2 片 ≤ 批大小 16 → 一次批量调用，返回按入参下标对齐
         ChunkVO first = new ChunkVO(1, "alpha", 1, null);
         ChunkVO second = new ChunkVO(2, "beta", 1, null);
         when(embeddingClient.embedBatch(PROFILE_ID, List.of("alpha", "beta")))
@@ -254,7 +254,7 @@ class ChunkPersistenceServiceTest {
 
     @Test
     void should_persistAllDrafts_when_replaceForDocument_given_1001ChunksWithoutCap() {
-        // given：1001 片（历史 1000 上限会整批拒绝；现已无上限）→ 按 32/批共 32 次调用
+        // given：1001 片（历史 1000 上限会整批拒绝；现已无上限）→ 按 16/批共 63 次调用
         List<ChunkVO> chunks = new ArrayList<>();
         for (int i = 1; i <= 1001; i++) {
             chunks.add(new ChunkVO(i, "chunk " + i, 1, null));
@@ -271,8 +271,8 @@ class ChunkPersistenceServiceTest {
         // when
         chunkPersistenceService.replaceForDocument(DOCUMENT_ID, chunks, PROFILE_ID, OPERATOR_ID);
 
-        // then：31 个满批 + 1 个 9 条尾批；全部草案照常落库
-        verify(embeddingClient, times(32)).embedBatch(eq(PROFILE_ID), anyList());
+        // then：62 个满批 + 1 个 9 条尾批；全部草案照常落库
+        verify(embeddingClient, times(63)).embedBatch(eq(PROFILE_ID), anyList());
         List<ChunkDraft> drafts = captureDrafts();
         assertEquals(1001, drafts.size());
         assertEquals("[1]", drafts.get(1000).embeddingVector());

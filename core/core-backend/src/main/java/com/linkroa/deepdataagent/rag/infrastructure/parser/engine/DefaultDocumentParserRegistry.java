@@ -14,8 +14,11 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * {@link DocumentParserRegistry} 默认实现：LOCAL 返回进程内单例解析器，
@@ -24,6 +27,11 @@ import java.util.Map;
  * {@link MineruClient} 构造参数同名：apiBaseUrl（必填，缺失快速失败）、backend、
  * modelServerUrl、parseMethod、language（字符串列表或逗号分隔串）、quality，
  * 缺省时取 {@link MineruClient} 的既有默认值常量。无失败自动回退。</p>
+ * <p><b>类型路由（按引擎分治）</b>：文档类型不在所选引擎声明集合内时——
+ * <b>LOCAL</b> 回落本地直读兜底解析器（{@link LocalReadFallbackDocumentParser}，
+ * 承载图片视觉直通与纯文本直读）；<b>MINERU</b> 直接抛 {@link IllegalArgumentException}
+ * 并列出支持类型，<b>不提供任何兜底</b>（严格模式，避免以兜底产物伪装成解析成功）。
+ * 上传入口另经 {@code ParserCapabilityApi} 以同一口径提前拦截。</p>
  *
  * @author DeepDataAgent
  */
@@ -57,13 +65,23 @@ public class DefaultDocumentParserRegistry implements DocumentParserRegistry {
     /** 未知解析提供方提示。 */
     private static final String ERROR_UNKNOWN_PROVIDER = "未知的解析引擎提供方：";
 
+    /** 类型不受引擎支持提示：文件类型 + 支持清单两段占位。 */
+    private static final String ERROR_UNSUPPORTED_FILE_TYPE =
+            "当前解析引擎不支持该文件类型（%s）；支持的类型为：%s";
+
+    /** 未知文件类型在提示文案中的占位词。 */
+    private static final String UNKNOWN_FILE_TYPE_LABEL = "未知类型";
+
+    /** 类型清单在提示文案中的连接符。 */
+    private static final String TYPE_JOINER = "、";
+
     /** 知识库对象资产存储访问端口（构建各解析器的读源依赖，跨 BC 消费）。 */
     private final KbAssetStoragePort kbAssetStoragePort;
 
     /** LOCAL 解析器进程内单例（无引擎参数，构造一次复用）。 */
     private final LocalTikaDocumentParser localTikaDocumentParser;
 
-    /** 本地直读兜底解析器进程内单例（引擎不支持该文档类型时使用，无引擎参数，构造一次复用）。 */
+    /** 本地直读兜底解析器进程内单例（仅 LOCAL 引擎在类型不受支持时使用）。 */
     private final LocalReadFallbackDocumentParser localReadFallbackDocumentParser;
 
     /**
@@ -91,14 +109,16 @@ public class DefaultDocumentParserRegistry implements DocumentParserRegistry {
     }
 
     /**
-     * 按解析配置 + 文档类型路由：先按 provider 选引擎，再看引擎是否支持该文档类型。
-     * <p>支持 → 返回引擎解析器；不支持（含类型为 null 的未知情形）→ 返回本地直读兜底解析器，
-     * 不调用引擎，MUST NOT 因「引擎不支持该类型」把文档置 FAILED。</p>
+     * 按解析配置 + 文档类型路由：先按 provider 选引擎，再校验引擎是否声明支持该文档类型。
+     * <p>支持 → 返回引擎解析器。不支持时按引擎分治：<b>LOCAL</b> 返回本地直读兜底解析器
+     * （图片视觉直通 / 纯文本直读）；<b>MINERU</b> 抛 {@link IllegalArgumentException}
+     * 并列出该引擎支持的类型，不回落任何兜底。</p>
      *
      * @param parseConfig 知识库解析配置
      * @param fileType    文档类型，可为 null（未知类型）
-     * @return 引擎解析器（引擎支持该类型）或本地直读兜底解析器
-     * @throws IllegalArgumentException 解析配置为 null、provider 未知或 MINERU 必填参数缺失
+     * @return 引擎解析器（引擎声明支持该类型），或 LOCAL 引擎下的本地直读兜底解析器
+     * @throws IllegalArgumentException 解析配置为 null、provider 未知、MINERU 必填参数缺失，
+     *                                  或 MINERU 遇不受支持的文档类型
      */
     @Override
     public DocumentParser resolve(DocumentParseConfig parseConfig, FileType fileType) {
@@ -106,7 +126,24 @@ public class DefaultDocumentParserRegistry implements DocumentParserRegistry {
         if (ObjectUtils.isNotEmpty(fileType) && engine.supportedTypes().contains(fileType)) {
             return engine;
         }
+        ParseEngineProvider provider = ObjectUtils.defaultIfNull(parseConfig.provider(), ParseEngineProvider.LOCAL);
+        if (ParseEngineProvider.MINERU == provider) {
+            throw new IllegalArgumentException(String.format(ERROR_UNSUPPORTED_FILE_TYPE,
+                    ObjectUtils.isEmpty(fileType) ? UNKNOWN_FILE_TYPE_LABEL : fileType.name(),
+                    joinSupportedTypes(engine.supportedTypes())));
+        }
         return localReadFallbackDocumentParser;
+    }
+
+    /**
+     * 支持类型清单按名称升序拼接为提示文案（顺序稳定，便于用户与日志对照）。
+     *
+     * @param supportedTypes 引擎声明的支持类型集合
+     * @return 以顿号连接的名称串
+     */
+    private static String joinSupportedTypes(Set<FileType> supportedTypes) {
+        return supportedTypes.stream().map(Enum::name).sorted(Comparator.naturalOrder())
+                .collect(Collectors.joining(TYPE_JOINER));
     }
 
     /**

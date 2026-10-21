@@ -4,7 +4,7 @@ import { MessagePlugin } from 'tdesign-vue-next';
 import FormSection from '@/shared/components/FormSection.vue';
 import { errorMessage } from '@/shared/composables/useAsync';
 import { KB_LANGUAGES, DEDUP_ACTIONS, DEDUP_MATCH_RULES } from '@/shared/enums/dict';
-import { listEnabledProfiles, MODEL_TYPE_CHAT, MODEL_TYPE_EMBEDDING } from '@/modules/model/api';
+import { listEnabledProfiles, MODEL_TYPE_CHAT_VLM, MODEL_TYPE_EMBEDDING } from '@/modules/model/api';
 import type { ModelProfileResponse } from '@/modules/model/api';
 import { createKnowledgeBase, updateKnowledgeBase } from '../api/knowledgeBase';
 import type { KnowledgeBaseWire } from '../api/knowledgeBase';
@@ -66,15 +66,15 @@ function fieldError(key: string): string | undefined {
   return errors.value[key];
 }
 
-/** 加载启用中的嵌入 / 对话模型（供两级下拉） */
+/** 加载启用中的嵌入 / 视觉对话模型（供两级下拉；类型过滤已在服务端完成） */
 async function loadProfiles(): Promise<void> {
   try {
-    const [embedding, chat] = await Promise.all([
+    const [embedding, vlm] = await Promise.all([
       listEnabledProfiles(MODEL_TYPE_EMBEDDING),
-      listEnabledProfiles(MODEL_TYPE_CHAT),
+      listEnabledProfiles(MODEL_TYPE_CHAT_VLM),
     ]);
     embeddingRaw.value = embedding;
-    multiRaw.value = chat;
+    multiRaw.value = vlm;
   } catch (e) {
     MessagePlugin.error(`模型列表加载失败：${errorMessage(e)}`);
   }
@@ -157,11 +157,12 @@ async function submit(): Promise<void> {
         <div class="kb-field">
           <label class="kb-field__label">语言<span class="kb-field__req">*</span></label>
           <t-select v-model="draft.language" :options="languageOptions" />
+          <p class="kb-field__hint">生成知识图谱的语言</p>
           <p v-if="fieldError('language')" class="kb-field__error">{{ fieldError('language') }}</p>
         </div>
       </FormSection>
 
-      <FormSection title="模型配置" hint="嵌入模型引用 ENABLED 的嵌入模型；多模态模型引用 ENABLED 的对话模型（必填）">
+      <FormSection title="模型配置" hint="嵌入模型引用 ENABLED 的嵌入模型；多模态模型仅可选 ENABLED 的视觉对话模型（必填）">
         <div class="kb-field">
           <label class="kb-field__label">嵌入模型<span class="kb-field__req">*</span></label>
           <t-select
@@ -179,7 +180,7 @@ async function submit(): Promise<void> {
           <t-select
             v-model="draft.multiModelProfileId"
             :options="multiModelOptions"
-            placeholder="选择多模态（对话）模型"
+            placeholder="选择多模态（视觉对话）模型"
             :status="fieldError('multiModelProfileId') ? 'error' : 'default'"
           />
           <p v-if="fieldError('multiModelProfileId')" class="kb-field__error">{{ fieldError('multiModelProfileId') }}</p>

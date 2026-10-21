@@ -53,20 +53,22 @@ public class ModelProfileController {
     /**
      * 分页列出当前用户的模型配置（页码分页，附命中总数；{@code size} 上限 100）。
      *
-     * @param keyword 名称关键字（可空）
-     * @param status  状态过滤（可空）
-     * @param page    页码（缺省 1，小于 1 按 1）
-     * @param size    每页条数（缺省 20，上限 100）
+     * @param keyword   名称关键字（可空）
+     * @param status    状态过滤（可空）
+     * @param modelType 类型业务码过滤（可空，可重复传参取并集；1=对话LLM 2=视觉对话 3=嵌入 4=重排）
+     * @param page      页码（缺省 1，小于 1 按 1）
+     * @param size      每页条数（缺省 20，上限 100）
      * @return 分页模型配置列表及总数
      */
     @GetMapping
     public ApiResponse<PaginatedResponse<ModelProfileResponse>> list(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) List<Integer> modelType,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size
     ) {
-        ListModelProfileQuery query = toListQuery(keyword, status, page, size);
+        ListModelProfileQuery query = toListQuery(keyword, status, modelType, page, size);
         List<ModelProfile> profiles = applicationService.listProfiles(query);
         long total = applicationService.countProfiles(query);
         List<ModelProfileResponse> responses = profiles.stream()
@@ -138,11 +140,12 @@ public class ModelProfileController {
         return ApiResponse.success(null);
     }
 
-    private ListModelProfileQuery toListQuery(String keyword, String status, Integer page, Integer size) {
+    private ListModelProfileQuery toListQuery(String keyword, String status, List<Integer> modelType,
+                                              Integer page, Integer size) {
         int safePage = page == null || page < 1 ? 1 : page;
         int safeSize = size == null || size < 1 ? 20 : Math.min(size, 100);
         ModelProfileStatus statusEnum = StringUtils.isNotBlank(status)
                 ? ModelProfileStatus.valueOf(status) : null;
-        return new ListModelProfileQuery(keyword, statusEnum, safePage, safeSize);
+        return new ListModelProfileQuery(keyword, statusEnum, modelType, safePage, safeSize);
     }
 }

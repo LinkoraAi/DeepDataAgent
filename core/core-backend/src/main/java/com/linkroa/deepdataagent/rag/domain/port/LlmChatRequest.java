@@ -34,6 +34,7 @@ import java.util.List;
  * @param cacheType          缓存分区类型（可空，空回落 {@link CacheType#ANSWER}）
  * @param images             多模态图片载荷（可空，空回落不可变空列表；仅进 user message 且参与缓存键摘要）
  * @param attributionChunkId 缓存归属登记用的分块标识（可空；仅登记归属，不参与缓存键计算与命中判定）
+ * @param callContext        调用上下文（可空；仅用于调用级日志归因，不参与缓存键计算）
  * @author DeepDataAgent
  */
 public record LlmChatRequest(
@@ -44,7 +45,8 @@ public record LlmChatRequest(
         Double temperature,
         CacheType cacheType,
         List<LlmImage> images,
-        Long attributionChunkId
+        Long attributionChunkId,
+        LlmCallContext callContext
 ) {
 
     /**
@@ -72,6 +74,26 @@ public record LlmChatRequest(
     }
 
     /**
+     * 便捷构造器：显式声明归因字段但不携带调用上下文（观测字段引入前的八参形态）。
+     * <p>新增调用上下文后保留本构造器，既有调用点无需改动；调用上下文归一为空表示不参与日志归因。</p>
+     *
+     * @param kbId               所属知识库ID
+     * @param modelProfileId     模型配置 profileId
+     * @param systemPrompt       系统提示词（可空）
+     * @param userPrompt         用户提示词
+     * @param temperature        采样温度（可空）
+     * @param cacheType          缓存分区类型（可空，空回落 {@link CacheType#ANSWER}）
+     * @param images             多模态图片载荷（可空，空回落不可变空列表）
+     * @param attributionChunkId 缓存归属登记用的分块标识（可空）
+     */
+    public LlmChatRequest(Long kbId, String modelProfileId, String systemPrompt, String userPrompt,
+                          Double temperature, CacheType cacheType, List<LlmImage> images,
+                          Long attributionChunkId) {
+        this(kbId, modelProfileId, systemPrompt, userPrompt, temperature, cacheType, images,
+                attributionChunkId, null);
+    }
+
+    /**
      * 便捷构造器：携带图片但不登记归属的既有形态（引入归因字段前的七参规范构造器签名，
      * 既有调用点零改动；归因字段归一为空表示不登记归属）。
      *
@@ -85,7 +107,7 @@ public record LlmChatRequest(
      */
     public LlmChatRequest(Long kbId, String modelProfileId, String systemPrompt,
                           String userPrompt, Double temperature, CacheType cacheType, List<LlmImage> images) {
-        this(kbId, modelProfileId, systemPrompt, userPrompt, temperature, cacheType, images, null);
+        this(kbId, modelProfileId, systemPrompt, userPrompt, temperature, cacheType, images, null, null);
     }
 
     /**
@@ -100,7 +122,7 @@ public record LlmChatRequest(
      */
     public LlmChatRequest(Long kbId, String modelProfileId, String systemPrompt,
                           String userPrompt, Double temperature, CacheType cacheType) {
-        this(kbId, modelProfileId, systemPrompt, userPrompt, temperature, cacheType, List.of(), null);
+        this(kbId, modelProfileId, systemPrompt, userPrompt, temperature, cacheType, List.of(), null, null);
     }
 
     /**
@@ -114,6 +136,6 @@ public record LlmChatRequest(
      */
     public LlmChatRequest(Long kbId, String modelProfileId, String systemPrompt,
                           String userPrompt, Double temperature) {
-        this(kbId, modelProfileId, systemPrompt, userPrompt, temperature, CacheType.ANSWER, List.of(), null);
+        this(kbId, modelProfileId, systemPrompt, userPrompt, temperature, CacheType.ANSWER, List.of(), null, null);
     }
 }

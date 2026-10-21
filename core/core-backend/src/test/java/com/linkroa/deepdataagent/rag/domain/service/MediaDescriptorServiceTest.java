@@ -33,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -985,6 +986,31 @@ class MediaDescriptorServiceTest {
                 MultimodalMetaKeys.META_KEY_IMG_PATH, "images/sales.png",
                 MultimodalMetaKeys.META_KEY_IMAGE_CAPTION, "季度销售额柱状图",
                 MultimodalMetaKeys.META_KEY_MEDIA_OBJECT_KEY, MEDIA_OBJECT_KEY));
+    }
+
+    /**
+     * 场景：同一多模态模板以不同知识库语言渲染。
+     * 预期：指令正文相同，仅 {@code {language}} 取值不同；中文库要求中文输出、英文库要求英文输出。
+     */
+    @Test
+    void should_injectLanguageConstraintIntoMultimodalPrompt_when_describe_givenChineseAndEnglish() {
+        // given
+        when(llmClient.chat(any(LlmChatRequest.class))).thenReturn(new LlmChatResult(
+                "{\"detailed_description\": \"d\", \"entity_info\": {\"summary\": \"s\"}}", 1));
+        ContentBlockVO block = new ContentBlockVO(ContentBlockVO.TYPE_IMAGE, "图占位",
+                Map.of(MultimodalMetaKeys.META_KEY_IMG_PATH, "images/sales.png"));
+
+        // when
+        service.describe(KB_ID, PROFILE_ID, "Chinese", block);
+        service.describe(KB_ID, PROFILE_ID, "English", block);
+
+        // then
+        ArgumentCaptor<LlmChatRequest> captor = ArgumentCaptor.forClass(LlmChatRequest.class);
+        verify(llmClient, times(2)).chat(captor.capture());
+        assertTrue(captor.getAllValues().get(0).userPrompt().contains("in Chinese"),
+                "中文库应在多模态模板中注入 Chinese 输出约束");
+        assertTrue(captor.getAllValues().get(1).userPrompt().contains("in English"),
+                "英文库应在多模态模板中注入 English 输出约束");
     }
 
 }

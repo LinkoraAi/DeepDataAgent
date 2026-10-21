@@ -7,6 +7,7 @@ import com.linkroa.deepdataagent.agent.application.dto.ResolvedModelCredentialDT
 import com.linkroa.deepdataagent.agent.application.dto.ResolvedSkillDTO;
 import com.linkroa.deepdataagent.agent.application.port.AgentVersionAssemblyPort;
 import com.linkroa.deepdataagent.agent.application.service.ModelCatalogService;
+import com.linkroa.deepdataagent.agent.application.validation.ModelProfileValidator;
 import com.linkroa.deepdataagent.agent.domain.model.AgentDefinition;
 import com.linkroa.deepdataagent.agent.domain.model.AgentTool;
 import com.linkroa.deepdataagent.agent.domain.model.AgentVersion;
@@ -264,6 +265,8 @@ public class DefaultAgentVersionAssemblyPort implements AgentVersionAssemblyPort
         ModelRef modelRef = versionRow.parseModel();
         ModelProfile profile = resolveInternalProfile(versionRow, modelRef, ownerId);
         requireOwner(profile.ownerId(), ownerId, "模型配置不存在");
+        // 装配期类型兜底：智能体模型槽位仅接受对话LLM / 视觉对话（归属确认后校验，避免泄露存在性）
+        ModelProfileValidator.validateType(profile, ModelProfileValidator.AGENT_MODEL_TYPES);
         return new VersionAndProfile(versionRow, profile, modelRef);
     }
 

@@ -18,14 +18,13 @@ import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link PromptCatalog} 静态门面单元测试。
  * <p>覆盖门面行为契约：render 的 fail-fast 矩阵（空模板名 / 空语言 / null 变量 /
- * 未知模板 / 缺变量 / null 变量值 / 残留占位符 / 系统分隔符不可被调用方覆盖）、
+ * 未知模板 / 缺变量 / null 变量值 / 外部值中的花括号字面量透传 / 系统分隔符不可被调用方覆盖）、
  * normalizeLanguage 语言归一（全名 / 裸码 / 大小写 / trim）、
  * buildEntityTypesGuidance 组装（内置清单、自定义去重与同名剔除、Other 兜底、双语引导句）、
  * {@code QUERY_ENHANCEMENT_SUFFIX} 前导双换行，
@@ -120,7 +119,7 @@ class PromptCatalogTest {
     @Test
     void should_throwException_when_render_given_missingVar() {
         // given
-        Map<String, Object> vars = Map.of("content_type", "PDF");
+        Map<String, Object> vars = Map.of("content_type", "PDF", "language", "English");
 
         // when
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
@@ -139,6 +138,7 @@ class PromptCatalogTest {
         // given
         Map<String, Object> vars = new HashMap<>();
         vars.put("content_type", "PDF");
+        vars.put("language", "English");
         vars.put("entity_name", "DeepData");
         vars.put("content", null);
 
@@ -151,24 +151,61 @@ class PromptCatalogTest {
     }
 
     /**
-     * 场景：变量取值本身携带未转义占位符形态内容（注入后正文再次出现 {@code {entity_name}}）。
-     * 预期：替换完成后残留占位符校验命中，抛 {@link IllegalArgumentException}。
+     * 场景：变量取值本身携带占位符形态内容（注入后正文出现 {@code {entity_name}}）。
+     * 预期：替换值按字面量透传，不得误判为未替换的模板占位符。
      */
     @Test
-    void should_throwException_when_render_given_injectedValueWithLeftoverPlaceholder() {
+    void should_keepLiteralBraces_when_render_given_injectedValueWithPlaceholderLikeText() {
         // given
         Map<String, Object> vars = Map.of(
                 "content_type", "PDF",
+                "language", "English",
                 "entity_name", "DeepData",
                 "content", "{entity_name}");
 
         // when
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> PromptCatalog.render(PromptTemplates.GENERIC_PROMPT, "English", vars));
+        String rendered = PromptCatalog.render(PromptTemplates.GENERIC_PROMPT, "English", vars);
 
         // then
-        assertTrue(exception.getMessage().contains("未替换的占位符"),
-                "应报告残留占位符而非静默输出");
+        assertTrue(rendered.contains("{entity_name}"),
+                "外部值中的花括号内容必须原样保留");
+    }
+
+    /**
+     * 场景：文档原文包含环境变量占位形态（如 {@code ${PORT}}）。
+     * 预期：渲染成功且内容逐字保留，不得抛异常。
+     */
+    @Test
+    void should_keepEnvVarPlaceholder_when_render_given_documentTextWithDollarBrace() {
+        // given
+        Map<String, Object> vars = Map.of(
+                "content_type", "TXT",
+                "language", "English",
+                "entity_name", "DeepData",
+                "content", "start_command: http://0.0.0.0:${PORT}");
+
+        // when
+        String rendered = PromptCatalog.render(PromptTemplates.GENERIC_PROMPT, "English", vars);
+
+        // then
+        assertTrue(rendered.contains("http://0.0.0.0:${PORT}"),
+                "文档正文中的 ${PORT} 必须逐字保留");
+    }
+
+    /**
+     * 场景：正文模板渲染时变量值含多种花括号形态。
+     * 预期：全部按字面量透传。
+     */
+    @Test
+    void should_keepBraceVariants_when_renderBody_given_placeholderLikeValues() {
+        // given
+        Map<String, Object> vars = Map.of("value", "${PORT} {name} {{name}} {SERVICE}");
+
+        // when
+        String rendered = PromptCatalog.renderBody("prefix {value} suffix", vars);
+
+        // then
+        assertEquals("prefix ${PORT} {name} {{name}} {SERVICE} suffix", rendered);
     }
 
     /**
@@ -372,7 +409,7 @@ class PromptCatalogTest {
             PromptTemplates.RAG_RESPONSE,
             PromptTemplates.NAIVE_RAG_RESPONSE})
     void should_renderIdenticalBody_when_render_given_lightragTemplateDualSets(String templateName) {
-        // given：覆盖 4 个模板全部占位符的超集变量表（值不含花括号，避免触发残留占位符误报）
+        // given：覆盖 4 个模板全部占位符的超集变量表（值不含花括号：保持夹具取值与模板占位符形态可区分）
         Map<String, Object> vars = new HashMap<>(PromptVarsFixtures.LIGHTRAG_SUPERSET_VARS);
 
         // when
@@ -385,12 +422,12 @@ class PromptCatalogTest {
     }
 
     /**
-     * 场景：query-rewrite 模板双套为有意分叉（zh 套为翻译后正文，与 en 套内容不同）。
-     * 预期：注入同一变量表分别以 {@code Chinese} 与 {@code English} 渲染，产物存在差异，
-     * 且各自携带对应语言的指令正文（锁定双套分叉不被误回退为逐字相同）。
+     * 场景：模板目录已收敛为单套英文，query-rewrite 不再有中文镜像。
+     * 预期：以 {@code Chinese} 与 {@code English} 渲染同一模板得到逐字一致的英文指令正文，
+     * 产出语言由 {@code {language}} 变量控制。
      */
     @Test
-    void should_renderDivergentBodies_when_render_given_queryRewriteDualSets() {
+    void should_renderIdenticalEnglishBody_when_render_given_queryRewriteDifferentLanguages() {
         // given
         Map<String, Object> vars = new HashMap<>(PromptVarsFixtures.QUERY_REWRITE_VARS);
 
@@ -398,11 +435,36 @@ class PromptCatalogTest {
         String zhRendered = PromptCatalog.render(PromptTemplates.QUERY_REWRITE, "Chinese", vars);
         String enRendered = PromptCatalog.render(PromptTemplates.QUERY_REWRITE, "English", vars);
 
-        // then：双套正文存在差异（有意分叉），且各自携带对应语言特征正文
-        assertNotEquals(enRendered, zhRendered, "query-rewrite 双套为有意分叉，渲染产物不应逐字相同");
-        assertTrue(zhRendered.contains("问题改写专家"), "zh 套应保留中文指令正文");
-        assertTrue(enRendered.contains("expert query rewriter"), "en 套应保留英文指令正文");
-        assertTrue(zhRendered.contains("订单发货超时的处理规则是什么"), "zh 套应完成 {query} 占位符替换");
+        // then：单目录下两者逐字一致，且均为英文指令正文
+        assertEquals(enRendered, zhRendered, "单套英文目录下不同语言渲染结果应逐字一致");
+        assertTrue(enRendered.contains("expert query rewriter"), "指令正文应保持英文");
+        assertTrue(zhRendered.contains("订单发货超时的处理规则是什么"), "应完成 {query} 占位符替换");
+    }
+
+    /**
+     * 场景：MIX（rag_response）与 NAIVE（naive_rag_response）作答模板。
+     * 预期：模板携带 LightRAG 引用意图（reference_id 追踪、References 格式说明、
+     * {@code ### References} 标题、最多 5 条限制），且不再存在禁止引用口径。
+     */
+    @Test
+    void should_containLightRagCitationIntent_when_render_givenAnswerTemplates() {
+        // given
+        Map<String, Object> vars = new HashMap<>(PromptVarsFixtures.LIGHTRAG_SUPERSET_VARS);
+
+        // when / then
+        for (String templateName : List.of(PromptTemplates.RAG_RESPONSE, PromptTemplates.NAIVE_RAG_RESPONSE)) {
+            String rendered = PromptCatalog.render(templateName, "Chinese", vars);
+            assertTrue(rendered.contains("Track the reference_id"),
+                    "模板 [" + templateName + "] 应要求追踪 reference_id");
+            assertTrue(rendered.contains("References Section Format"),
+                    "模板 [" + templateName + "] 应保留 References 格式说明");
+            assertTrue(rendered.contains("### References"),
+                    "模板 [" + templateName + "] 应保留 References 段标题");
+            assertTrue(rendered.contains("maximum of 5"),
+                    "模板 [" + templateName + "] 应保留最多 5 条引用限制");
+            assertFalse(rendered.contains("Citations Are Prohibited"),
+                    "模板 [" + templateName + "] 不应保留禁止引用口径");
+        }
     }
 
     /**
@@ -530,7 +592,7 @@ class PromptCatalogTest {
     }
 
     /**
-     * 场景：静态化迁移完成后，读取目录中的 4 段用户提示词原始正文（zh/en 两套）。
+     * 场景：静态化迁移完成后，读取目录中的 4 段用户提示词原始正文（单套英文）。
      * 预期：各模板占位符集合与修订前基线完全一致（新条款仅复用既有 {@code {completion_delimiter}}，
      * 未新增或删除任何占位符）。
      */
@@ -547,7 +609,6 @@ class PromptCatalogTest {
 
         // when / then
         for (Map.Entry<String, Set<String>> entry : baselineByTemplate.entrySet()) {
-            assertBaselinePlaceholders(entry.getKey(), entry.getValue(), ZhPromptCatalog.TEMPLATES);
             assertBaselinePlaceholders(entry.getKey(), entry.getValue(), EnPromptCatalog.TEMPLATES);
         }
     }
@@ -557,7 +618,7 @@ class PromptCatalogTest {
      *
      * @param templateName 模板名
      * @param baseline     基线占位符集合
-     * @param catalog      目录注册表（zh 或 en）
+     * @param catalog      目录注册表（单套英文）
      */
     private static void assertBaselinePlaceholders(String templateName, Set<String> baseline,
                                                    Map<String, String> catalog) {

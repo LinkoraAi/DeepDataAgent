@@ -574,7 +574,7 @@ CREATE TABLE knowledge_base (
                                 id                  BIGSERIAL       PRIMARY KEY,
                                 name                VARCHAR(256)    NOT NULL,
                                 description         TEXT,
-                                language            VARCHAR(32)     NOT NULL DEFAULT 'ENGLISH',
+                                language            VARCHAR(32)     NOT NULL DEFAULT 'Chinese',
                                 lifecycle_status    VARCHAR(32)     NOT NULL DEFAULT 'ACTIVE',
                                 error_message       TEXT,
                                 rag_engine_config   JSONB,
@@ -600,10 +600,10 @@ COMMENT ON COLUMN knowledge_base.id IS '知识库ID';
 COMMENT ON COLUMN knowledge_base.name IS '知识库名称';
 COMMENT ON COLUMN knowledge_base.owner_id IS '归属用户ID（创建即定，一经写入不可变；知识库及其文档切片仅归属者可见可操作）';
 COMMENT ON COLUMN knowledge_base.description IS '知识库描述';
-COMMENT ON COLUMN knowledge_base.language IS '知识库语言: 11语言全名(Chinese/English/Japanese/Korean/French/German/Spanish/Portuguese/Russian/Arabic/Italian)';
+COMMENT ON COLUMN knowledge_base.language IS '知识库语言: 仅 Chinese/English 两个全名，缺省 Chinese；控制知识图谱生成语言（实体、关系、描述与多模态描述），不控制问答回复语言';
 COMMENT ON COLUMN knowledge_base.lifecycle_status IS '生命周期状态: ACTIVE/DELETING/DELETE_FAILED（DELETED常量已移除；收口即物理DELETE行消失、行缺失即已删除）';
 COMMENT ON COLUMN knowledge_base.error_message IS '清退失败原因留痕(DELETE_FAILED时记录[KB-CLEANUP] step=…摘要，余为NULL)';
-COMMENT ON COLUMN knowledge_base.rag_engine_config IS 'RAG引擎配置VO(JSON): {engineType: DOCUMENT_ENGINE|MEDIA_ENGINE, parseEngine: {provider: LOCAL|MINERU|UNDEFINED, engineConfig: {params: {}}}, chunkStrategy: {chunkMode: GENERAL|QA|BOOK|LAWS|TABLE|PRESENTATION|ONE|TIME_WINDOW|SCENE_BOUNDARY, modeConfig: {params: {}}}, language: 11语言全名(缺省视同Chinese)}；本列不承载任何模型选型';
+COMMENT ON COLUMN knowledge_base.rag_engine_config IS 'RAG引擎配置VO(JSON): {engineType: DOCUMENT_ENGINE|MEDIA_ENGINE, parseEngine: {provider: LOCAL|MINERU|UNDEFINED, engineConfig: {params: {}}}, chunkStrategy: {chunkMode: GENERAL|QA|BOOK|LAWS|TABLE|PRESENTATION|ONE|TIME_WINDOW|SCENE_BOUNDARY, modeConfig: {params: {}}, language: 已弃用（语言真相源为 knowledge_base.language 列）}}；本列不承载任何模型选型';
 COMMENT ON COLUMN knowledge_base.dedup_policy IS '去重策略VO(JSON): {matchRule: NONE|BY_NAME|BY_CONTENT|BY_NAME_OR_CONTENT, conflictAction: REJECT|SKIP|OVERWRITE}';
 COMMENT ON COLUMN knowledge_base.retrieval_strategy IS '检索策略VO(JSON): {strategyType: NAIVE|MIX, rewriteQuestion, resultChunkCount, similarThreshold, rerankConfig: {enabled, modelProfileId, topK}, fusionConfig: {fusionType: RRF|WEIGHTED_SUM, rrfK, channelDenseWeight: {VECTOR: 0.7, BM25: 0.3}}}';
 COMMENT ON COLUMN knowledge_base.embedding_config IS '嵌入模型配置VO(JSON): {modelProfileId}；切片向量写入与检索 query 向量化均以本列为唯一真相源，二者必须同源，否则向量召回静默失效';

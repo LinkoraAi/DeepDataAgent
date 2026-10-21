@@ -12,7 +12,6 @@ import com.linkroa.deepdataagent.knowledgebase.application.command.UpdateRetriev
 import com.linkroa.deepdataagent.knowledgebase.application.contract.RetrievalConfigDTO;
 import com.linkroa.deepdataagent.knowledgebase.application.query.ListKnowledgeBaseQuery;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.KnowledgeBase;
-import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.DocumentStatus;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.KnowledgeBaseSortField;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.LifecycleStatus;
 import com.linkroa.deepdataagent.knowledgebase.domain.repository.ChunkRepository;
@@ -139,11 +138,11 @@ class KnowledgeBaseApplicationServiceTest {
     }
 
     @Test
-    void should_saveKnowledgeBaseWithLanguage_when_create_given_legalJapaneseLanguage() {
+    void should_saveKnowledgeBaseWithLanguage_when_create_given_legalEnglishLanguage() {
         // given：语言经独立入参传递（真相源=language 列），rag_engine_config 不再携带语言键
-        when(knowledgeBaseRepository.findByNameAndOwner("日文文库", OWNER_ID)).thenReturn(Optional.empty());
+        when(knowledgeBaseRepository.findByNameAndOwner("英文文库", OWNER_ID)).thenReturn(Optional.empty());
         when(knowledgeBaseRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("日文文库", "描述", "Japanese",
+        CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("英文文库", "描述", "English",
                 "{\"engineType\":\"DOCUMENT_ENGINE\"}",
                 null, null, null, null, null);
 
@@ -151,7 +150,7 @@ class KnowledgeBaseApplicationServiceTest {
         KnowledgeBase saved = service.create(command);
 
         // then：值域校验通过，语言落聚合列字段、引擎配置原样持久化
-        assertEquals("Japanese", saved.language());
+        assertEquals("English", saved.language());
         assertEquals("{\"engineType\":\"DOCUMENT_ENGINE\"}", saved.ragEngineConfig());
         verify(knowledgeBaseRepository).save(any(KnowledgeBase.class));
     }
@@ -173,10 +172,10 @@ class KnowledgeBaseApplicationServiceTest {
     }
 
     @Test
-    void should_throwBadRequest_when_create_given_unlistedLanguagePortuguese() {
-        // given：Portuguese 不在 11 全名值域
-        when(knowledgeBaseRepository.findByNameAndOwner("葡语文库", OWNER_ID)).thenReturn(Optional.empty());
-        CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("葡语文库", "描述", "Portuguese",
+    void should_throwBadRequest_when_create_given_formerDomainLanguageJapanese() {
+        // given：历史 11 值域中的其它语言不再合法
+        when(knowledgeBaseRepository.findByNameAndOwner("日文文库", OWNER_ID)).thenReturn(Optional.empty());
+        CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("日文文库", "描述", "Japanese",
                 "{\"engineType\":\"DOCUMENT_ENGINE\"}",
                 null, null, null, null, null);
 
@@ -185,9 +184,9 @@ class KnowledgeBaseApplicationServiceTest {
                 () -> service.create(command));
 
         // then：明确拒绝并提示合法值域，禁止静默回落后保存成功
-        assertTrue(exception.getMessage().contains("Portuguese"));
+        assertTrue(exception.getMessage().contains("Japanese"));
         assertTrue(exception.getMessage().contains("English"));
-        assertTrue(exception.getMessage().contains("Dutch"));
+        assertTrue(exception.getMessage().contains("Chinese"));
         verify(knowledgeBaseRepository, never()).save(any());
     }
 
@@ -234,7 +233,7 @@ class KnowledgeBaseApplicationServiceTest {
     @Test
     void should_throwBadRequest_when_update_given_unlistedLanguageBeforeTransaction() {
         // given：更新入口同样强校验语言值域，且校验前置于事务不开库不读行
-        UpdateKnowledgeBaseCommand command = new UpdateKnowledgeBaseCommand(1L, null, null, "Portuguese",
+        UpdateKnowledgeBaseCommand command = new UpdateKnowledgeBaseCommand(1L, null, null, "Japanese",
                 "{\"engineType\":\"DOCUMENT_ENGINE\"}", null, null, null, null, null);
 
         // when // then
@@ -418,7 +417,6 @@ class KnowledgeBaseApplicationServiceTest {
         // given：ACTIVE 且无解析中文档，CAS 置位命中，清退任务本次新建（非在飞）
         when(knowledgeBaseRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
-        when(documentRepository.countByKbId(1L, null, DocumentStatus.PROCESSING)).thenReturn(0L);
         when(knowledgeBaseRepository.transitLifecycle(1L, LifecycleStatus.ACTIVE, LifecycleStatus.DELETING))
                 .thenReturn(true);
         when(kbCleanupTaskSubmitter.submit(1L)).thenReturn(true);
@@ -438,7 +436,6 @@ class KnowledgeBaseApplicationServiceTest {
         // given：受理矩阵只负责 CAS 置态与投递，收口（条件物理 DELETE）由清退线程经 Api→Repository 直连完成
         when(knowledgeBaseRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
-        when(documentRepository.countByKbId(1L, null, DocumentStatus.PROCESSING)).thenReturn(0L);
         when(knowledgeBaseRepository.transitLifecycle(1L, LifecycleStatus.ACTIVE, LifecycleStatus.DELETING))
                 .thenReturn(true);
         when(kbCleanupTaskSubmitter.submit(1L)).thenReturn(true);
@@ -451,18 +448,22 @@ class KnowledgeBaseApplicationServiceTest {
     }
 
     @Test
-    void should_throwConflictAndNotSubmit_when_delete_given_processingDocumentExists() {
-        // given：ACTIVE 但存在解析中文档（拒绝受理）
+    void should_cancelDocumentsAndSubmit_when_delete_given_processingDocumentExists() {
+        // given：ACTIVE 且存在解析中文档——删除语义要求立即停止库内摄入，不再 409 拒绝
         when(knowledgeBaseRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
-        when(documentRepository.countByKbId(1L, null, DocumentStatus.PROCESSING)).thenReturn(2L);
+        when(knowledgeBaseRepository.transitLifecycle(1L, LifecycleStatus.ACTIVE, LifecycleStatus.DELETING))
+                .thenReturn(true);
+        when(documentRepository.markNonTerminalDeletingByKbId(1L)).thenReturn(2);
+        when(kbCleanupTaskSubmitter.submit(1L)).thenReturn(true);
 
-        // when // then
-        ResourceConflictException ex = assertThrows(ResourceConflictException.class,
-                () -> service.delete(new DeleteKnowledgeBaseCommand(1L)));
-        assertTrue(ex.getMessage().contains("2"));
-        verify(knowledgeBaseRepository, never()).transitLifecycle(any(), any(), any());
-        verify(kbCleanupTaskSubmitter, never()).submit(any());
+        // when
+        KnowledgeBase accepted = service.delete(new DeleteKnowledgeBaseCommand(1L));
+
+        // then：知识库与库内非终态文档同事务置 DELETING，清退任务照常投递
+        assertEquals(LifecycleStatus.DELETING, accepted.lifecycleStatus());
+        verify(documentRepository).markNonTerminalDeletingByKbId(1L);
+        verify(kbCleanupTaskSubmitter).submit(1L);
     }
 
     @Test
@@ -551,7 +552,6 @@ class KnowledgeBaseApplicationServiceTest {
         // given：行锁下读得 ACTIVE 但 CAS 未命中（并发窗口下状态已被改走）
         when(knowledgeBaseRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
-        when(documentRepository.countByKbId(1L, null, DocumentStatus.PROCESSING)).thenReturn(0L);
         when(knowledgeBaseRepository.transitLifecycle(1L, LifecycleStatus.ACTIVE, LifecycleStatus.DELETING))
                 .thenReturn(false);
 
@@ -565,7 +565,6 @@ class KnowledgeBaseApplicationServiceTest {
         // given：停机窗口投递拒收（IllegalStateException）
         when(knowledgeBaseRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
-        when(documentRepository.countByKbId(1L, null, DocumentStatus.PROCESSING)).thenReturn(0L);
         when(knowledgeBaseRepository.transitLifecycle(1L, LifecycleStatus.ACTIVE, LifecycleStatus.DELETING))
                 .thenReturn(true);
         org.mockito.Mockito.doThrow(new IllegalStateException("服务正在停机"))
@@ -1010,7 +1009,6 @@ class KnowledgeBaseApplicationServiceTest {
         // given：ACTIVE 且无解析中文档，CAS 置位命中，清退任务本次新建（非在飞）
         when(knowledgeBaseRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
-        when(documentRepository.countByKbId(1L, null, DocumentStatus.PROCESSING)).thenReturn(0L);
         when(knowledgeBaseRepository.transitLifecycle(1L, LifecycleStatus.ACTIVE, LifecycleStatus.DELETING))
                 .thenReturn(true);
         when(kbCleanupTaskSubmitter.submit(1L)).thenReturn(true);
@@ -1029,7 +1027,6 @@ class KnowledgeBaseApplicationServiceTest {
         // given：在飞注册表不可用（登记抛异常），受理事务已提交
         when(knowledgeBaseRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
-        when(documentRepository.countByKbId(1L, null, DocumentStatus.PROCESSING)).thenReturn(0L);
         when(knowledgeBaseRepository.transitLifecycle(1L, LifecycleStatus.ACTIVE, LifecycleStatus.DELETING))
                 .thenReturn(true);
         org.mockito.Mockito.doThrow(new RuntimeException("在飞注册表不可用"))
@@ -1154,9 +1151,9 @@ class KnowledgeBaseApplicationServiceTest {
 
     @Test
     void should_throwNotFoundAndNotSave_when_create_given_foreignEmbeddingModel() {
-        // given：名称在归属者内可用，但嵌入模型引用归属他人的配置（existsOwned 返回 false）
+        // given：名称在归属者内可用，但嵌入模型引用归属他人的配置（类型查询返回 null）
         when(knowledgeBaseRepository.findByNameAndOwner("产品手册", OWNER_ID)).thenReturn(Optional.empty());
-        when(modelProfileReferenceApi.existsOwned("prof_foreign", OWNER_ID)).thenReturn(false);
+        when(modelProfileReferenceApi.findOwnedModelTypeCode("prof_foreign", OWNER_ID)).thenReturn(null);
         CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("产品手册", "描述", "Chinese",
                 null, null, null, "{\"modelProfileId\":\"prof_foreign\"}", null, null);
 
@@ -1171,9 +1168,10 @@ class KnowledgeBaseApplicationServiceTest {
 
     @Test
     void should_saveKnowledgeBase_when_create_given_ownedEmbeddingModel() {
-        // given：嵌入模型引用归属当前用户（existsOwned 返回 true）→ 闸门放行
+        // given：嵌入模型引用归属当前用户且类型为 EMBEDDING(3) → 闸门放行
         when(knowledgeBaseRepository.findByNameAndOwner("产品手册", OWNER_ID)).thenReturn(Optional.empty());
-        when(modelProfileReferenceApi.existsOwned("prof_mine", OWNER_ID)).thenReturn(true);
+        when(modelProfileReferenceApi.findOwnedModelTypeCode("prof_mine", OWNER_ID))
+                .thenReturn(ModelProfileReferenceApi.MODEL_TYPE_EMBEDDING);
         when(knowledgeBaseRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("产品手册", "描述", "Chinese",
                 null, null, null, "{\"modelProfileId\":\"prof_mine\"}", null, null);
@@ -1184,7 +1182,63 @@ class KnowledgeBaseApplicationServiceTest {
         // then：引用本人模型放行，落库一次且归属者仍为当前用户
         assertEquals(OWNER_ID, saved.ownerId());
         verify(knowledgeBaseRepository).save(any(KnowledgeBase.class));
-        verify(modelProfileReferenceApi).existsOwned("prof_mine", OWNER_ID);
+        verify(modelProfileReferenceApi).findOwnedModelTypeCode("prof_mine", OWNER_ID);
+    }
+
+    @Test
+    void should_throwBadRequestAndNotSave_when_create_given_embeddingSlotBoundToChatVlm() {
+        // given：嵌入槽位绑定视觉对话模型 → 类型不符
+        when(knowledgeBaseRepository.findByNameAndOwner("产品手册", OWNER_ID)).thenReturn(Optional.empty());
+        when(modelProfileReferenceApi.findOwnedModelTypeCode("prof_vlm", OWNER_ID))
+                .thenReturn(ModelProfileReferenceApi.MODEL_TYPE_CHAT_VLM);
+        CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("产品手册", "描述", "Chinese",
+                null, null, null, "{\"modelProfileId\":\"prof_vlm\"}", null, null);
+
+        // when
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> service.create(command));
+
+        // then：400 且消息含期望/实际类型，MUST NOT 落库
+        assertTrue(exception.getMessage().contains("视觉对话"));
+        assertTrue(exception.getMessage().contains("嵌入"));
+        verify(knowledgeBaseRepository, never()).save(any());
+    }
+
+    @Test
+    void should_saveKnowledgeBase_when_create_given_multiModelSlotBoundToChatVlm() {
+        // given：多模态槽位绑定视觉对话模型（严格口径下的唯一合法类型）
+        when(knowledgeBaseRepository.findByNameAndOwner("产品手册", OWNER_ID)).thenReturn(Optional.empty());
+        when(modelProfileReferenceApi.findOwnedModelTypeCode("prof_vlm", OWNER_ID))
+                .thenReturn(ModelProfileReferenceApi.MODEL_TYPE_CHAT_VLM);
+        when(knowledgeBaseRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("产品手册", "描述", "Chinese",
+                null, null, null, null, "{\"modelProfileId\":\"prof_vlm\"}", null);
+
+        // when
+        KnowledgeBase saved = service.create(command);
+
+        // then
+        assertEquals(OWNER_ID, saved.ownerId());
+        verify(knowledgeBaseRepository).save(any(KnowledgeBase.class));
+    }
+
+    @Test
+    void should_throwBadRequestAndNotSave_when_create_given_multiModelSlotBoundToChatLlm() {
+        // given：多模态槽位绑定纯对话模型 → 严格拒绝（摄入期必然解析失败）
+        when(knowledgeBaseRepository.findByNameAndOwner("产品手册", OWNER_ID)).thenReturn(Optional.empty());
+        when(modelProfileReferenceApi.findOwnedModelTypeCode("prof_llm", OWNER_ID))
+                .thenReturn(ModelProfileReferenceApi.MODEL_TYPE_CHAT_LLM);
+        CreateKnowledgeBaseCommand command = new CreateKnowledgeBaseCommand("产品手册", "描述", "Chinese",
+                null, null, null, null, "{\"modelProfileId\":\"prof_llm\"}", null);
+
+        // when
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> service.create(command));
+
+        // then
+        assertTrue(exception.getMessage().contains("对话LLM"));
+        assertTrue(exception.getMessage().contains("视觉对话"));
+        verify(knowledgeBaseRepository, never()).save(any());
     }
 
     @Test
@@ -1192,7 +1246,7 @@ class KnowledgeBaseApplicationServiceTest {
         // given：行归属当前用户，但本次落库的多模态配置引用归属他人的模型配置
         when(knowledgeBaseRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
-        when(modelProfileReferenceApi.existsOwned("prof_foreign", OWNER_ID)).thenReturn(false);
+        when(modelProfileReferenceApi.findOwnedModelTypeCode("prof_foreign", OWNER_ID)).thenReturn(null);
         UpdateKnowledgeBaseCommand command = new UpdateKnowledgeBaseCommand(1L, null, null, "Chinese",
                 null, null, null, null, "{\"modelProfileId\":\"prof_foreign\"}", null);
 
@@ -1206,7 +1260,7 @@ class KnowledgeBaseApplicationServiceTest {
         // given：检索策略启用重排且引用归属他人的重排模型（归一后 rerankConfig.modelProfileId 非空）
         when(knowledgeBaseRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
-        when(modelProfileReferenceApi.existsOwned("prof_foreign", OWNER_ID)).thenReturn(false);
+        when(modelProfileReferenceApi.findOwnedModelTypeCode("prof_foreign", OWNER_ID)).thenReturn(null);
         UpdateRetrievalConfigCommand command = new UpdateRetrievalConfigCommand(1L,
                 "{\"strategyType\":\"NAIVE\",\"rerankConfig\":{\"enabled\":true,"
                         + "\"modelProfileId\":\"prof_foreign\",\"topK\":5}}");
@@ -1214,6 +1268,44 @@ class KnowledgeBaseApplicationServiceTest {
         // when // then：重排模型引用非归属 → 404 折叠，零写入
         assertThrows(ResourceNotFoundException.class, () -> service.updateRetrievalConfig(command));
         verify(knowledgeBaseRepository, never()).update(any());
+    }
+
+    @Test
+    void should_throwBadRequestAndNotUpdate_when_updateRetrievalConfig_given_rerankSlotBoundToChatLlm() {
+        // given：重排已启用，但绑定的是对话LLM 模型 → 类型不符
+        when(knowledgeBaseRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
+        when(modelProfileReferenceApi.findOwnedModelTypeCode("prof_llm", OWNER_ID))
+                .thenReturn(ModelProfileReferenceApi.MODEL_TYPE_CHAT_LLM);
+        UpdateRetrievalConfigCommand command = new UpdateRetrievalConfigCommand(1L,
+                "{\"strategyType\":\"NAIVE\",\"rerankConfig\":{\"enabled\":true,"
+                        + "\"modelProfileId\":\"prof_llm\",\"topK\":5}}");
+
+        // when
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> service.updateRetrievalConfig(command));
+
+        // then
+        assertTrue(exception.getMessage().contains("对话LLM"));
+        assertTrue(exception.getMessage().contains("重排"));
+        verify(knowledgeBaseRepository, never()).update(any());
+    }
+
+    @Test
+    void should_skipRerankTypeCheck_when_updateRetrievalConfig_given_rerankDisabled() {
+        // given：重排未启用（enabled=false）但残留 modelProfileId，且其为对话LLM 类型
+        when(knowledgeBaseRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
+        when(modelProfileReferenceApi.findOwnedModelTypeCode("prof_llm", OWNER_ID))
+                .thenReturn(ModelProfileReferenceApi.MODEL_TYPE_CHAT_LLM);
+        when(knowledgeBaseRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        UpdateRetrievalConfigCommand command = new UpdateRetrievalConfigCommand(1L,
+                "{\"strategyType\":\"NAIVE\",\"rerankConfig\":{\"enabled\":false,"
+                        + "\"modelProfileId\":\"prof_llm\",\"topK\":5}}");
+
+        // when // then：未启用时只做归属校验，不做类型校验 → 保存放行
+        assertDoesNotThrow(() -> service.updateRetrievalConfig(command));
+        verify(knowledgeBaseRepository).update(any());
     }
 
     @Test
@@ -1227,8 +1319,8 @@ class KnowledgeBaseApplicationServiceTest {
         // when
         KnowledgeBase saved = service.create(command);
 
-        // then：无引用时 MUST NOT 触发跨 BC 归属查询，创建正常放行
+        // then：无引用时 MUST NOT 触发跨 BC 归属/类型查询，创建正常放行
         assertEquals(OWNER_ID, saved.ownerId());
-        verify(modelProfileReferenceApi, never()).existsOwned(any(), any());
+        verify(modelProfileReferenceApi, never()).findOwnedModelTypeCode(any(), any());
     }
 }

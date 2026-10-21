@@ -169,9 +169,9 @@ class DefaultContextBuilderTest {
     }
 
     @Test
-    void should_capReferencesAtFiveAndShareIdForSameFile_when_build_given_sevenChunksSixSources()
+    void should_listAllSourcesWithoutTruncation_when_build_given_sevenChunksSixSources()
             throws JacksonException {
-        // given：预算宽松全装入；7 条 chunk 来自 6 个来源（a.md 出现两次去重共享编号 1）
+        // given：预算宽松全装入；7 条 chunk 来自 6 个来源（a.md 出现两次，频次最高获编号 1）
         stubCountByLength();
         when(knowledgeBaseApi.findChunksByKbIdAndChunkIds(eq(KB_ID), any())).thenReturn(List.of(
                 chunk(CHUNK_11, "a".repeat(CHUNK_BODY_LENGTH), "a.md"),
@@ -196,12 +196,98 @@ class DefaultContextBuilderTest {
         KgContext result = contextBuilder.build(KB_ID, chunks, emptyKg(),
                 defaultShareBudget(GENEROUS_MAX_TOKENS, "q"));
 
-        // then：同文件去重共享 reference_id（切片 7 行全装入）；引用列表按首次出现序截断为 5 条
+        // then：同文件去重共享 reference_id（切片 7 行全装入）；引用列表不截断，6 条来源全部列入
         assertEquals(renderContext(PromptTemplates.NAIVE_QUERY_CONTEXT, "", "", expectedChunks,
-                "[1] a.md\n[2] b.md\n[3] c.md\n[4] d.md\n[5] e.md"), result.contextData());
-        assertEquals(5, result.referenceList().size());
+                "[1] a.md\n[2] b.md\n[3] c.md\n[4] d.md\n[5] e.md\n[6] f.md"), result.contextData());
+        assertEquals(6, result.referenceList().size());
         assertEquals("[1] a.md", result.referenceList().get(0));
-        assertEquals("[5] e.md", result.referenceList().get(4));
+        assertEquals("[6] f.md", result.referenceList().get(5));
+    }
+
+    @Test
+    void should_rankFrequentSourceFirst_when_build_given_mixedOccurrenceCount()
+            throws JacksonException {
+        // given：a.md 出现 3 次、b.md 出现 2 次；首次出现顺序为 a → b
+        stubCountByLength();
+        when(knowledgeBaseApi.findChunksByKbIdAndChunkIds(eq(KB_ID), any())).thenReturn(List.of(
+                chunk(CHUNK_11, "a".repeat(CHUNK_BODY_LENGTH), "a.md"),
+                chunk(CHUNK_12, "b".repeat(CHUNK_BODY_LENGTH), "b.md"),
+                chunk(CHUNK_13, "c".repeat(CHUNK_BODY_LENGTH), "a.md"),
+                chunk(14L, "d".repeat(CHUNK_BODY_LENGTH), "a.md"),
+                chunk(15L, "e".repeat(CHUNK_BODY_LENGTH), "b.md")));
+
+        // when
+        KgContext result = contextBuilder.build(KB_ID,
+                List.of(ranked(CHUNK_11), ranked(CHUNK_12), ranked(CHUNK_13), ranked(14L), ranked(15L)),
+                emptyKg(), defaultShareBudget(GENEROUS_MAX_TOKENS, "q"));
+
+        // then：高频来源优先获得编号 1，低频来源编号 2
+        assertEquals(List.of("[1] a.md", "[2] b.md"), result.referenceList());
+    }
+
+    @Test
+    void should_keepFirstAppearanceOrder_when_build_given_equalOccurrenceCount()
+            throws JacksonException {
+        // given：b.md 与 a.md 各出现一次，b.md 首次出现更早
+        stubCountByLength();
+        when(knowledgeBaseApi.findChunksByKbIdAndChunkIds(eq(KB_ID), any())).thenReturn(List.of(
+                chunk(CHUNK_11, "a".repeat(CHUNK_BODY_LENGTH), "b.md"),
+                chunk(CHUNK_12, "b".repeat(CHUNK_BODY_LENGTH), "a.md")));
+
+        // when
+        KgContext result = contextBuilder.build(KB_ID,
+                List.of(ranked(CHUNK_11), ranked(CHUNK_12)),
+                emptyKg(), defaultShareBudget(GENEROUS_MAX_TOKENS, "q"));
+
+        // then：频次相同时按首次出现序编号
+        assertEquals(List.of("[1] b.md", "[2] a.md"), result.referenceList());
+    }
+
+    @Test
+    void should_emitAllSevenSourceIdsWithoutDanglingReference_when_build_given_sevenDistinctSources()
+            throws JacksonException {
+        // given：7 条切片来自 7 个不同来源
+        stubCountByLength();
+        List<Chunk> rows = new ArrayList<>();
+        List<RankedChunk> chunks = new ArrayList<>();
+        for (int index = 0; index < 7; index++) {
+            long id = CHUNK_11 + index;
+            rows.add(chunk(id, "x".repeat(CHUNK_BODY_LENGTH), "s" + index + ".md"));
+            chunks.add(ranked(id));
+        }
+        when(knowledgeBaseApi.findChunksByKbIdAndChunkIds(eq(KB_ID), any())).thenReturn(rows);
+
+        // when
+        KgContext result = contextBuilder.build(KB_ID, chunks, emptyKg(),
+                defaultShareBudget(GENEROUS_MAX_TOKENS, "q"));
+
+        // then：引用列表 7 条，切片上下文中的每个编号都能在列表中找到对应条目
+        assertEquals(7, result.referenceList().size());
+        for (int index = 1; index <= 7; index++) {
+            assertTrue(result.contextData().contains("\"reference_id\":\"" + index + "\""),
+                    "切片上下文应含编号 " + index);
+            assertTrue(result.contextData().contains("[" + index + "] s" + (index - 1) + ".md"),
+                    "引用列表应含编号 " + index + " 的条目");
+        }
+    }
+
+    @Test
+    void should_leaveReferenceIdEmpty_when_build_given_chunkWithoutSource() throws JacksonException {
+        // given：切片有文档主键但无来源文件名（引用列表无从呈现标题）
+        stubCountByLength();
+        when(knowledgeBaseApi.findChunksByKbIdAndChunkIds(eq(KB_ID), any())).thenReturn(List.of(
+                chunk(CHUNK_11, "a".repeat(CHUNK_BODY_LENGTH), null, 9001L),
+                chunk(CHUNK_12, "b".repeat(CHUNK_BODY_LENGTH), "b.md")));
+
+        // when
+        KgContext result = contextBuilder.build(KB_ID,
+                List.of(ranked(CHUNK_11), ranked(CHUNK_12)),
+                emptyKg(), defaultShareBudget(GENEROUS_MAX_TOKENS, "q"));
+
+        // then：无来源切片正文仍在，但 reference_id 为空串；列表只含 b.md 一条
+        assertTrue(result.contextData().contains(jsonLine("", "a".repeat(CHUNK_BODY_LENGTH))),
+                "无来源切片的 reference_id 必须为空串: " + result.contextData());
+        assertEquals(List.of("[1] b.md"), result.referenceList());
     }
 
     @Test
@@ -647,13 +733,13 @@ class DefaultContextBuilderTest {
     @Test
     void should_holdBudgetFormulaEndToEnd_when_build_given_richGraphRecordsAndManyChunks() {
         // given：P1+P3 组合回归——真实 jtokkit encode（与线上同口径），
-        //        实体路 20 条富描述 + 关系路 50 条 + 30 条 chunk，份额取契约默认（2000/3000）
+        //        实体路 20 条富描述 + 关系路 50 条 + 30 条 chunk，份额与总量均取契约默认（6000/8000/30000）
         TokenCounter realCounter = new JtokkitTokenCounter();
         ObjectMapper realMapper = new ObjectMapper();
         DefaultContextBuilder realBuilder = new DefaultContextBuilder(realCounter, knowledgeBaseApi, realMapper);
         int entityShare = RetrievalQuery.DEFAULT_MAX_ENTITY_TOKENS;
         int relationShare = RetrievalQuery.DEFAULT_MAX_RELATION_TOKENS;
-        int maxTotalTokens = 16000;
+        int maxTotalTokens = RetrievalQuery.DEFAULT_MAX_TOTAL_TOKENS;
         String query = "订单发货超时的处理规则有哪些";
         List<Chunk> chunkBodies = richChunkBodies(30);
         when(knowledgeBaseApi.findChunksByKbIdAndChunkIds(eq(KB_ID), any())).thenReturn(chunkBodies);
@@ -898,14 +984,14 @@ class DefaultContextBuilderTest {
         List<EntityHit> entities = new ArrayList<>(count);
         for (int index = 0; index < count; index++) {
             entities.add(new EntityHit("实体" + index, 0.95D - index * 0.01D, List.of(), "业务概念",
-                    ("这是第" + index + "号实体的富描述内容，用于验证渲染前逐条截断。").repeat(8),
+                    ("这是第" + index + "号实体的富描述内容，用于验证渲染前逐条截断。").repeat(20),
                     List.of("docs/entity-" + index + ".md"), CREATED_AT));
         }
         return entities;
     }
 
     /**
-     * 构造 P1+P3 组合回归的富关系夹具（每条描述约百 token，总量远超默认关系份额）。
+     * 构造 P1+P3 组合回归的富关系夹具（每条描述数百 token，总量远超默认关系份额）。
      *
      * @param count 条数
      * @return 关系视图列表
@@ -914,7 +1000,7 @@ class DefaultContextBuilderTest {
         List<RelationHit> relations = new ArrayList<>(count);
         for (int index = 0; index < count; index++) {
             relations.add(new RelationHit("实体" + index, "对象" + index, 0.9D, List.of(),
-                    ("这是第" + index + "条关系的富描述内容。").repeat(6),
+                    ("这是第" + index + "条关系的富描述内容。").repeat(12),
                     List.of("关键词"), 1.0D, List.of("docs/relation-" + index + ".md"), CREATED_AT));
         }
         return relations;
@@ -1067,6 +1153,7 @@ class DefaultContextBuilderTest {
 
     /**
      * 构造知识库切片（从库恢复口径，正文与来源文件名供上下文/引用使用）。
+     * <p>文档主键按来源文件名确定性派生，使「同一文件 = 同一文档」在测试内成立。</p>
      *
      * @param id             切片主键
      * @param content        正文
@@ -1074,7 +1161,54 @@ class DefaultContextBuilderTest {
      * @return 切片领域模型
      */
     private Chunk chunk(Long id, String content, String sourceFileName) {
-        return Chunk.restore(id, KB_ID, DOCUMENT_ID, 0, content.length(), content, null,
+        return chunk(id, content, sourceFileName, documentIdOf(sourceFileName));
+    }
+
+    /**
+     * 构造指定文档主键的知识库切片（用于区分「同文档多切片」与「跨文档」）。
+     *
+     * @param id             切片主键
+     * @param content        正文
+     * @param sourceFileName 来源文件名
+     * @param documentId     所属文档主键
+     * @return 切片领域模型
+     */
+    private Chunk chunk(Long id, String content, String sourceFileName, Long documentId) {
+        return Chunk.restore(id, KB_ID, documentId, 0, content.length(), content, null,
                 ChunkContentType.TEXT, sourceFileName, null, ChunkSource.PARSED, null, null);
+    }
+
+    /**
+     * 按来源文件名确定性派生文档主键（测试夹具口径，仅用于模拟真实文档归属）。
+     *
+     * @param sourceFileName 来源文件名
+     * @return 文档主键
+     */
+    private static Long documentIdOf(String sourceFileName) {
+        return (long) Math.abs(sourceFileName.hashCode());
+    }
+
+    /**
+     * 场景：同一文档的多个切片（文件名字段可能不同）。
+     * 预期：按 documentId 去重共享同一编号，引用列表只保留一条（取首次出现的文件名）。
+     */
+    @Test
+    void should_shareSingleReference_when_build_given_sameDocumentMultipleChunks()
+            throws JacksonException {
+        // given：两条切片同属文档 9001，来源文件名不同（模拟重命名残留）
+        stubCountByLength();
+        when(knowledgeBaseApi.findChunksByKbIdAndChunkIds(eq(KB_ID), any())).thenReturn(List.of(
+                chunk(CHUNK_11, "a".repeat(CHUNK_BODY_LENGTH), "old.md", 9001L),
+                chunk(CHUNK_12, "b".repeat(CHUNK_BODY_LENGTH), "new.md", 9001L)));
+
+        // when
+        KgContext result = contextBuilder.build(KB_ID,
+                List.of(ranked(CHUNK_11), ranked(CHUNK_12)),
+                emptyKg(), defaultShareBudget(GENEROUS_MAX_TOKENS, "q"));
+
+        // then：切片共享编号 1，引用列表只保留首次出现的文件名
+        assertEquals(List.of("[1] old.md"), result.referenceList());
+        assertTrue(result.contextData().contains("\"reference_id\":\"1\""),
+                "同一文档的切片必须共享编号: " + result.contextData());
     }
 }

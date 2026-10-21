@@ -242,13 +242,13 @@ class DefaultIngestionSourceReaderTest {
     void should_normalizeKbLanguage_when_readContext_given_paddedLanguageColumn() {
         // given：language 列值大小写带空白（真相源 = 列，读取侧归一口径）
         stubFind(documentOf(null, null), knowledgeBaseOf(
-                " japanese ", "{\"engineType\":\"DOCUMENT_ENGINE\"}", null, null, null));
+                " english ", "{\"engineType\":\"DOCUMENT_ENGINE\"}", null, null, null));
 
         // when
         IngestionDocumentContext context = reader.readContext(DOC_ID);
 
         // then：归一为枚举规范全名
-        assertEquals(KbLanguage.Japanese.name(), context.language());
+        assertEquals(KbLanguage.English.name(), context.language());
     }
 
     @Test
@@ -265,7 +265,7 @@ class DefaultIngestionSourceReaderTest {
 
     @Test
     void should_passThroughLegacyBareCode_when_readContext_given_bareLanguageCode() {
-        // given：历史裸语言码（写入口已拒绝新值，读侧宽容透传由 PromptCatalog 归 en 套）
+        // given：历史裸语言码（写入口已拒绝新值，读侧宽容原样透传）
         stubFind(documentOf(null, null), knowledgeBaseOf(" ja ", null, null, null, null));
 
         // when

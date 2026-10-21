@@ -53,7 +53,7 @@ class ModelProfileTest {
                 () -> ModelProfile.create(
                         "p1", "", null, ApiFormat.OPENAI,
                         "https://example.com/v1", "gpt-4", null,
-                        null, null, null, 10, ModelType.CHAT, null, 1L));
+                        null, null, null, 10, ModelType.CHAT_LLM, null, 1L));
     }
 
     @Test
@@ -66,7 +66,7 @@ class ModelProfileTest {
                 () -> ModelProfile.create(
                         "p1", longName, null, ApiFormat.OPENAI,
                         "https://example.com/v1", "gpt-4", null,
-                        null, null, null, 10, ModelType.CHAT, null, 1L));
+                        null, null, null, 10, ModelType.CHAT_LLM, null, 1L));
     }
 
     @Test
@@ -79,7 +79,7 @@ class ModelProfileTest {
                 () -> ModelProfile.create(
                         "p1", "chat-profile", null, null,
                         "https://example.com/v1", "gpt-4", null,
-                        null, null, null, 10, ModelType.CHAT, null, 1L));
+                        null, null, null, 10, ModelType.CHAT_LLM, null, 1L));
     }
 
     @Test
@@ -92,7 +92,7 @@ class ModelProfileTest {
                 () -> ModelProfile.create(
                         "p1", "chat-profile", null, ApiFormat.OPENAI,
                         "", "gpt-4", null,
-                        null, null, null, 10, ModelType.CHAT, null, 1L));
+                        null, null, null, 10, ModelType.CHAT_LLM, null, 1L));
     }
 
     @Test
@@ -105,7 +105,7 @@ class ModelProfileTest {
                 () -> ModelProfile.create(
                         "p1", "chat-profile", null, ApiFormat.OPENAI,
                         "https://example.com/v1", "", null,
-                        null, null, null, 10, ModelType.CHAT, null, 1L));
+                        null, null, null, 10, ModelType.CHAT_LLM, null, 1L));
     }
 
     @Test
@@ -117,10 +117,10 @@ class ModelProfileTest {
         ModelProfile profile = ModelProfile.create(
                 "p1", "chat-profile", "desc", ApiFormat.OPENAI,
                 "https://example.com/v1", "gpt-4", null,
-                "gpt", 8192, 2048, 10, ModelType.CHAT, null, 1L);
+                "gpt", 8192, 2048, 10, ModelType.CHAT_LLM, null, 1L);
 
         // then
         assertEquals("chat-profile", profile.displayName());
-        assertEquals(ModelType.CHAT, profile.modelType());
+        assertEquals(ModelType.CHAT_LLM, profile.modelType());
     }
 }
