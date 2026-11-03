@@ -4,7 +4,6 @@
 -- 说明：本脚本为全库一次性初始化基线（历史 V1~V19 演进 + 后续 environment 契约
 --       config 结构、资源 ID 前缀、session_thread、技能类型词汇等增量的最终态合并），
 --       一经应用即不可修改（checksum 校验），后续任何改动请新增 V{n+1}__{desc}.sql。
---       基线例外（三次，均因项目未上线、存量库可重建或以 `flyway repair` 对齐 checksum）：
 --         ① move-coordination-leases-to-redis PR-C4：删除 coordination BC 协调租约表建表段
 --            （协调租约全量迁至 Redis，PG 侧表零代码读写）；
 --         ② slim-scope-fix-integration-tests：退役 Deployment / Vault / Memory / MCP 服务器声明 /
@@ -13,6 +12,8 @@
 --         ③ add-owner-isolation-to-kb-datasource：knowledge_base / datasource_connection 增
 --            owner_id 归属列（BIGINT NOT NULL），名称唯一索引由全局收敛为 (owner_id, name)，
 --            并新增 owner 维度列表索引；开发阶段存量库由维护者自行 repair / 重建并指派数据归属。
+--         ④ adopt-pg-textsearch-bm25：全文检索由使用 BM25 的 pg_textsearch 来实现；索引改建在 chunk.chunk_content 上。
+--            仅新库适用（无存量数据迁移）。
 --       存量开发 / 集成库须 `flyway repair` 对齐校验和（或直接重建空库）后再迁移。
 -- 分组：按限界上下文（BC）划分 —— auth / file / datasource / agent / skill / runtime。
 -- 约定：全库基础字段统一 created_at / updated_at / created_by / updated_by / is_deleted，
@@ -605,7 +606,7 @@ COMMENT ON COLUMN knowledge_base.lifecycle_status IS '生命周期状态: ACTIVE
 COMMENT ON COLUMN knowledge_base.error_message IS '清退失败原因留痕(DELETE_FAILED时记录[KB-CLEANUP] step=…摘要，余为NULL)';
 COMMENT ON COLUMN knowledge_base.rag_engine_config IS 'RAG引擎配置VO(JSON): {engineType: DOCUMENT_ENGINE|MEDIA_ENGINE, parseEngine: {provider: LOCAL|MINERU|UNDEFINED, engineConfig: {params: {}}}, chunkStrategy: {chunkMode: GENERAL|QA|BOOK|LAWS|TABLE|PRESENTATION|ONE|TIME_WINDOW|SCENE_BOUNDARY, modeConfig: {params: {}}, language: 已弃用（语言真相源为 knowledge_base.language 列）}}；本列不承载任何模型选型';
 COMMENT ON COLUMN knowledge_base.dedup_policy IS '去重策略VO(JSON): {matchRule: NONE|BY_NAME|BY_CONTENT|BY_NAME_OR_CONTENT, conflictAction: REJECT|SKIP|OVERWRITE}';
-COMMENT ON COLUMN knowledge_base.retrieval_strategy IS '检索策略VO(JSON): {strategyType: NAIVE|MIX, rewriteQuestion, resultChunkCount, similarThreshold, rerankConfig: {enabled, modelProfileId, topK}, fusionConfig: {fusionType: RRF|WEIGHTED_SUM, rrfK, channelDenseWeight: {VECTOR: 0.7, BM25: 0.3}}}';
+COMMENT ON COLUMN knowledge_base.retrieval_strategy IS '检索策略VO(JSON): {strategyType: NAIVE|MIX, rewriteQuestion, resultChunkCount, similarThreshold, rerankConfig: {enabled, modelProfileId, topK(默认50)}, fusionConfig: {fusionType: RRF|WEIGHTED_SUM, rrfK, channelDenseWeight: {VECTOR: 0.7, BM25: 0.3}}, channelQueryCountConfig: {vectorQueryCount, bm25QueryCount, graphQueryCount: 1~100整数, 未配置默认20; 图谱数量为实体/关系路共用单值, 仅MIX消费}}';
 COMMENT ON COLUMN knowledge_base.embedding_config IS '嵌入模型配置VO(JSON): {modelProfileId}；切片向量写入与检索 query 向量化均以本列为唯一真相源，二者必须同源，否则向量召回静默失效';
 COMMENT ON COLUMN knowledge_base.multi_model_config IS '知识库级通用LLM配置VO(JSON): {modelProfileId}；虽以「多模态」命名，实为该库统一的大模型引用——媒体描述、检索侧附图转译、实体抽取、关系与关键词提取、摘要生成、检索侧问题改写与作答共用本列，不存在第二个LLM配置项';
 COMMENT ON COLUMN knowledge_base.entity_type_config IS '实体类型自定义配置VO(JSON): {entityTypes: [{entityType}]}';
@@ -662,7 +663,7 @@ COMMENT ON COLUMN document.created_by IS '创建人';
 COMMENT ON COLUMN document.updated_by IS '更新人';
 
 -- -----------------------------------------------------------
--- 3. chunk 分块聚合根（主表：仅业务字段，向量与全文分词拆表）
+-- 3. chunk 分块聚合根（全文检索索引直接建在 chunk_content 上）
 -- -----------------------------------------------------------
 CREATE TABLE chunk (
                        id                  BIGSERIAL       PRIMARY KEY,
@@ -684,6 +685,11 @@ CREATE TABLE chunk (
 
 CREATE UNIQUE INDEX uk_chunk_doc_seq ON chunk (document_id, sequence);
 CREATE INDEX idx_chunk_kb_doc ON chunk (kb_id, document_id);
+-- BM25 全文索引（pg_textsearch）：分词与语料统计由索引内部承载，不落派生列。
+-- text_config 必须与 docker/postgresql/init/00-init-extensions.sql 建立的 zhparser_cfg 同名；
+-- 书写侧与查询侧共用该分词口径。
+CREATE INDEX idx_chunk_bm25_content ON chunk USING bm25 (chunk_content)
+    WITH (text_config = 'public.zhparser_cfg', k1 = 1.2, b = 0.75, compaction = 'inline');
 
 COMMENT ON TABLE chunk IS '分块聚合根主表';
 COMMENT ON COLUMN chunk.id IS '分块ID';
@@ -731,36 +737,6 @@ COMMENT ON COLUMN chunk_vector.created_at IS '创建时间';
 COMMENT ON COLUMN chunk_vector.updated_at IS '更新时间';
 COMMENT ON COLUMN chunk_vector.created_by IS '创建人';
 COMMENT ON COLUMN chunk_vector.updated_by IS '更新人';
-
--- -----------------------------------------------------------
--- 5. chunk_tsv 分块全文检索表（BM25/tsvector 通道）
--- -----------------------------------------------------------
-CREATE TABLE chunk_tsv (
-                           id           BIGSERIAL       PRIMARY KEY,
-                           kb_id        BIGINT          NOT NULL,
-                           document_id  BIGINT          NOT NULL,
-                           chunk_id     BIGINT          NOT NULL,
-                           content_tsv  TSVECTOR,
-                           created_at   TIMESTAMPTZ     NOT NULL DEFAULT now(),
-                           updated_at   TIMESTAMPTZ     NOT NULL DEFAULT now(),
-                           created_by   VARCHAR(100),
-                           updated_by   VARCHAR(100)
-);
-
-CREATE UNIQUE INDEX uk_chunk_tsv_chunk_id ON chunk_tsv (chunk_id);
-CREATE INDEX idx_chunk_tsv_kb_doc ON chunk_tsv (kb_id, document_id);
-CREATE INDEX idx_chunk_tsv_gin ON chunk_tsv USING gin (content_tsv);
-
-COMMENT ON TABLE chunk_tsv IS '分块全文检索表：与 chunk 1:1，承载 tsvector 及 GIN 索引';
-COMMENT ON COLUMN chunk_tsv.id IS '主键ID';
-COMMENT ON COLUMN chunk_tsv.kb_id IS '所属知识库ID(冗余，支持库级全文过滤)';
-COMMENT ON COLUMN chunk_tsv.document_id IS '所属文档ID(冗余)';
-COMMENT ON COLUMN chunk_tsv.chunk_id IS '分块ID，弱引用 chunk.id，1:1';
-COMMENT ON COLUMN chunk_tsv.content_tsv IS '块内容全文分词向量，由应用层按分词器生成写入';
-COMMENT ON COLUMN chunk_tsv.created_at IS '创建时间';
-COMMENT ON COLUMN chunk_tsv.updated_at IS '更新时间';
-COMMENT ON COLUMN chunk_tsv.created_by IS '创建人';
-COMMENT ON COLUMN chunk_tsv.updated_by IS '更新人';
 
 CREATE TABLE entity_node_graph (
                                    id           BIGSERIAL      PRIMARY KEY,

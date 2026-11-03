@@ -14,12 +14,11 @@ import org.apache.commons.lang3.StringUtils;
  * 因此<b>不</b>自行调用 embedding 模型。向量为空表示本条草稿暂无向量，
  * 知识库侧不生成 {@code chunk_vector} 行。</p>
  *
- * <p>全文表示（tsvector）<b>不再由消费方预先生成</b>：分词职责已移交知识库存储侧，
- * 由写入 SQL 以 {@code to_tsvector} 按中文全文检索配置对 {@code content} 原文现算，
- * 每条非空白切片必然生成 {@code chunk_tsv} 行。</p>
+ * <p>全文检索<b>不产生任何派生数据</b>：BM25 索引直接建在 {@code chunk.chunk_content} 上，
+ * 切片落库即由存储侧完成分词与索引维护，本契约不携带任何分词产物。</p>
  *
  * @param sequence         块在文档内的序号，从 1 开始，必填且在一次回写内不得重复
- * @param content          块正文（套模板后的最终文本），必填；同时作为全文表示的原文来源
+ * @param content          块正文（套模板后的最终文本），必填；落 {@code chunk.chunk_content} 并自动进入 BM25 索引
  * @param tokens           块的 token 数量，可为空（空表示未知，落库为 NULL）
  * @param metadata         多模态原始信息 JSON，可为空，原样透传落 {@code chunk.original_item}
  * @param chunkContentType 内容形态（TEXT/IMAGE/TABLE 等领域枚举名），可为空（空表示 TEXT）

@@ -53,7 +53,6 @@ class RetrievalConfigValidatorTest {
 
         // when
         String normalized = RetrievalConfigValidator.validateAndNormalize(strategyJson);
-
         // then
         assertTrue(normalized.contains("\"strategyType\":\"NAIVE\""));
     }
@@ -253,6 +252,40 @@ class RetrievalConfigValidatorTest {
     }
 
     @Test
+    void should_throwBadRequest_when_validateAndNormalize_given_weightedSumDenseWeightTotalOverOne() {
+        // given：0.5 + 0.4 + 0.3 = 1.2，三通道权重合计超过 1
+        String strategyJson = "{\"strategyType\":\"mix\",\"fusionConfig\":{\"fusionType\":\"WEIGHTED_SUM\","
+                + "\"channelDenseWeight\":{\"VECTOR\":0.5,\"BM25\":0.4,\"GRAPH\":0.3}}}";
+
+        // when // then
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> RetrievalConfigValidator.validateAndNormalize(strategyJson));
+        assertTrue(exception.getMessage().contains("合计不能大于1"));
+    }
+
+    @Test
+    void should_throwBadRequest_when_validateAndNormalize_given_partialDenseWeightTotalOverOne() {
+        // given：只配两路但 0.6 + 0.6 = 1.2，缺失通道不参与合计，仍须拒绝
+        String strategyJson = "{\"strategyType\":\"naive\",\"fusionConfig\":{\"fusionType\":\"WEIGHTED_SUM\","
+                + "\"channelDenseWeight\":{\"VECTOR\":0.6,\"BM25\":0.6}}}";
+
+        // when // then
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> RetrievalConfigValidator.validateAndNormalize(strategyJson));
+        assertTrue(exception.getMessage().contains("合计不能大于1"));
+    }
+
+    @Test
+    void should_pass_when_validateAndNormalize_given_denseWeightTotalExactlyOne() {
+        // given：0.7 + 0.2 + 0.1 合计恰为 1，浮点误差不得触发误判
+        String strategyJson = "{\"strategyType\":\"mix\",\"fusionConfig\":{\"fusionType\":\"WEIGHTED_SUM\","
+                + "\"channelDenseWeight\":{\"VECTOR\":0.7,\"BM25\":0.2,\"GRAPH\":0.1}}}";
+
+        // when // then
+        assertDoesNotThrow(() -> RetrievalConfigValidator.validateAndNormalize(strategyJson));
+    }
+
+    @Test
     void should_throwBadRequest_when_validateAndNormalize_given_nonObjectFusionConfig() {
         // given
         String strategyJson = "{\"strategyType\":\"naive\",\"fusionConfig\":\"rrf\"}";
@@ -274,5 +307,89 @@ class RetrievalConfigValidatorTest {
         // then（ObjectNode 入口原地回写并返回同一节点）
         assertSame(strategy, result);
         assertNotNull(result.toString());
+    }
+
+    @Test
+    void should_passAndRetainNode_when_validateAndNormalize_given_validChannelQueryCountConfig() {
+        // given
+        String strategyJson = "{\"strategyType\":\"MIX\",\"channelQueryCountConfig\":"
+                + "{\"vectorQueryCount\":30,\"bm25QueryCount\":15,\"graphQueryCount\":25}}";
+
+        // when
+        String normalized = RetrievalConfigValidator.validateAndNormalize(strategyJson);
+
+        // then：合法三数量通过校验且节点原样保留
+        assertTrue(normalized.contains("\"channelQueryCountConfig\""));
+        assertTrue(normalized.contains("\"vectorQueryCount\":30"));
+        assertTrue(normalized.contains("\"bm25QueryCount\":15"));
+        assertTrue(normalized.contains("\"graphQueryCount\":25"));
+    }
+
+    @Test
+    void should_pass_when_validateAndNormalize_given_channelConfigWithAllNullFields() {
+        // given：三字段均可省略（省略=未配置，运行时按默认值处理）
+        String strategyJson = "{\"strategyType\":\"NAIVE\",\"channelQueryCountConfig\":{}}";
+
+        // when // then
+        assertDoesNotThrow(() -> RetrievalConfigValidator.validateAndNormalize(strategyJson));
+    }
+
+    @Test
+    void should_pass_when_validateAndNormalize_given_naiveWithGraphQueryCount() {
+        // given：图谱数量不按策略类型联动拦截（NAIVE 下保存的值运行时不被图谱通道消费）
+        String strategyJson = "{\"strategyType\":\"NAIVE\",\"channelQueryCountConfig\":"
+                + "{\"vectorQueryCount\":30,\"graphQueryCount\":25}}";
+
+        // when // then
+        assertDoesNotThrow(() -> RetrievalConfigValidator.validateAndNormalize(strategyJson));
+    }
+
+    @Test
+    void should_throwBadRequest_when_validateAndNormalize_given_zeroVectorQueryCount() {
+        // given
+        String strategyJson = "{\"strategyType\":\"MIX\",\"channelQueryCountConfig\":"
+                + "{\"vectorQueryCount\":0,\"bm25QueryCount\":15,\"graphQueryCount\":25}}";
+
+        // when // then
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> RetrievalConfigValidator.validateAndNormalize(strategyJson));
+        assertTrue(exception.getMessage().contains("vectorQueryCount"));
+        assertTrue(exception.getMessage().contains("1到100"));
+    }
+
+    @Test
+    void should_throwBadRequest_when_validateAndNormalize_given_bm25QueryCountOverMax() {
+        // given
+        String strategyJson = "{\"strategyType\":\"MIX\",\"channelQueryCountConfig\":"
+                + "{\"bm25QueryCount\":101}}";
+
+        // when // then
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> RetrievalConfigValidator.validateAndNormalize(strategyJson));
+        assertTrue(exception.getMessage().contains("bm25QueryCount"));
+    }
+
+    @Test
+    void should_throwBadRequest_when_validateAndNormalize_given_nonIntegralGraphQueryCount() {
+        // given：小数非整数
+        String strategyJson = "{\"strategyType\":\"MIX\",\"channelQueryCountConfig\":"
+                + "{\"graphQueryCount\":1.5}}";
+
+        // when // then
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> RetrievalConfigValidator.validateAndNormalize(strategyJson));
+        assertTrue(exception.getMessage().contains("graphQueryCount"));
+    }
+
+    @Test
+    void should_throwBadRequest_when_validateAndNormalize_given_nonObjectChannelConfig() {
+        // given
+        String strategyJson = "{\"strategyType\":\"MIX\",\"channelQueryCountConfig\":\"30\"}";
+
+        // when // then
+        DeepDataAgentException exception = assertThrows(DeepDataAgentException.class,
+                () -> RetrievalConfigValidator.validateAndNormalize(strategyJson));
+        assertTrue(exception.getMessage().contains("channelQueryCountConfig"));
+        assertTrue(exception.getMessage().contains("JSON对象"));
     }
 }

@@ -8,6 +8,7 @@ import com.linkroa.deepdataagent.knowledgebase.application.command.DeleteKnowled
 import com.linkroa.deepdataagent.knowledgebase.application.command.UpdateEntityTypeConfigCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.UpdateKnowledgeBaseCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.UpdateRetrievalConfigCommand;
+import com.linkroa.deepdataagent.knowledgebase.application.contract.ChannelQueryCountDTO;
 import com.linkroa.deepdataagent.knowledgebase.application.contract.RetrievalConfigDTO;
 import com.linkroa.deepdataagent.knowledgebase.application.query.ListKnowledgeBaseQuery;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.KnowledgeBase;
@@ -825,7 +826,7 @@ class KnowledgeBaseApplicationServiceTest {
         KnowledgeBase current = buildKb(1L, "产品手册", LifecycleStatus.ACTIVE);
         when(knowledgeBaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(current));
         RetrievalConfigDTO config = new RetrievalConfigDTO("mix", Boolean.TRUE, 5, 0.6F, Boolean.TRUE,
-                "{\"enabled\":true,\"modelProfileId\":\"rerank-unregistered-v1\",\"topK\":20}", null);
+                "{\"enabled\":true,\"modelProfileId\":\"rerank-unregistered-v1\",\"topK\":20}", null, null);
 
         // when
         RetrievalConfigDTO snapshot = service.saveRetrievalConfig(1L, config, 88L);
@@ -843,11 +844,51 @@ class KnowledgeBaseApplicationServiceTest {
     }
 
     @Test
+    void should_persistChannelQueryCountNode_when_saveRetrievalConfig_given_channelCountsProvided() {
+        // given
+        when(knowledgeBaseRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
+        RetrievalConfigDTO config = new RetrievalConfigDTO("MIX", null, null, null, null, null, null,
+                new ChannelQueryCountDTO(30, 15, 25));
+
+        // when
+        RetrievalConfigDTO snapshot = service.saveRetrievalConfig(1L, config, null);
+
+        // then：类型化配置序列化为 channelQueryCountConfig 节点（仅携带非空字段），快照原样回显
+        ArgumentCaptor<KnowledgeBase> captor = ArgumentCaptor.forClass(KnowledgeBase.class);
+        verify(knowledgeBaseRepository).update(captor.capture(), isNull());
+        String strategyJson = captor.getValue().retrievalStrategy();
+        assertTrue(strategyJson.contains("\"channelQueryCountConfig\""));
+        assertTrue(strategyJson.contains("\"vectorQueryCount\":30"));
+        assertTrue(strategyJson.contains("\"bm25QueryCount\":15"));
+        assertTrue(strategyJson.contains("\"graphQueryCount\":25"));
+        assertEquals(30, snapshot.channelQueryCountConfig().vectorQueryCount());
+        assertEquals(15, snapshot.channelQueryCountConfig().bm25QueryCount());
+        assertEquals(25, snapshot.channelQueryCountConfig().graphQueryCount());
+    }
+
+    @Test
+    void should_omitChannelQueryCountNode_when_saveRetrievalConfig_given_channelConfigNull() {
+        // given：整体未配置不落节点（未配置语义保留，运行时按默认值处理）
+        when(knowledgeBaseRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
+        RetrievalConfigDTO config = new RetrievalConfigDTO("NAIVE", null, null, null, null, null, null, null);
+
+        // when
+        service.saveRetrievalConfig(1L, config, null);
+
+        // then
+        ArgumentCaptor<KnowledgeBase> captor = ArgumentCaptor.forClass(KnowledgeBase.class);
+        verify(knowledgeBaseRepository).update(captor.capture(), isNull());
+        assertFalse(captor.getValue().retrievalStrategy().contains("channelQueryCountConfig"));
+    }
+
+    @Test
     void should_defaultGraphDisabled_when_saveRetrievalConfig_given_graphEnabledNull() {
         // given
         when(knowledgeBaseRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
-        RetrievalConfigDTO config = new RetrievalConfigDTO("NAIVE", null, null, null, null, null, null);
+        RetrievalConfigDTO config = new RetrievalConfigDTO("NAIVE", null, null, null, null, null, null, null);
 
         // when
         service.saveRetrievalConfig(1L, config, null);
@@ -862,7 +903,7 @@ class KnowledgeBaseApplicationServiceTest {
     @Test
     void should_throwBadRequest_when_saveRetrievalConfig_given_unknownStrategyType() {
         // given
-        RetrievalConfigDTO config = new RetrievalConfigDTO("HYBRID", null, null, null, null, null, null);
+        RetrievalConfigDTO config = new RetrievalConfigDTO("HYBRID", null, null, null, null, null, null, null);
 
         // when // then
         assertThrows(DeepDataAgentException.class, () -> service.saveRetrievalConfig(1L, config, 1L));
@@ -872,7 +913,7 @@ class KnowledgeBaseApplicationServiceTest {
     @Test
     void should_throwBadRequest_when_saveRetrievalConfig_given_illegalRerankJson() {
         // given
-        RetrievalConfigDTO config = new RetrievalConfigDTO("MIX", null, null, null, null, "{invalid", null);
+        RetrievalConfigDTO config = new RetrievalConfigDTO("MIX", null, null, null, null, "{invalid", null, null);
 
         // when // then
         assertThrows(DeepDataAgentException.class, () -> service.saveRetrievalConfig(1L, config, 1L));
@@ -884,7 +925,7 @@ class KnowledgeBaseApplicationServiceTest {
     void should_throwNotFound_when_saveRetrievalConfig_given_knowledgeBaseNotExist() {
         // given
         when(knowledgeBaseRepository.findByIdForUpdate(404L)).thenReturn(Optional.empty());
-        RetrievalConfigDTO config = new RetrievalConfigDTO("MIX", null, null, null, null, null, null);
+        RetrievalConfigDTO config = new RetrievalConfigDTO("MIX", null, null, null, null, null, null, null);
 
         // when // then
         assertThrows(ResourceNotFoundException.class, () -> service.saveRetrievalConfig(404L, config, 1L));
@@ -896,7 +937,7 @@ class KnowledgeBaseApplicationServiceTest {
         // given
         when(knowledgeBaseRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.DELETING)));
-        RetrievalConfigDTO config = new RetrievalConfigDTO("MIX", null, null, null, null, null, null);
+        RetrievalConfigDTO config = new RetrievalConfigDTO("MIX", null, null, null, null, null, null, null);
 
         // when // then
         assertThrows(DeepDataAgentException.class, () -> service.saveRetrievalConfig(1L, config, 1L));
@@ -908,7 +949,7 @@ class KnowledgeBaseApplicationServiceTest {
         // when // then
         assertThrows(DeepDataAgentException.class,
                 () -> service.saveRetrievalConfig(null, new RetrievalConfigDTO("MIX", null, null, null,
-                        null, null, null), 1L));
+                        null, null, null, null), 1L));
         verify(knowledgeBaseRepository, never()).findByIdForUpdate(any());
     }
 
@@ -946,7 +987,7 @@ class KnowledgeBaseApplicationServiceTest {
     void should_throwBadRequest_when_saveRetrievalConfig_given_denseWeightOutOfRange() {
         // given：契约入口与 REST 入口共用同一套校验
         RetrievalConfigDTO config = new RetrievalConfigDTO("MIX", null, null, null, null, null,
-                "{\"fusionType\":\"WEIGHTED_SUM\",\"channelDenseWeight\":{\"VECTOR\":1.0}}");
+                "{\"fusionType\":\"WEIGHTED_SUM\",\"channelDenseWeight\":{\"VECTOR\":1.0}}", null);
 
         // when // then
         assertThrows(DeepDataAgentException.class, () -> service.saveRetrievalConfig(1L, config, 1L));
@@ -960,7 +1001,7 @@ class KnowledgeBaseApplicationServiceTest {
         when(knowledgeBaseRepository.findByIdForUpdate(1L))
                 .thenReturn(Optional.of(buildKb(1L, "产品手册", LifecycleStatus.ACTIVE)));
         RetrievalConfigDTO config = new RetrievalConfigDTO("naive", null, null, null, null, null,
-                "{\"fusionType\":\"rrf\"}");
+                "{\"fusionType\":\"rrf\"}", null);
 
         // when
         RetrievalConfigDTO snapshot = service.saveRetrievalConfig(1L, config, null);

@@ -11,29 +11,33 @@ import java.util.List;
 /**
  * 检索内部执行请求值对象（无状态，一次请求对应一个策略快照，编排入口直接消费）。
  * <p>紧凑构造器将全部 Integer 预算/数量字段的 {@code null} 归一为对应默认值：
- * {@code topK → DEFAULT_TOP_K}、{@code chunkTopK → topK}（未指定时回退 topK）、
+ * {@code vectorQueryCount / bm25QueryCount / graphQueryCount → DEFAULT_QUERY_COUNT}、
  * {@code maxTotalTokens / maxEntityTokens / maxRelationTokens → 各自默认常量}、
  * {@code graphEdgeTop / graphEdgeChunkLimit → RetrievalConstants 同名默认值}；
  * {@code kbId / query} 保持原样并要求非空（单库隔离与检索文本为链路硬前提）；
  * {@code images} 空值归一为不可变空列表；{@code multimodal} 空值归一为
  * {@link RetrievalMultimodalOptions#defaults()}（双开关全开，与基线行为等价）。</p>
  *
- * <p><b>图谱召回上限为何落在本契约、而非库级 {@code RetrievalStrategyConfig}</b>
+ * <p><b>通道召回数量的填充链</b>（库级配置口径，{@code add-channel-query-count-config} 变更）：
+ * REST 请求体不再承载通道数量（历史 topK/chunkTopK 字段已删除，携带即忽略）；
+ * 编排层在 Stage 1 加载库级 {@code retrieval_strategy.channelQueryCountConfig} 后重建
+ * effective 请求时统一填充——库级未配置的字段保持默认 {@value #DEFAULT_QUERY_COUNT}。
+ * 图谱数量为实体路与关系路共用的单值口径（对齐 LightRAG {@code top_k}），
+ * 同时约束图谱关联 chunk 候选的入场配额（E1）。</p>
+ *
+ * <p><b>图谱关联边召回上限为何仍落在本契约、而非库级 {@code RetrievalStrategyConfig}</b>
  * （《realign-rag-retrieval-with-lightrag》D-8 逃生门口径）：关联边 Top 上限与每源
- * chunk 上限需要可配，但 knowledgebase BC 的检索策略配置值对象是<strong>定型字段</strong>
- * （strategyType / rewriteQuestion / resultChunkCount / similarThreshold / rerankConfig /
- * fusionConfig），既无 Map 型通道参数扩展位，加字段即连带触碰该 BC 的模型、入参校验与
- * {@code rag_engine_config} JSON 反序列化——超出本变更「只改检索链路」的硬约束。
- * 故按 D-8 的次选路径落为本契约的可选内部字段：REST 请求体不新增字段
- * （控制器固定传 {@code null} 走默认值），缺省行为与常量时代逐字一致；
- * 未来若库级确需承载，再于 knowledgebase BC 单独立项扩展。</p>
+ * chunk 上限需要可配，但属检索内部调优参数，与面向用户的通道召回数量不同层；
+ * REST 请求体不承载（控制器固定传 {@code null} 走默认值）。</p>
  *
  * @param kbId                 所属知识库ID（单库隔离维度，必填）
  * @param query                用户原始问题（必填，改写/关键词提取/召回的输入底稿）
  * @param hlKeywords           显式高层关键词（关系路方向，非空时跳过 LLM 提取，可空）
  * @param llKeywords           显式低层关键词（实体路方向，非空时跳过 LLM 提取，可空）
- * @param topK                 每通道向量召回数量（默认 {@value #DEFAULT_TOP_K}）
- * @param chunkTopK            chunk 召回数量（默认回退 topK）
+ * @param vectorQueryCount     向量通道召回数量（默认 {@value #DEFAULT_QUERY_COUNT}，由编排层从库级配置填充）
+ * @param bm25QueryCount       BM25 通道召回数量（默认 {@value #DEFAULT_QUERY_COUNT}，由编排层从库级配置填充）
+ * @param graphQueryCount      图谱通道召回数量——实体/关系路与入场配额共用单值
+ *                             （默认 {@value #DEFAULT_QUERY_COUNT}，由编排层从库级配置填充）
  * @param maxTotalTokens       上下文总 token 预算（默认 {@value #DEFAULT_MAX_TOTAL_TOKENS}）
  * @param maxEntityTokens      实体上下文 token 预算（默认 {@value #DEFAULT_MAX_ENTITY_TOKENS}）
  * @param maxRelationTokens    关系上下文 token 预算（默认 {@value #DEFAULT_MAX_RELATION_TOKENS}）
@@ -58,8 +62,9 @@ public record RetrievalQuery(
         String query,
         List<String> hlKeywords,
         List<String> llKeywords,
-        Integer topK,
-        Integer chunkTopK,
+        Integer vectorQueryCount,
+        Integer bm25QueryCount,
+        Integer graphQueryCount,
         Integer maxTotalTokens,
         Integer maxEntityTokens,
         Integer maxRelationTokens,
@@ -69,8 +74,8 @@ public record RetrievalQuery(
         Integer graphEdgeChunkLimit
 ) {
 
-    /** 每通道向量召回数量默认值 */
-    public static final int DEFAULT_TOP_K = 20;
+    /** 通道召回数量默认值（向量/BM25/图谱共用；库级未配置时的运行时取值） */
+    public static final int DEFAULT_QUERY_COUNT = 20;
 
     /** 上下文总 token 预算默认值 */
     public static final int DEFAULT_MAX_TOTAL_TOKENS = 30000;
@@ -91,12 +96,9 @@ public record RetrievalQuery(
         if (StringUtils.isBlank(query)) {
             throw new IllegalArgumentException("检索请求 query 不能为空");
         }
-        int resolvedTopK = ObjectUtils.isEmpty(topK) ? DEFAULT_TOP_K : topK;
-        if (resolvedTopK <= 0) {
-            throw new IllegalArgumentException("检索请求 topK 必须为正整数");
-        }
-        topK = resolvedTopK;
-        chunkTopK = ObjectUtils.isEmpty(chunkTopK) ? resolvedTopK : chunkTopK;
+        vectorQueryCount = requirePositive(vectorQueryCount, DEFAULT_QUERY_COUNT, "vectorQueryCount");
+        bm25QueryCount = requirePositive(bm25QueryCount, DEFAULT_QUERY_COUNT, "bm25QueryCount");
+        graphQueryCount = requirePositive(graphQueryCount, DEFAULT_QUERY_COUNT, "graphQueryCount");
         maxTotalTokens = ObjectUtils.isEmpty(maxTotalTokens) ? DEFAULT_MAX_TOTAL_TOKENS : maxTotalTokens;
         maxEntityTokens = ObjectUtils.isEmpty(maxEntityTokens) ? DEFAULT_MAX_ENTITY_TOKENS : maxEntityTokens;
         maxRelationTokens = ObjectUtils.isEmpty(maxRelationTokens) ? DEFAULT_MAX_RELATION_TOKENS : maxRelationTokens;
@@ -112,7 +114,7 @@ public record RetrievalQuery(
     }
 
     /**
-     * 图谱召回上限归一：空值回落默认值，非空要求正整数（该两值直下 SQL LIMIT，非正即非法）。
+     * 数量/上限归一：空值回落默认值，非空要求正整数（该类值直下 SQL LIMIT，非正即非法）。
      *
      * @param value      请求侧取值，可空
      * @param defaultVal 缺省回落值
@@ -131,46 +133,40 @@ public record RetrievalQuery(
 
     /**
      * 便捷构造器：纯文本检索请求（无附图，多模态开关取默认全开，图谱上限走默认值）。
-     * <p>与引入 {@code images} 组件前的九参形态逐字段一致，既有调用点零改动兼容。</p>
+     * <p>通道召回数量恒传 {@code null}（由编排层从库级配置填充，请求方不再指定）。</p>
      *
      * @param kbId              所属知识库ID
      * @param query             用户原始问题
      * @param hlKeywords        显式高层关键词（可空）
      * @param llKeywords        显式低层关键词（可空）
-     * @param topK              每通道向量召回数量（可空走默认）
-     * @param chunkTopK         chunk 召回数量（可空回退 topK）
      * @param maxTotalTokens    上下文总 token 预算（可空走默认）
      * @param maxEntityTokens   实体上下文 token 预算（可空走默认）
      * @param maxRelationTokens 关系上下文 token 预算（可空走默认）
      */
     public RetrievalQuery(Long kbId, String query, List<String> hlKeywords, List<String> llKeywords,
-                          Integer topK, Integer chunkTopK, Integer maxTotalTokens,
-                          Integer maxEntityTokens, Integer maxRelationTokens) {
-        this(kbId, query, hlKeywords, llKeywords, topK, chunkTopK, maxTotalTokens,
+                          Integer maxTotalTokens, Integer maxEntityTokens, Integer maxRelationTokens) {
+        this(kbId, query, hlKeywords, llKeywords, null, null, null, maxTotalTokens,
                 maxEntityTokens, maxRelationTokens, List.of(), RetrievalMultimodalOptions.defaults(),
                 null, null);
     }
 
     /**
      * 便捷构造器：带附图检索请求（多模态开关取默认全开，图谱上限走默认值）。
-     * <p>与引入 {@code multimodal} 组件前的十参形态逐字段一致，
-     * 基线（开关无条件自动触发）语义零改动兼容。</p>
+     * <p>通道召回数量恒传 {@code null}（由编排层从库级配置填充，请求方不再指定）。</p>
      *
      * @param kbId              所属知识库ID
      * @param query             用户原始问题
      * @param hlKeywords        显式高层关键词（可空）
      * @param llKeywords        显式低层关键词（可空）
-     * @param topK              每通道向量召回数量（可空走默认）
-     * @param chunkTopK         chunk 召回数量（可空回退 topK）
      * @param maxTotalTokens    上下文总 token 预算（可空走默认）
      * @param maxEntityTokens   实体上下文 token 预算（可空走默认）
      * @param maxRelationTokens 关系上下文 token 预算（可空走默认）
      * @param images            已校验解码的检索附图（可空，空回落不可变空列表）
      */
     public RetrievalQuery(Long kbId, String query, List<String> hlKeywords, List<String> llKeywords,
-                          Integer topK, Integer chunkTopK, Integer maxTotalTokens,
-                          Integer maxEntityTokens, Integer maxRelationTokens, List<LlmImage> images) {
-        this(kbId, query, hlKeywords, llKeywords, topK, chunkTopK, maxTotalTokens,
+                          Integer maxTotalTokens, Integer maxEntityTokens, Integer maxRelationTokens,
+                          List<LlmImage> images) {
+        this(kbId, query, hlKeywords, llKeywords, null, null, null, maxTotalTokens,
                 maxEntityTokens, maxRelationTokens, images, RetrievalMultimodalOptions.defaults(),
                 null, null);
     }

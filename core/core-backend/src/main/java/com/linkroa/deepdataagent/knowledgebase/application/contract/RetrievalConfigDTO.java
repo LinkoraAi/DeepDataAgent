@@ -18,6 +18,8 @@ import org.apache.commons.lang3.StringUtils;
  * @param graphEnabled     是否启用图谱检索通道，可为空（空表示不启用）
  * @param rerankConfig     重排配置 JSON 文本，可为空
  * @param fusionConfig     融合策略配置 JSON 文本，可为空
+ * @param channelQueryCountConfig 通道召回数量配置（类型化，区别于重排/融合的 JSON 文本形态——
+ *                                三整数的扁平结构直接以对象承载），可为空（未配置，运行时按默认值处理）
  */
 public record RetrievalConfigDTO(
         String strategyType,
@@ -26,7 +28,8 @@ public record RetrievalConfigDTO(
         Float similarThreshold,
         Boolean graphEnabled,
         String rerankConfig,
-        String fusionConfig
+        String fusionConfig,
+        ChannelQueryCountDTO channelQueryCountConfig
 ) {
 
     /** 结果返回数量上限。 */

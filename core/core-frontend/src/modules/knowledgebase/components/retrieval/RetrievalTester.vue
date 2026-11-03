@@ -11,27 +11,34 @@ import { getKnowledgeBase, updateRetrievalConfig } from '../../api/knowledgeBase
 import { retrieveChunks } from '../../api/retrieval';
 import type { ChunkReference } from '../../api/retrieval';
 import {
-  CHANNEL_WEIGHT_CEIL,
-  CHANNEL_WEIGHT_FLOOR,
+  CHANNEL_WEIGHT_MAX,
+  CHANNEL_WEIGHT_MIN,
+  CHANNEL_WEIGHT_STEP,
+  DEFAULT_QUERY_COUNT,
+  QUERY_COUNT_MAX,
+  QUERY_COUNT_MIN,
   RERANK_TOP_K_MIN,
   RESULT_CHUNK_COUNT_MAX,
   RESULT_CHUNK_COUNT_MIN,
   RRF_K_MIN,
   SIMILAR_THRESHOLD_MAX,
   SIMILAR_THRESHOLD_MIN,
+  STRATEGY_MIX,
   buildStrategyJson,
   defaultRetrievalConfig,
   parseStrategyJson,
+  rebalanceChannelWeights,
   validateRetrievalConfig,
 } from '../../retrievalDraft';
-import type { RetrievalDraft } from '../../retrievalDraft';
+import type { RetrievalDraft, RetrievalDraftChannelQueryCount } from '../../retrievalDraft';
 import ChunkMediaThumb from './ChunkMediaThumb.vue';
 
 /**
  * 检索参数调试台（知识库详情「知识检索」页签）。
- * <p>左侧参数面板覆盖后端 RetrievalConfigValidator 的全部可写字段：策略 NAIVE/MIX、问题改写、
+ * <p>左侧参数面板覆盖后端 RetrievalConfigValidator 的全部可写字段：策略 NAIVE/MIX、通道召回数量
+ * （向量/BM25 各一条 1~100 滑杆，MIX 下追加图谱滑杆，默认 20）、问题改写、
  * 结果数量 1~100、相似度阈值 0~1、重排（开关 + 模型 + topK）、融合（RRF 配 K；加权配三路权重，
- * 两分支互斥显示），右侧为检索执行区与命中切片卡片。</p>
+ * 三路以 0.1 步进联动且合计恒为 1.0，两分支互斥显示），右侧为检索执行区与命中切片卡片。</p>
  * <p>关键口径：库级策略参数由后端在检索链路内从知识库配置读取，<b>不经检索请求体下发</b>，
  * 故唯一的「搜索」动作先 PUT retrieval-config 保存配置、再调 chunks 端点检索，两步连续执行；
  * 面板值经 buildStrategyJson 归一，越界一律提交前拦截不发请求。</p>
@@ -62,10 +69,17 @@ const panelError = ref('');
 /** 重排模型选项（ENABLED + CHAT） */
 const rerankModels = ref<ModelProfileResponse[]>([]);
 
+/** 是否为 MIX 策略（决定是否渲染图谱通道召回数量滑杆） */
+const isMix = computed(() => draft.strategyType === STRATEGY_MIX);
 /** 是否启用重排（决定是否展开模型与 topK） */
 const rerankEnabled = computed(() => draft.rerankConfig.enabled);
 /** 是否为 RRF 融合（决定是否展开 K 值并隐藏三路权重） */
 const isRrf = computed(() => draft.fusionConfig.fusionType === 'RRF');
+/** 三通道权重合计（按 0.1 刻度整数累加，规避浮点累加噪声；联动口径恒为 1.0） */
+const channelWeightTotal = computed(() => RETRIEVAL_CHANNELS.reduce(
+  (total, channel) => total + Math.round((draft.fusionConfig.channelDenseWeight[channel.value] ?? 0) * 10),
+  0,
+) / 10);
 /** 是否有进行中的动作（保存与检索互斥，期间禁用输入与按钮） */
 const busy = computed(() => saving.value || retrieving.value);
 /** 当前策略说明文案 */
@@ -103,6 +117,41 @@ function onRerankTopKChange(value: number | string): void {
 function onSimilarChange(value: unknown): void {
   const raw = Array.isArray(value) ? value[0] : value;
   draft.similarThreshold = typeof raw === 'number' && Number.isFinite(raw) ? raw : SIMILAR_THRESHOLD_MIN;
+}
+
+/**
+ * 通道召回数量滑杆回写（异常回传取默认 20，越界夹取到 1~100 并取整）。
+ * @param key 通道数量字段名（向量 / BM25 / 图谱）
+ * @param value 滑杆回传值（可能为数组或非法值，均归一处理）
+ */
+function onQueryCountChange(key: keyof RetrievalDraftChannelQueryCount, value: unknown): void {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const count = typeof raw === 'number' && Number.isFinite(raw)
+    ? Math.round(raw)
+    : DEFAULT_QUERY_COUNT;
+  draft.channelQueryCountConfig[key] = Math.min(Math.max(count, QUERY_COUNT_MIN), QUERY_COUNT_MAX);
+}
+
+/**
+ * 通道权重滑块回写：交给 rebalanceChannelWeights 做三路联动。
+ * <p>目标值按 0.1 就近取整并夹取 0.1~0.8，其余两路按当前比例分摊剩余额度，
+ * 合计恒为 1.0，从而杜绝「总权重大于 1」与 0 权通道（后端两者都不接受）。</p>
+ * @param channel 被调整的通道枚举名
+ * @param value 滑块回传值（可能为数组或非法值，均由联动函数归一）
+ */
+function onChannelWeightChange(channel: string, value: unknown): void {
+  const raw = Array.isArray(value) ? value[0] : value;
+  draft.fusionConfig.channelDenseWeight = rebalanceChannelWeights(
+    draft.fusionConfig.channelDenseWeight,
+    channel,
+    typeof raw === 'number' ? raw : Number.NaN,
+  );
+}
+
+/** 单通道权重展示文本（固定一位小数，避免 0.30000000000000004 之类噪声） */
+function channelWeightText(channel: string): string {
+  const weight = draft.fusionConfig.channelDenseWeight[channel];
+  return (typeof weight === 'number' && Number.isFinite(weight) ? weight : CHANNEL_WEIGHT_MIN).toFixed(1);
 }
 
 /** 重排开关回写 */
@@ -216,6 +265,54 @@ onMounted(() => {
           <t-radio-group v-model="draft.strategyType" :options="strategyOptions" />
           <p v-if="errorOf('strategyType')" class="retrieval-field__error">{{ errorOf('strategyType') }}</p>
         </div>
+        <div class="retrieval-field">
+          <label class="retrieval-field__label">
+            VECTOR 通道：{{ draft.channelQueryCountConfig.vectorQueryCount }} 条
+          </label>
+          <t-slider
+            :value="draft.channelQueryCountConfig.vectorQueryCount"
+            :min="QUERY_COUNT_MIN"
+            :max="QUERY_COUNT_MAX"
+            :step="1"
+            :labels="false"
+            @change="onQueryCountChange('vectorQueryCount', $event)"
+          />
+          <p v-if="errorOf('channelQueryCountConfig.vectorQueryCount')" class="retrieval-field__error">
+            {{ errorOf('channelQueryCountConfig.vectorQueryCount') }}
+          </p>
+        </div>
+        <div class="retrieval-field">
+          <label class="retrieval-field__label">
+            BM25 通道：{{ draft.channelQueryCountConfig.bm25QueryCount }} 条
+          </label>
+          <t-slider
+            :value="draft.channelQueryCountConfig.bm25QueryCount"
+            :min="QUERY_COUNT_MIN"
+            :max="QUERY_COUNT_MAX"
+            :step="1"
+            :labels="false"
+            @change="onQueryCountChange('bm25QueryCount', $event)"
+          />
+          <p v-if="errorOf('channelQueryCountConfig.bm25QueryCount')" class="retrieval-field__error">
+            {{ errorOf('channelQueryCountConfig.bm25QueryCount') }}
+          </p>
+        </div>
+        <div v-if="isMix" class="retrieval-field">
+          <label class="retrieval-field__label">
+            GRAPH 通道：{{ draft.channelQueryCountConfig.graphQueryCount }} 条
+          </label>
+          <t-slider
+            :value="draft.channelQueryCountConfig.graphQueryCount"
+            :min="QUERY_COUNT_MIN"
+            :max="QUERY_COUNT_MAX"
+            :step="1"
+            :labels="false"
+            @change="onQueryCountChange('graphQueryCount', $event)"
+          />
+          <p v-if="errorOf('channelQueryCountConfig.graphQueryCount')" class="retrieval-field__error">
+            {{ errorOf('channelQueryCountConfig.graphQueryCount') }}
+          </p>
+        </div>
       </FormSection>
 
       <FormSection title="重排" hint="开启后按重排模型重新打分，必须选择模型">
@@ -287,7 +384,7 @@ onMounted(() => {
         </div>
       </FormSection>
 
-      <FormSection title="多路融合" hint="RRF 配 K 值；加权求和配三路权重（互斥）">
+      <FormSection title="多路融合" hint="RRF 配 K 值；加权求和配三路权重（合计为 1）">
         <div class="retrieval-field">
           <label class="retrieval-field__label">融合方式</label>
           <t-select v-model="draft.fusionConfig.fusionType" :options="fusionOptions" />
@@ -302,21 +399,24 @@ onMounted(() => {
         </div>
         <template v-else>
           <div v-for="channel in channelOptions" :key="channel.value" class="retrieval-field">
-            <label class="retrieval-field__label">{{ channel.label }}通道权重（0~1，不含 0 与 1）</label>
-            <t-input-number
-              v-model="draft.fusionConfig.channelDenseWeight[channel.value]"
-              class="retrieval-field__number"
-              :min="CHANNEL_WEIGHT_FLOOR"
-              :max="CHANNEL_WEIGHT_CEIL"
-              :step="0.05"
-              :decimal-places="2"
-              theme="column"
-              :status="errorOf(`fusionConfig.channelDenseWeight.${channel.value}`) ? 'error' : 'default'"
+            <label class="retrieval-field__label">
+              {{ channel.label }}权重：{{ channelWeightText(channel.value) }}
+            </label>
+            <t-slider
+              :value="draft.fusionConfig.channelDenseWeight[channel.value]"
+              :min="CHANNEL_WEIGHT_MIN"
+              :max="CHANNEL_WEIGHT_MAX"
+              :step="CHANNEL_WEIGHT_STEP"
+              :labels="false"
+              @change="onChannelWeightChange(channel.value, $event)"
             />
             <p v-if="errorOf(`fusionConfig.channelDenseWeight.${channel.value}`)" class="retrieval-field__error">
               {{ errorOf(`fusionConfig.channelDenseWeight.${channel.value}`) }}
             </p>
           </div>
+          <p v-if="errorOf('fusionConfig.channelDenseWeight')" class="retrieval-field__error">
+            {{ errorOf('fusionConfig.channelDenseWeight') }}
+          </p>
         </template>
       </FormSection>
     </div>
@@ -392,9 +492,13 @@ onMounted(() => {
 
 .retrieval-tester__panel {
   flex: 0 0 340px;
+  max-height: max(480px, calc(100vh - 300px));
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .retrieval-tester__main {
+  max-height: max(480px, calc(100vh - 300px));
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -438,6 +542,9 @@ onMounted(() => {
 }
 
 .retrieval-tester__results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   margin-top: 12px;
   padding: 12px;
   background: var(--td-bg-color-container, #fff);

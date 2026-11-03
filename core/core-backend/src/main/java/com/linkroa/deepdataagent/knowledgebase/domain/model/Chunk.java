@@ -10,7 +10,8 @@ import java.time.ZoneId;
 
 /**
  * 切片聚合根。
- * <p>表示文档分块后的最小检索单元，与 chunk_vector / chunk_tsv 1:1 关联。
+ * <p>表示文档分块后的最小检索单元，与 chunk_vector 1:1 关联；
+ * 全文检索由建在 {@code chunk_content} 上的 BM25 索引在存储侧维护（无派生表）。
  * 来源标识（{@link ChunkSource}）由两条写入工厂各自打标、写入即定：
  * {@link #create} 恒为「人工新增」、{@link #createForRebuild} 恒为「解析产生」，
  * 编辑等后续操作 MUST NOT 改写该标识。</p>

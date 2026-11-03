@@ -46,7 +46,7 @@ import static org.mockito.Mockito.when;
  * （image/table/equation/generic，后缀取块类型而非模型自报类型，兜底命名链同样带后缀）、
  * LLM 异常/空响应确定性兜底、
  * thinking+围栏污染响应解析、纯文本响应保留、generic 块本地兜底不调 LLM、
- * 实体名派生链（派生裸名，产物统一带类型后缀；prompt 变量 entity_name 用裸名）
+ * 实体名派生链（派生裸名，产物统一带类型后缀；prompt 变量 entity_name 改为型别命名指令）
  * 与入参非法分支；以及真看图路径——有效引用携带单图多模态请求、
  * contentType 按对象键后缀推断、对象缺失/读取异常/空内容降级纯文本、超字节上限跳图、
  * 无引用零存储交互（行为与升级前基线一致）。全程离线。</p>
@@ -339,6 +339,64 @@ class MediaDescriptorServiceTest {
                 "未声明 format 时 equation_format 应归一为默认 latex");
         assertTrue(requestCaptor.getValue().systemPrompt().contains("expert mathematician"),
                 "公式块应路由 EQUATION_ANALYSIS_SYSTEM 特征句");
+    }
+
+    /**
+     * 场景：表格块渲染用户提示词。
+     * 预期：{entity_name} 注入表格型别命名指令（不再预置题注/文件名），模板末尾声明
+     * 语义化命名约束，占位符全部替换，JSON 输出骨架保持完整。
+     */
+    @Test
+    void should_injectTableNamingInstruction_when_describe_given_tableBlock() {
+        // given
+        when(llmClient.chat(any(LlmChatRequest.class))).thenReturn(new LlmChatResult(
+                "{\"detailed_description\": \"表格描述\", \"entity_info\": {\"summary\": \"s\"}}", 2));
+        ContentBlockVO block = new ContentBlockVO(ContentBlockVO.TYPE_TABLE, "<table>html</table>",
+                Map.of(MultimodalMetaKeys.META_KEY_TABLE_BODY, "<table>html</table>"));
+
+        // when
+        service.describe(KB_ID, PROFILE_ID, LANG_ZH, block);
+
+        // then
+        ArgumentCaptor<LlmChatRequest> requestCaptor = ArgumentCaptor.forClass(LlmChatRequest.class);
+        verify(llmClient).chat(requestCaptor.capture());
+        String userPrompt = requestCaptor.getValue().userPrompt();
+        assertTrue(userPrompt.contains("\"entity_name\": \"a unique descriptive name for this table\""),
+                "表格块应注入表格型别命名指令");
+        assertTrue(userPrompt.contains("do not return file names, figure or table numbers"),
+                "表格模板应声明语义化命名约束");
+        assertTrue(userPrompt.contains("\"entity_info\": {"), "JSON 输出骨架应保持完整");
+        assertTrue(userPrompt.contains("\"summary\":"), "JSON 输出骨架应包含 summary 字段");
+        assertFalse(userPrompt.contains("{entity_name}"), "占位符应全部替换完毕");
+        assertFalse(userPrompt.contains("{language}"), "语言占位符应全部替换完毕");
+    }
+
+    /**
+     * 场景：公式块渲染用户提示词。
+     * 预期：{entity_name} 注入公式型别命名指令，模板末尾声明语义化命名约束，占位符全部替换。
+     */
+    @Test
+    void should_injectEquationNamingInstruction_when_describe_given_equationBlock() {
+        // given
+        when(llmClient.chat(any(LlmChatRequest.class))).thenReturn(new LlmChatResult(
+                "{\"detailed_description\": \"公式描述\", \"entity_info\": {\"summary\": \"s\"}}", 2));
+        ContentBlockVO block = new ContentBlockVO(ContentBlockVO.TYPE_EQUATION, "E=mc^2",
+                Map.of(MultimodalMetaKeys.META_KEY_TEXT, "E=mc^2"));
+
+        // when
+        service.describe(KB_ID, PROFILE_ID, LANG_ZH, block);
+
+        // then
+        ArgumentCaptor<LlmChatRequest> requestCaptor = ArgumentCaptor.forClass(LlmChatRequest.class);
+        verify(llmClient).chat(requestCaptor.capture());
+        String userPrompt = requestCaptor.getValue().userPrompt();
+        assertTrue(userPrompt.contains("\"entity_name\": \"a unique descriptive name for this equation\""),
+                "公式块应注入公式型别命名指令");
+        assertTrue(userPrompt.contains("do not return file names, equation numbers"),
+                "公式模板应声明语义化命名约束");
+        assertTrue(userPrompt.contains("Please analyze this mathematical equation"),
+                "公式块应路由 equation_prompt 无上下文变体");
+        assertFalse(userPrompt.contains("{entity_name}"), "占位符应全部替换完毕");
     }
 
     /**
@@ -637,8 +695,8 @@ class MediaDescriptorServiceTest {
 
     /**
      * 场景：图片块 meta 仅有图片路径，其余模板变量来源缺失。
-     * 预期：所有渲染变量归一为非空白值（缺失项为 N/A），实测进入最终用户提示词，
-     * 满足 {@code PromptCatalog.render} fail-fast 契约。
+     * 预期：所有渲染变量归一为非空白值（缺失项为 N/A）；主实体名占位符注入型别命名指令
+     * 而非派生名，实测进入最终用户提示词，满足 {@code PromptCatalog.render} fail-fast 契约。
      */
     @Test
     void should_normalizeMissingVars_when_describe_given_sparseMeta() {
@@ -651,15 +709,18 @@ class MediaDescriptorServiceTest {
         // when
         service.describe(KB_ID, PROFILE_ID, LANG_ZH, block);
 
-        // then：缺失变量的 N/A 归一值与派生实体名/图片路径均已渲染进用户提示词
+        // then：缺失变量的 N/A 归一值与图片路径均已渲染进用户提示词；实体名占位符为命名指令
         ArgumentCaptor<LlmChatRequest> requestCaptor = ArgumentCaptor.forClass(LlmChatRequest.class);
         verify(llmClient).chat(requestCaptor.capture());
         String userPrompt = requestCaptor.getValue().userPrompt();
         assertTrue(userPrompt.contains("Section Path: N/A"), "缺失 section_path 应归一为 N/A");
         assertTrue(userPrompt.contains("Captions: N/A"), "缺失 captions 应归一为 N/A");
         assertTrue(userPrompt.contains("Footnotes: N/A"), "缺失 footnotes 应归一为 N/A");
-        assertTrue(userPrompt.contains("\"entity_name\": \"a.png\""), "实体名应派生为图片文件名");
-        assertFalse(userPrompt.contains("a.png (image)"), "prompt 变量 entity_name 应为裸名，不带类型后缀");
+        assertTrue(userPrompt.contains("\"entity_name\": \"a unique descriptive name for this image\""),
+                "图片块应注入型别命名指令而非派生文件名");
+        assertFalse(userPrompt.contains("\"entity_name\": \"a.png\""),
+                "提示词不应再预置派生实体名");
+        assertFalse(userPrompt.contains("{entity_name}"), "占位符应全部替换完毕");
         assertTrue(userPrompt.contains("Image Path: images/a.png"), "图片路径应原样注入");
     }
 

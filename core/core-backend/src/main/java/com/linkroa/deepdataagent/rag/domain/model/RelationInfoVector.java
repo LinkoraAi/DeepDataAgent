@@ -47,7 +47,7 @@ public record RelationInfoVector(
         if (StringUtils.isBlank(sourceName) || StringUtils.isBlank(targetName)) {
             throw new IllegalArgumentException("关系向量端点不能为空");
         }
-        if (StringUtils.equals(sourceName, targetName)) {
+        if (Objects.equals(sourceName, targetName)) {
             throw new IllegalArgumentException("关系向量拒绝自环");
         }
         chunkIds = ObjectUtils.isEmpty(chunkIds) ? List.of() : chunkIds;

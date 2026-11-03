@@ -34,7 +34,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * {@link ChunkPersistenceService} 单元测试：验证向量化<b>预趟分批</b>（embedBatch 切批、
- * 下标对齐、批大小夹逼）、pgvector/tsvector 字面量格式、空白画像降级、异常传播，
+ * 下标对齐、批大小夹逼）、pgvector 字面量格式、空白画像降级、异常传播，
  * 以及单文档切片数量<b>不设上限</b>（历史 1000 上限已移除）。
  */
 @ExtendWith(MockitoExtension.class)
@@ -88,8 +88,7 @@ class ChunkPersistenceServiceTest {
         assertEquals("{\"page\":3}", draft.metadata());
         assertEquals("TEXT", draft.chunkContentType());
         assertEquals("[0.5,0.25]", draft.embeddingVector());
-        // 草稿不再携带预分词字面量（tsvector 由知识库落库 SQL 现算，
-        // 原文即 content 分量已在上行断言）
+        // 草稿不携带任何分词产物（BM25 索引由存储侧随正文维护，原文即 content 分量已在上行断言）
         verify(embeddingClient).embedBatch(PROFILE_ID, List.of("Alice met Bob"));
     }
 

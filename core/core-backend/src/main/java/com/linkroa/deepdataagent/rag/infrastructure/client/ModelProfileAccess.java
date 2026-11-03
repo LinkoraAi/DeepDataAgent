@@ -59,7 +59,10 @@ public class ModelProfileAccess {
     /**
      * 解析后的模型访问端点。
      *
-     * @param baseUrl         OpenAI 兼容 base URL（形如 {@code https://host/v1}，调用方仅追加资源路径）
+     * @param baseUrl         模型端点 URL（embedding / chat 客户端视其为 base 并追加资源路径；
+     *                        重排客户端原样直调，故重排 profile 须登记完整 rerank 地址，如
+     *                        {@code https://host/v1/rerank} 或 DashScope 原生
+     *                        {@code https://host/api/v1/services/rerank/text-rerank/text-rerank}）
      * @param apiKey          解密后的访问凭证（可为空，表示无鉴权端点）
      * @param modelName       模型名称（请求体 model 字段与缓存键组成部分，不含 provider 前缀）
      * @param vectorDimension 向量维度（EMBEDDING 类型配置值，CHAT 类型可为空）

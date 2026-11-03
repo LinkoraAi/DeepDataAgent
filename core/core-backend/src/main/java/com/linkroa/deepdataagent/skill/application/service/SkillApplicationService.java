@@ -31,6 +31,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Objects;
 
 /**
  * 技能资产应用服务：multipart 创建（首版随建）/ 发版（epoch 微秒键）/ 游标列表与版本查询 /
@@ -291,7 +292,7 @@ public class SkillApplicationService {
     private SkillAsset requireOwned(String skillId) {
         SkillAsset asset = skillAssetRepository.findBySkillId(skillId)
                 .orElseThrow(() -> new ResourceNotFoundException("技能不存在"));
-        if (!StringUtils.equals(asset.skillId(), skillId) || !asset.ownerId().equals(AuthContext.requireUserId())) {
+        if (!Objects.equals(asset.skillId(), skillId) || !asset.ownerId().equals(AuthContext.requireUserId())) {
             throw new ResourceNotFoundException("技能不存在");
         }
         return asset;

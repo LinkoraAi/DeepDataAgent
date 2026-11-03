@@ -305,6 +305,51 @@ class DefaultKnowledgeBaseApiTest {
     }
 
     @Test
+    void should_returnChannelQueryCountConfig_when_findRetrievalStrategyByKbId_given_nodePresent() {
+        // given：含通道召回数量节点（部分字段省略）
+        String strategyJson = "{\"strategyType\":\"MIX\",\"channelQueryCountConfig\":"
+                + "{\"vectorQueryCount\":30,\"graphQueryCount\":25}}";
+        when(knowledgeBaseRepository.findById(KB_ID))
+                .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE, strategyJson)));
+
+        // when
+        RetrievalStrategyConfig config = api.findRetrievalStrategyByKbId(KB_ID);
+
+        // then：节点字段独立映射，省略字段保持 null（未配置语义）
+        assertEquals(30, config.channelQueryCountConfig().vectorQueryCount());
+        assertNull(config.channelQueryCountConfig().bm25QueryCount());
+        assertEquals(25, config.channelQueryCountConfig().graphQueryCount());
+    }
+
+    @Test
+    void should_returnNullChannelConfig_when_findRetrievalStrategyByKbId_given_nodeAbsent() {
+        // given：存量库无新节点
+        String strategyJson = "{\"strategyType\":\"NAIVE\",\"resultChunkCount\":5}";
+        when(knowledgeBaseRepository.findById(KB_ID))
+                .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE, strategyJson)));
+
+        // when
+        RetrievalStrategyConfig config = api.findRetrievalStrategyByKbId(KB_ID);
+
+        // then：组件为 null（未配置，运行时归一默认值）
+        assertNull(config.channelQueryCountConfig());
+    }
+
+    @Test
+    void should_returnNullChannelConfig_when_findRetrievalStrategyByKbId_given_nodeNotObject() {
+        // given：防御式解析——节点非对象按未配置处理（不视为数据损坏）
+        String strategyJson = "{\"strategyType\":\"MIX\",\"channelQueryCountConfig\":\"30\"}";
+        when(knowledgeBaseRepository.findById(KB_ID))
+                .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE, strategyJson)));
+
+        // when
+        RetrievalStrategyConfig config = api.findRetrievalStrategyByKbId(KB_ID);
+
+        // then
+        assertNull(config.channelQueryCountConfig());
+    }
+
+    @Test
     void should_returnNull_when_findRetrievalStrategyByKbId_given_nullId() {
         // when // then
         assertNull(api.findRetrievalStrategyByKbId(null));

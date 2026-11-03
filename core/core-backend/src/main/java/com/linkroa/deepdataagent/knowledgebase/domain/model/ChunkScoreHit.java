@@ -6,7 +6,7 @@ package com.linkroa.deepdataagent.knowledgebase.domain.model;
  * 不并入 {@link Chunk} 领域模型，故以独立只读投影承载，仅限本 BC 仓储接口使用。</p>
  *
  * @param chunkId 命中切片主键
- * @param score   相关度分（VECTOR 通道为余弦相似度，BM25 通道为 ts_rank_cd 相关度）
+ * @param score   相关度分（VECTOR 通道为余弦相似度，BM25 通道为 pg_textsearch 的 BM25 分，均已归一为越大越相关）
  */
 public record ChunkScoreHit(Long chunkId, double score) {
 }

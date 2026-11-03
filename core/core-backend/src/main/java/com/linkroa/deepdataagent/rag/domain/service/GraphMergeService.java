@@ -337,7 +337,7 @@ public class GraphMergeService {
                 continue;
             }
             String finalName = truncateNameIfOverLength(kbId, NAME_KIND_ENTITY, name);
-            if (StringUtils.equals(finalName, node.entityName())) {
+            if (Objects.equals(finalName, node.entityName())) {
                 normalized.add(node);
                 continue;
             }
@@ -375,13 +375,13 @@ public class GraphMergeService {
             }
             String finalSource = truncateNameIfOverLength(kbId, NAME_KIND_EDGE_SOURCE, source);
             String finalTarget = truncateNameIfOverLength(kbId, NAME_KIND_EDGE_TARGET, target);
-            boolean unchanged = StringUtils.equals(finalSource, edge.sourceName())
-                    && StringUtils.equals(finalTarget, edge.targetName());
+            boolean unchanged = Objects.equals(finalSource, edge.sourceName())
+                    && Objects.equals(finalTarget, edge.targetName());
             if (unchanged) {
                 normalized.add(edge);
                 continue;
             }
-            if (StringUtils.equals(finalSource, finalTarget)) {
+            if (Objects.equals(finalSource, finalTarget)) {
                 log.warn("端点名归一/截断后形成自环，丢弃：kbId=[{}]，entity=[{}]", kbId, finalSource);
                 report.selfLoopDropped.incrementAndGet();
                 continue;
@@ -454,7 +454,7 @@ public class GraphMergeService {
             if (ObjectUtils.isEmpty(edge)) {
                 continue;
             }
-            if (StringUtils.equals(edge.sourceName(), edge.targetName())) {
+            if (Objects.equals(edge.sourceName(), edge.targetName())) {
                 log.warn("自环边丢弃：kbId=[{}]，entity=[{}]", kbId, edge.sourceName());
                 report.selfLoopDropped.incrementAndGet();
                 continue;
@@ -649,7 +649,7 @@ public class GraphMergeService {
                 return true;
             }
             if (cursor instanceof SQLException sqlException
-                    && StringUtils.equals(sqlException.getSQLState(), UNIQUE_VIOLATION_SQL_STATE)) {
+                    && Objects.equals(sqlException.getSQLState(), UNIQUE_VIOLATION_SQL_STATE)) {
                 return true;
             }
         }
@@ -997,7 +997,7 @@ public class GraphMergeService {
      */
     private static RelationEdge pickKeepRow(RelationEdge skeleton, List<RelationEdge> rows) {
         return rows.stream()
-                .filter(row -> StringUtils.equals(row.sourceName(), skeleton.sourceName()))
+                .filter(row -> Objects.equals(row.sourceName(), skeleton.sourceName()))
                 .findFirst()
                 .orElse(ObjectUtils.isEmpty(rows) ? null : rows.get(0));
     }
@@ -1472,7 +1472,7 @@ public class GraphMergeService {
      */
     private static float[] reuseEntityVector(EntityInfoVector existing, String content) {
         if (ObjectUtils.isNotEmpty(existing) && ObjectUtils.isNotEmpty(existing.vector())
-                && StringUtils.equals(existing.content(), content)) {
+                && Objects.equals(existing.content(), content)) {
             return existing.vector();
         }
         return null;
@@ -1488,7 +1488,7 @@ public class GraphMergeService {
      */
     private static float[] reuseRelationVector(RelationInfoVector existing, String content) {
         if (ObjectUtils.isNotEmpty(existing) && ObjectUtils.isNotEmpty(existing.vector())
-                && StringUtils.equals(existing.content(), content)) {
+                && Objects.equals(existing.content(), content)) {
             return existing.vector();
         }
         return null;

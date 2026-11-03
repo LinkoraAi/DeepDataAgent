@@ -3,6 +3,7 @@ package com.linkroa.deepdataagent.knowledgebase.domain.model.enums;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.Optional;
+import java.util.Objects;
 
 /**
  * 内置实体类型枚举（系统维护，不可配置）。
@@ -71,7 +72,7 @@ public enum BuiltinEntityType {
      * @return 同名返回 true
      */
     public boolean matches(String name) {
-        return StringUtils.equalsIgnoreCase(name(), name) || StringUtils.equals(cnName, name);
+        return StringUtils.equalsIgnoreCase(name(), name) || Objects.equals(cnName, name);
     }
 
     /**

@@ -62,7 +62,7 @@ import static org.mockito.Mockito.when;
  * 与各自 limit；④ 关系路端点与实体路命中逐位交错并入实体候选集（relatedEdges 收到合并去重列表）、
  * 关联边并入关系视图（与关系路命中按归一对去重）；
  * ⑤ NAIVE 不触碰图谱仓储且仅打包 query 一条文本、阈值缺失等效不过滤；
- * ⑥ 单通道（VECTOR）抛异常其余通道仍返回；⑦ embedding 批量失败整体短路；
+ * ⑥ 单通道（VECTOR / BM25）抛异常其余通道仍返回（BM25 异常须 ERROR 留痕）；⑦ embedding 批量失败整体短路；
  * ⑧ null 入参非法；⑨ 检索 profileId 与知识库投影同源（含跨库隔离）；
  * ⑩ 知识库未配置嵌入模型 → 向量召回降级且零 embedding 调用；
  * ⑪ MIX 下 ll/hl 单侧为空 → 对应子路退化 WARN 可区分、剩单路行为不变、双侧皆空不落单侧告警；
@@ -100,11 +100,14 @@ class DefaultRecallServiceTest {
     /** OTHER_KB_ID 配置的 embedding 模型 profileId（证明跨库不共享进程级单值） */
     private static final String EMBED_PROFILE_OTHER = "embed-profile-2";
 
-    /** 每通道向量召回数量（图谱实体路/关系路 limit） */
+    /** 图谱通道召回数量（实体路/关系路 limit 与 E1 入场配额共用单值，graphQueryCount 取值） */
     private static final int TOP_K = 10;
 
-    /** chunk 召回数量（VECTOR/BM25 通道 limit） */
+    /** 向量/BM25 通道召回数量（vectorQueryCount / bm25QueryCount 取值） */
     private static final int CHUNK_TOP_K = 5;
+
+    /** 图谱通道入场配额收紧值（E1 截断用例，须小于实体账本 chunk 块数 3） */
+    private static final int GRAPH_ENTRY_QUOTA = 2;
 
     /** 配置侧余弦相似度阈值（MIX 场景） */
     private static final float SIMILAR_THRESHOLD = 0.5F;
@@ -267,7 +270,7 @@ class DefaultRecallServiceTest {
         RecallService.RecallOutcome outcome = recallService.recall(query(), mixConfig());
 
         // then：全部下游检索调用均携带 kbId 单库隔离，limit 各按口径
-        // （VECTOR/BM25 → chunkTopK；实体路/关系路 → topK；关联边 → GRAPH_EDGE_TOP）
+        // （VECTOR → vectorQueryCount；BM25 → bm25QueryCount；实体路/关系路 → graphQueryCount；关联边 → GRAPH_EDGE_TOP）
         assertEquals(5, outcome.candidates().size());
         verify(knowledgeBaseApi).searchByVector(eq(KB_ID), eq(DISTANCE_THRESHOLD),
                 eq(QUERY_VECTOR_LITERAL), eq(CHUNK_TOP_K));
@@ -596,6 +599,45 @@ class DefaultRecallServiceTest {
     }
 
     @Test
+    void should_logErrorAndReturnOtherChannels_when_recall_given_bm25ChannelThrows() {
+        // given：BM25 通道异常（如扩展未预加载 / 索引缺失），VECTOR 正常、图谱无命中
+        ch.qos.logback.classic.Logger recallLogger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(DefaultRecallService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        recallLogger.addAppender(appender);
+        try {
+            stubEmbeddingProfile(KB_ID, EMBED_PROFILE);
+            when(embeddingClient.embedBatch(eq(EMBED_PROFILE), anyList()))
+                    .thenReturn(List.of(QUERY_VECTOR, LL_VECTOR, HL_VECTOR));
+            when(knowledgeBaseApi.searchByVector(eq(KB_ID), eq(DISTANCE_THRESHOLD),
+                    eq(QUERY_VECTOR_LITERAL), eq(CHUNK_TOP_K)))
+                    .thenReturn(List.of(new ChunkScoreDTO(CHUNK_VECTOR, 0.92D)));
+            when(knowledgeBaseApi.searchByKeywords(eq(KB_ID), eq(QUERY), eq(CHUNK_TOP_K)))
+                    .thenThrow(new RuntimeException("全文检索扩展不可用"));
+            when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
+                    eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
+            when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
+                    eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
+
+            // when
+            RecallService.RecallOutcome outcome = recallService.recall(query(), mixConfig());
+
+            // then：BM25 降级为空、不向调用方抛异常，VECTOR 候选仍完整返回
+            List<RetrievalCandidate> candidates = outcome.candidates();
+            assertEquals(1, candidates.size());
+            assertEquals(CHUNK_VECTOR, candidates.get(0).chunkId());
+            assertEquals(RetrievalChannel.VECTOR, candidates.get(0).channel());
+            // then：全文通道不可用必须 ERROR 级留痕（含知识库标识），不得静默降级
+            assertTrue(appender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR
+                    && event.getFormattedMessage().contains("BM25 通道召回失败")
+                    && event.getFormattedMessage().contains(String.valueOf(KB_ID))));
+        } finally {
+            recallLogger.detachAppender(appender);
+        }
+    }
+
+    @Test
     void should_returnEmptyOutcomeWithoutDownstream_when_recall_given_embeddingFails() {
         // given：知识库已配置嵌入模型，但 embedding 批量调用抛异常（远程服务不可用）
         stubEmbeddingProfile(KB_ID, EMBED_PROFILE);
@@ -839,14 +881,14 @@ class DefaultRecallServiceTest {
     }
 
     @Test
-    void should_truncateGraphCandidatesToQuotaPrefix_when_recall_given_candidatesExceedChunkTopK() {
-        // given：入场配额（chunkTopK）收紧为 2，实体 A 账本 [201,202,203] 三块均单背书
+    void should_truncateGraphCandidatesToQuotaPrefix_when_recall_given_candidatesExceedGraphQueryCount() {
+        // given：入场配额（graphQueryCount，与实体/关系路共用单值）收紧为 2，实体 A 账本 [201,202,203] 三块均单背书
         stubGraphBase();
         when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
-                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                eq(DISTANCE_THRESHOLD), eq(GRAPH_ENTRY_QUOTA)))
                 .thenReturn(List.of(entityHit("A", 0.9D, List.of(CHUNK_GRAPH_1, CHUNK_GRAPH_2, CHUNK_GRAPH_3))));
         when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
-                eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
+                eq(DISTANCE_THRESHOLD), eq(GRAPH_ENTRY_QUOTA))).thenReturn(List.of());
         when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt())).thenReturn(List.of());
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "a.md"),
@@ -854,7 +896,8 @@ class DefaultRecallServiceTest {
                 CHUNK_GRAPH_3, graphChunkText(CHUNK_GRAPH_3, "c.md")));
 
         // when
-        RecallService.RecallOutcome outcome = recallService.recall(queryWith(2, null, null), mixConfig());
+        RecallService.RecallOutcome outcome = recallService.recall(
+                queryWith(GRAPH_ENTRY_QUOTA, null, null), mixConfig());
 
         // then：GRAPH 候选截断为配额内前缀 [201,202]，第 3 块丢弃
         List<Long> graphChunks = outcome.candidates().stream()
@@ -950,11 +993,11 @@ class DefaultRecallServiceTest {
         // given：每源上限收紧为 2（实体 A 三块仅取 201/202），入场配额 2；关系 C-D 二次背书 201
         stubGraphBase();
         when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
-                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                eq(DISTANCE_THRESHOLD), eq(GRAPH_ENTRY_QUOTA)))
                 .thenReturn(List.of(entityHit("A", 0.9D,
                         List.of(CHUNK_GRAPH_1, CHUNK_GRAPH_2, CHUNK_GRAPH_3))));
         when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
-                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                eq(DISTANCE_THRESHOLD), eq(GRAPH_ENTRY_QUOTA)))
                 .thenReturn(List.of(relationHit("C", "D", 0.7D, List.of(CHUNK_GRAPH_1))));
         when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt())).thenReturn(List.of());
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
@@ -962,7 +1005,8 @@ class DefaultRecallServiceTest {
                 CHUNK_GRAPH_2, graphChunkText(CHUNK_GRAPH_2, "b.md")));
 
         // when：每源上限 2、配额 2、关联边上限走默认
-        RecallService.RecallOutcome outcome = recallService.recall(queryWith(2, null, 2), mixConfig());
+        RecallService.RecallOutcome outcome = recallService.recall(
+                queryWith(GRAPH_ENTRY_QUOTA, null, CUSTOM_CHUNK_LIMIT), mixConfig());
 
         // then：每源截断先于背书（201 被 A+关系双背书→排首），配额取前缀 [201,202]；
         //        A 的第 3 块 203 因每源上限被排除
@@ -999,16 +1043,17 @@ class DefaultRecallServiceTest {
     }
 
     /**
-     * 构造指定图谱上限与入场配额的检索请求（REST 不承载图谱上限，仅内部契约可设）。
+     * 构造指定图谱数量与图谱上限的检索请求（REST 不承载通道数量与图谱上限，仅内部契约可设）。
      *
-     * @param chunkTopK           chunk 召回数量 / GRAPH 入场配额（可空走默认）
+     * @param graphQueryCount     图谱通道召回数量 / GRAPH 入场配额（可空走默认）
      * @param graphEdgeTop        关联边 Top 上限（可空走默认）
      * @param graphEdgeChunkLimit 每源 chunk 上限（可空走默认）
      * @return 检索请求
      */
-    private static RetrievalQuery queryWith(Integer chunkTopK, Integer graphEdgeTop, Integer graphEdgeChunkLimit) {
+    private static RetrievalQuery queryWith(Integer graphQueryCount, Integer graphEdgeTop,
+                                            Integer graphEdgeChunkLimit) {
         return new RetrievalQuery(KB_ID, QUERY, HL_KEYWORDS, LL_KEYWORDS,
-                TOP_K, chunkTopK, null, null, null, List.of(), null,
+                CHUNK_TOP_K, CHUNK_TOP_K, graphQueryCount, null, null, null, List.of(), null,
                 graphEdgeTop, graphEdgeChunkLimit);
     }
 
@@ -1132,7 +1177,7 @@ class DefaultRecallServiceTest {
      */
     private static RetrievalQuery query(Long kbId) {
         return new RetrievalQuery(kbId, QUERY, HL_KEYWORDS, LL_KEYWORDS,
-                TOP_K, CHUNK_TOP_K, null, null, null);
+                CHUNK_TOP_K, CHUNK_TOP_K, TOP_K, null, null, null, List.of(), null, null, null);
     }
 
     /**
@@ -1144,7 +1189,7 @@ class DefaultRecallServiceTest {
      */
     private static RetrievalQuery query(List<String> llKeywords, List<String> hlKeywords) {
         return new RetrievalQuery(KB_ID, QUERY, hlKeywords, llKeywords,
-                TOP_K, CHUNK_TOP_K, null, null, null);
+                CHUNK_TOP_K, CHUNK_TOP_K, TOP_K, null, null, null, List.of(), null, null, null);
     }
 
     /**
@@ -1156,7 +1201,7 @@ class DefaultRecallServiceTest {
      */
     private static RetrievalQuery queryWithGraphLimits(Integer graphEdgeTop, Integer graphEdgeChunkLimit) {
         return new RetrievalQuery(KB_ID, QUERY, HL_KEYWORDS, LL_KEYWORDS,
-                TOP_K, CHUNK_TOP_K, null, null, null, List.of(), null,
+                CHUNK_TOP_K, CHUNK_TOP_K, TOP_K, null, null, null, List.of(), null,
                 graphEdgeTop, graphEdgeChunkLimit);
     }
 
@@ -1180,7 +1225,7 @@ class DefaultRecallServiceTest {
      */
     private static RetrievalStrategyConfig mixConfig() {
         return new RetrievalStrategyConfig(RetrievalStrategyType.MIX,
-                null, null, SIMILAR_THRESHOLD, null, null);
+                null, null, SIMILAR_THRESHOLD, null, null, null);
     }
 
     /**
@@ -1190,7 +1235,7 @@ class DefaultRecallServiceTest {
      */
     private static RetrievalStrategyConfig naiveConfig() {
         return new RetrievalStrategyConfig(RetrievalStrategyType.NAIVE,
-                null, null, null, null, null);
+                null, null, null, null, null, null);
     }
 
     /**

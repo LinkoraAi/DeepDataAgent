@@ -47,6 +47,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Objects;
 
 /**
  * 切片应用服务（切片新增 / 修改 / 删除 / 查询）。
@@ -65,8 +66,9 @@ import java.util.Set;
  * <b>全部</b>分块（含人工新增），该语义由接口契约显式声明并由前端二次确认承接。</p>
  * <p>人工新增 / 编辑时序（同步写表示）：闸门与入参校验 → <b>事务外</b>调用
  * {@link ChunkEmbeddingApi} 取该切片正文的向量字面量（远程调用，事务规范 1.1；
- * 未配置嵌入模型时返回空，降级为仅写全文表示）→ 单事务内写切片行 + UPSERT 1:1 派生表示
- * （{@code chunk_vector} 与 {@code chunk_tsv}）+ 回写文档分块计数。切片行与派生表示同事务
+ * 未配置嵌入模型时返回空，此时无派生表示行）→ 单事务内写切片行 + UPSERT 向量派生表示
+ * （{@code chunk_vector}）+ 回写文档分块计数。全文检索由主表 {@code chunk_content} 上的
+ * BM25 索引自动维护。切片行与派生表示同事务
  * 提交或整体回滚，不存在「内容已变更而表示未更新」的可见状态；向量计算失败即零写入。</p>
  */
 @Service
@@ -206,11 +208,12 @@ public class ChunkApplicationService {
         KnowledgeBaseValidator.validateNotDeleting(knowledgeBase);
         Document document = documentRepository.findById(command.documentId())
                 .orElseThrow(() -> new ResourceNotFoundException("文档不存在"));
-        if (!ObjectUtils.equals(document.kbId(), command.kbId())) {
+        if (!Objects.equals(document.kbId(), command.kbId())) {
             throw new DeepDataAgentException("文档不属于该知识库");
         }
         ChunkContentType contentType = parseContentTypeOrNull(command.chunkContentType());
-        // 事务外：按切片正文取向量字面量（未配置嵌入模型返回 null，降级为仅写全文表示）；
+        // 事务外：按切片正文取向量字面量（未配置嵌入模型返回 null，此时无派生表示行；
+        // 全文索引由主表正文自动维护）
         // 入参 sequence 刻意不消费——序号在事务内持锁后由服务端计算
         String vectorLiteral = chunkEmbeddingApi.embedLiteral(command.kbId(), command.chunkContent());
         return transactionTemplate.execute(status -> {
@@ -246,7 +249,8 @@ public class ChunkApplicationService {
         if (StringUtils.isBlank(command.chunkContent())) {
             throw new DeepDataAgentException("切片内容不能为空");
         }
-        // 事务外：按新正文取向量字面量（未配置嵌入模型返回 null，降级为仅写全文表示）
+        // 事务外：按新正文取向量字面量（未配置嵌入模型返回 null，此时无派生表示行；
+        // 全文索引随主表正文更新自动维护）
         String vectorLiteral = chunkEmbeddingApi.embedLiteral(current.kbId(), command.chunkContent());
         return transactionTemplate.execute(status -> {
             Chunk latest = chunkRepository.findById(command.id())
@@ -729,7 +733,7 @@ public class ChunkApplicationService {
      * @throws ResourceConflictException 文档已脱离处理中状态（409）
      */
     private void validateProcessing(Document document) {
-        if (!ObjectUtils.equals(DocumentStatus.PROCESSING, document.status())) {
+        if (!Objects.equals(DocumentStatus.PROCESSING, document.status())) {
             throw new ResourceConflictException("文档「" + document.fileName()
                     + "」已脱离处理中状态（可能已被本实例启动恢复或删除链改写），拒绝切片回写");
         }
@@ -795,8 +799,8 @@ public class ChunkApplicationService {
 
     /**
      * 依据落库后的切片（含主键）与原始草稿，组装 1:1 派生表示集合。
-     * <p>通过 sequence 将草稿的向量字面量与切片原文对齐到已落库切片的主键
-     * （全文 tsvector 由仓储写入 SQL 现算，草稿不再携带预分词字面量）。</p>
+     * <p>通过 sequence 将草稿的向量字面量与已落库切片对齐到主键；全文检索无派生表示
+     * （BM25 索引直接建在主表 {@code chunk_content} 上，落库即入索引）。</p>
      *
      * @param kbId       知识库ID
      * @param documentId 文档ID
@@ -817,7 +821,7 @@ public class ChunkApplicationService {
                 continue;
             }
             ChunkRepresentation representation = ChunkRepresentation.create(kbId, documentId, chunk.id(),
-                    draft.embeddingVector(), draft.content());
+                    draft.embeddingVector());
             if (!representation.isEmptyRepresentation()) {
                 representations.add(representation);
             }
@@ -853,16 +857,15 @@ public class ChunkApplicationService {
 
     /**
      * 组装单条切片的 1:1 派生表示（人工新增 / 编辑路径）。
-     * <p>向量字面量由事务外的向量化契约产出，可为空（未配置嵌入模型时的降级口径，此时仅落全文行）；
-     * 切片原文承载全文表示的现算输入（tsvector 由写入 SQL 内 {@code to_tsvector} 现算）。</p>
+     * <p>向量字面量由事务外的向量化契约产出，可为空（未配置嵌入模型时降级为无派生行）；
+     * 全文检索无派生表示——BM25 索引随主表 {@code chunk_content} 的写入 / 更新自动维护。</p>
      *
      * @param chunk         已落库 / 已更新的切片（含主键，非空）
      * @param vectorLiteral 向量字面量，可为空
      * @return 切片派生表示
      */
     private ChunkRepresentation buildRepresentation(Chunk chunk, String vectorLiteral) {
-        return ChunkRepresentation.create(chunk.kbId(), chunk.documentId(), chunk.id(),
-                vectorLiteral, chunk.chunkContent());
+        return ChunkRepresentation.create(chunk.kbId(), chunk.documentId(), chunk.id(), vectorLiteral);
     }
 
     /**
@@ -878,7 +881,7 @@ public class ChunkApplicationService {
         }
         String normalized = chunkContentType.trim().toUpperCase();
         for (ChunkContentType type : ChunkContentType.values()) {
-            if (StringUtils.equals(type.name(), normalized)) {
+            if (Objects.equals(type.name(), normalized)) {
                 return type;
             }
         }

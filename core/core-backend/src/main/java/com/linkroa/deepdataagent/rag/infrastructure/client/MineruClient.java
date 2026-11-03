@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * MinerU 解析服务 HTTP 客户端（mineru-api 异步 tasks 契约）。
@@ -311,7 +312,7 @@ public class MineruClient {
                 body.add("lang_list", lang);
             }
         }
-        if (StringUtils.equals(backend, BACKEND_HYBRID_ENGINE)) {
+        if (Objects.equals(backend, BACKEND_HYBRID_ENGINE)) {
             body.add("effort", quality);
         }
         return body;
@@ -323,7 +324,7 @@ public class MineruClient {
      * @return true 表示当前后端支持解析方法与语言参数
      */
     private boolean isMethodCapableBackend() {
-        return StringUtils.equals(backend, BACKEND_PIPELINE) || StringUtils.equals(backend, BACKEND_HYBRID_ENGINE);
+        return Objects.equals(backend, BACKEND_PIPELINE) || Objects.equals(backend, BACKEND_HYBRID_ENGINE);
     }
 
     /**
@@ -350,12 +351,12 @@ public class MineruClient {
     private String awaitResult(String taskId) {
         while (true) {
             TaskStatus taskStatus = pollTaskStatus(taskId);
-            if (StringUtils.equals(taskStatus.status(), STATUS_COMPLETED)) {
+            if (Objects.equals(taskStatus.status(), STATUS_COMPLETED)) {
                 String resultJson = fetchResult(taskId);
                 if (StringUtils.isNotBlank(resultJson)) {
                     return resultJson;
                 }
-            } else if (StringUtils.equals(taskStatus.status(), STATUS_FAILED)) {
+            } else if (Objects.equals(taskStatus.status(), STATUS_FAILED)) {
                 throw new IllegalStateException(parseFailedMessage(taskStatus.error()));
             }
             sleepQuietly();

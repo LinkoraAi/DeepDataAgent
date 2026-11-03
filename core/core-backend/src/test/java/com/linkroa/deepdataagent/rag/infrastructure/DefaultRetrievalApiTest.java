@@ -50,8 +50,7 @@ class DefaultRetrievalApiTest {
     @Test
     void should_returnSameResult_when_search_given_validQuery() {
         // given
-        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null,
-                null, null, null, null, null);
+        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null);
         RetrievalResult expected = new RetrievalResult("答案", null, List.of(), Map.of(), List.of());
         when(retrievalApplicationService.search(query)).thenReturn(expected);
 
@@ -69,8 +68,7 @@ class DefaultRetrievalApiTest {
     @Test
     void should_throwBusinessException_when_search_given_kbUnavailable() {
         // given
-        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null,
-                null, null, null, null, null);
+        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null);
         when(retrievalApplicationService.search(query))
                 .thenThrow(new DeepDataAgentException("知识库不存在或不可用，拒绝检索"));
 

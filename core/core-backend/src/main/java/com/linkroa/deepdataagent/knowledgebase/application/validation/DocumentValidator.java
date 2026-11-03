@@ -11,6 +11,7 @@ import org.apache.commons.lang3.StringUtils;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.Objects;
 
 /**
  * 文档应用级校验器。
@@ -60,7 +61,7 @@ public final class DocumentValidator {
         }
         String normalized = StringUtils.removeStart(fileType.trim(), ".").toUpperCase();
         for (FileType candidate : FileType.values()) {
-            if (StringUtils.equals(candidate.name(), normalized)) {
+            if (Objects.equals(candidate.name(), normalized)) {
                 return candidate;
             }
         }
@@ -173,7 +174,7 @@ public final class DocumentValidator {
         }
         String normalized = status.trim().toUpperCase();
         for (DocumentStatus candidate : DocumentStatus.values()) {
-            if (StringUtils.equals(candidate.name(), normalized)) {
+            if (Objects.equals(candidate.name(), normalized)) {
                 return candidate;
             }
         }

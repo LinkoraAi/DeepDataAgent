@@ -13,6 +13,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.Objects;
 
 /**
  * 检索附图入参校验器（通路 A）。
@@ -136,7 +137,7 @@ public final class QueryImageValidator {
                     + " 超过单图上限 " + MultimodalConstraints.MAX_IMAGE_BYTES + BYTE_UNIT));
         }
         String actualFormat = detectFormat(content);
-        if (!StringUtils.equals(expectedFormat(contentType), actualFormat)) {
+        if (!Objects.equals(expectedFormat(contentType), actualFormat)) {
             throw new InvalidQueryImageException(located(index, "contentType（" + contentType
                     + "）与图片实际格式（" + actualFormat + "）不一致"));
         }

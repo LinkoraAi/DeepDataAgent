@@ -46,13 +46,15 @@ import java.util.stream.Collectors;
  *
  * <p>通道语义：</p>
  * <ul>
- *     <li>VECTOR：{@code KnowledgeBaseApi.searchByVector}，LIMIT = chunkTopK
- *     （{@link RetrievalQuery} 紧凑构造器已保证未指定时回退 topK），
+ *     <li>VECTOR：{@code KnowledgeBaseApi.searchByVector}，LIMIT = vectorQueryCount
+ *     （库级 {@code channelQueryCountConfig.vectorQueryCount}，未配置归一
+ *     {@link RetrievalQuery#DEFAULT_QUERY_COUNT}），
  *     查询向量以 pgvector 字面量字符串跨边界传入；</li>
  *     <li>BM25：{@code KnowledgeBaseApi.searchByKeywords}，以改写后 query 检索，
- *     LIMIT = chunkTopK；</li>
+ *     LIMIT = bm25QueryCount（库级配置，未配置归一默认值）；</li>
  *     <li>GRAPH（仅 MIX）：实体路以 ll 向量命中 {@code searchEntities}、
- *     关系路以 hl 向量命中 {@code searchRelations}（各路 LIMIT = topK），命中记录携带图谱属性；
+ *     关系路以 hl 向量命中 {@code searchRelations}（两路共用 LIMIT = graphQueryCount，
+ *     对齐 LightRAG {@code top_k} 单值口径；库级配置，未配置归一默认值），命中记录携带图谱属性；
  *     ll/hl 单侧为空时仅退化对应子路（实体路/关系路），入口打一条可区分 WARN；
  *     <b>实体候选集</b>由「实体路命中序」与「关系路端点序（每命中贡献源、目标）」
  *     <b>逐位交错</b>合并（ll 先手、各源路内保相似度序、去重保序，RR#1）；
@@ -65,7 +67,8 @@ import java.util.stream.Collectors;
  *     {@link RetrievalConstants#GRAPH_EDGE_CHUNK_LIMIT}；边源直取边记录自带账本，
  *     <b>不再依赖本次关系路命中反查</b>），chunkId 全局去重先到先得保留来源分数，
  *     通道内按「被引用背书次数」降序稳定重排（E2，同次数保首现序），
- *     再按入场配额（E1 = {@link RetrievalQuery#chunkTopK()}）截断通道序前缀，
+ *     再按入场配额（E1 = {@link RetrievalQuery#graphQueryCount()}，与实体/关系路共用
+ *     图谱通道单值口径）截断通道序前缀，
  *     经 {@code chunksOf} 回正文后组装 {@link RetrievalCandidate}（channel=GRAPH）与
  *     {@link KgSearchResult}。</li>
  * </ul>
@@ -171,7 +174,7 @@ public class DefaultRecallService implements RecallService {
     /**
      * 执行三路召回（MIX）或向量 + 全文双通道召回（NAIVE）。
      *
-     * @param q   检索内部执行请求（kbId 单库隔离，chunkTopK 已由紧凑构造器归一）
+     * @param q   检索内部执行请求（kbId 单库隔离，三通道召回数量已由紧凑构造器归一）
      * @param cfg 检索策略配置（strategyType 决定通道组合，similarThreshold 决定命中阈值）
      * @return 召回复合结果（候选按 VECTOR → BM25 → GRAPH 顺序合并；NAIVE 或图谱 MISSING 时
      *         图谱结果为空集合 {@link KgSearchResult}；embedding 批量失败时返回空结果）
@@ -273,7 +276,7 @@ public class DefaultRecallService implements RecallService {
     private List<RetrievalCandidate> recallVectorSafely(RetrievalQuery q, double distanceThreshold, float[] queryVector) {
         try {
             List<ChunkScoreDTO> hits = knowledgeBaseApi.searchByVector(q.kbId(), distanceThreshold,
-                    toVectorLiteral(queryVector), q.chunkTopK());
+                    toVectorLiteral(queryVector), q.vectorQueryCount());
             return toCandidates(hits, RetrievalChannel.VECTOR);
         } catch (Exception e) {
             log.warn("VECTOR 通道召回失败，按空结果降级: kbId={}", q.kbId(), e);
@@ -282,17 +285,21 @@ public class DefaultRecallService implements RecallService {
     }
 
     /**
-     * BM25 通道召回，通道级异常隔离：失败记录告警后按空结果降级。
+     * BM25 通道召回，通道级异常隔离：失败记录 ERROR 后按空结果降级。
+     * <p>该通道依赖 pg_textsearch 扩展与 bm25 索引；异常被静默吞掉会让系统在
+     * 「全文检索不可用」时仍以两路召回继续运行而无任何告警，故此处日志级别为 ERROR，
+     * 并显式记录知识库标识与异常摘要（异常堆栈由日志框架输出）。</p>
      *
      * @param q 检索请求（以改写后 query 做全文检索）
      * @return BM25 通道候选（可为空）
      */
     private List<RetrievalCandidate> recallBm25Safely(RetrievalQuery q) {
         try {
-            List<ChunkScoreDTO> hits = knowledgeBaseApi.searchByKeywords(q.kbId(), q.query(), q.chunkTopK());
+            List<ChunkScoreDTO> hits = knowledgeBaseApi.searchByKeywords(q.kbId(), q.query(), q.bm25QueryCount());
             return toCandidates(hits, RetrievalChannel.BM25);
         } catch (Exception e) {
-            log.warn("BM25 通道召回失败，按空结果降级: kbId={}", q.kbId(), e);
+            log.error("BM25 通道召回失败，按空结果降级: kbId={}, exception={}, message={}",
+                    q.kbId(), e.getClass().getSimpleName(), e.getMessage(), e);
             return List.of();
         }
     }
@@ -343,11 +350,11 @@ public class DefaultRecallService implements RecallService {
             int hlIndex = VECTOR_INDEX_LL + (hasLl ? 1 : 0);
             List<EntityHit> entityHits = hasLl
                     ? nullSafeList(retrievalRepository.searchEntities(q.kbId(), vectors.get(VECTOR_INDEX_LL),
-                            distanceThreshold, q.topK()))
+                            distanceThreshold, q.graphQueryCount()))
                     : List.of();
             List<RelationHit> relationHits = hasHl
                     ? nullSafeList(retrievalRepository.searchRelations(q.kbId(), vectors.get(hlIndex),
-                            distanceThreshold, q.topK()))
+                            distanceThreshold, q.graphQueryCount()))
                     : List.of();
             return recallGraph(q, entityHits, relationHits);
         } catch (Exception e) {
@@ -530,8 +537,8 @@ public class DefaultRecallService implements RecallService {
      * 来源分数），并累计「被引用背书次数」。
      * <p>随后施加两道结构性修正：<b>E2</b> 通道内按背书次数降序<b>稳定</b>重排
      * （同次数保持首现序，仅影响通道内次序、一进融合仍是单条，不做分数叠加）；
-     * <b>E1</b> 按入场配额（{@link RetrievalQuery#chunkTopK()}）截断通道序前缀，
-     * 限制 GRAPH 通道进入融合的候选总数。</p>
+     * <b>E1</b> 按入场配额（{@link RetrievalQuery#graphQueryCount()}，与实体/关系路共用
+     * 图谱通道单值口径）截断通道序前缀，限制 GRAPH 通道进入融合的候选总数。</p>
      *
      * @param q            检索请求（每源 chunk 上限与入场配额来源）
      * @param entityView   实体候选集（实体路命中 + 端点回查/降级记录，视图内全部实体）
@@ -549,7 +556,7 @@ public class DefaultRecallService implements RecallService {
         for (RelationHit hit : relationView) {
             endorse(hit.chunkIds(), hit.score(), perSourceLimit, scoreByChunk, endorsementsByChunk);
         }
-        return reorderAndQuota(scoreByChunk, endorsementsByChunk, q.chunkTopK());
+        return reorderAndQuota(scoreByChunk, endorsementsByChunk, q.graphQueryCount());
     }
 
     /**
@@ -586,7 +593,7 @@ public class DefaultRecallService implements RecallService {
      *
      * @param scoreByChunk        chunkId → 来源分数（首现序）
      * @param endorsementsByChunk chunkId → 背书次数
-     * @param entryQuota          GRAPH 通道入场配额（{@code chunkTopK}，恒为正整数）
+     * @param entryQuota          GRAPH 通道入场配额（{@code graphQueryCount}，恒为正整数）
      * @return 重排并截断后的有序 chunkId → 分数映射
      */
     private Map<Long, Double> reorderAndQuota(Map<Long, Double> scoreByChunk,

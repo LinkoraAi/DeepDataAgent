@@ -977,10 +977,10 @@ public class EntityExtractionService {
             String[] parts = recoverMisPrefixedRelation(
                     StringUtils.splitByWholeSeparatorPreserveAllTokens(fixedRecord, TUPLE_DELIMITER));
             String kind = StringUtils.lowerCase(StringUtils.trim(parts[0]), Locale.ROOT);
-            if (StringUtils.equals(kind, ENTITY_ROW_PREFIX)) {
+            if (Objects.equals(kind, ENTITY_ROW_PREFIX)) {
                 parseEntityLine(parts, holder);
-            } else if (StringUtils.equals(kind, RELATION_ROW_PREFIX)
-                    || StringUtils.equals(kind, RELATION_ROW_PREFIX_ALIAS)) {
+            } else if (Objects.equals(kind, RELATION_ROW_PREFIX)
+                    || Objects.equals(kind, RELATION_ROW_PREFIX_ALIAS)) {
                 parseRelationLine(parts, holder, sourceId);
             } else {
                 log.debug("跳过无法识别的抽取记录行：{}", fixedRecord);
@@ -1148,7 +1148,7 @@ public class EntityExtractionService {
         }
         String source = EntityNameNormalizer.normalize(parts[1]);
         String target = EntityNameNormalizer.normalize(parts[2]);
-        if (StringUtils.isBlank(source) || StringUtils.isBlank(target) || StringUtils.equals(source, target)) {
+        if (StringUtils.isBlank(source) || StringUtils.isBlank(target) || Objects.equals(source, target)) {
             log.debug("关系行端点归一后为空或自环，跳过：{}", String.join(TUPLE_DELIMITER, parts));
             return;
         }
@@ -1195,7 +1195,7 @@ public class EntityExtractionService {
             String source = EntityNameNormalizer.normalize(jsonText(relationship, FIELD_SOURCE));
             String target = EntityNameNormalizer.normalize(jsonText(relationship, FIELD_TARGET));
             if (StringUtils.isBlank(source) || StringUtils.isBlank(target)
-                    || StringUtils.equals(source, target)) {
+                    || Objects.equals(source, target)) {
                 continue;
             }
             List<String> keywords = splitKeywords(jsonText(relationship, FIELD_KEYWORDS));
@@ -1311,7 +1311,7 @@ public class EntityExtractionService {
      * {@code ctx.mediaPrimaryEntityName()}——VLM 响应解析处一次定形的
      * 「模型识别名 + 内容类型后缀」，全链路只消费该值，命名口径天然一致。</p>
      *
-     * <p><b>端点等值比较口径</b>：下方 {@code StringUtils.equals(entity.name(), modalName)}
+     * <p><b>端点等值比较口径</b>：下方 {@code Objects.equals(entity.name(), modalName)}
      * 与归属边端点构造均为逐字比较、不再二次归一——块内文本实体名已在解析入口经
      * {@link EntityNameNormalizer} 归一，主实体名在 {@code MediaDescriptorService}
      * 定形处（裸名拼接类型后缀之前）已走同一归一管道，两侧可比性由构造保证（预期零逻辑改动）。</p>
@@ -1333,7 +1333,7 @@ public class EntityExtractionService {
             return;
         }
         for (RawEntity entity : List.copyOf(holder.entities().values())) {
-            if (StringUtils.equals(entity.name(), modalName)) {
+            if (Objects.equals(entity.name(), modalName)) {
                 continue;
             }
             holder.mergeRelation(entity.name(), modalName, chunkId, BELONGS_TO_WEIGHT,
@@ -1596,7 +1596,7 @@ public class EntityExtractionService {
      * （后到的更大权重生效并以 DEBUG 哨兵日志留痕，堵住「身份证据是归属边、权重却是普通值」
      * 的静默降级通道），不同来源逐条累积。同 (端点对, 来源) 记录已在本汇聚器归一为一条
      * （取最大权重），上游 LightRAG「同来源重复计权」的批内不去重形态在本管线不可达
-     * （统一口径见 {@link GraphMergeService#aggregateEdges} 与 {@link RelationEdge} 类注释，
+     * （统一口径见 {@link RelationEdge} 类注释，
      * 三处互相引用）；合并段「逐来源全额累加」公式本身不变。空白描述的关系在汇聚点直接丢弃
      * （关系不做兜底，避免下游 {@link RelationEdge#mergeSkeleton} 抛错）。</p>
      *
@@ -1760,7 +1760,7 @@ public class EntityExtractionService {
                 return null;
             }
             return contributions.stream()
-                    .filter(contribution -> ObjectUtils.equals(contribution.sourceId(), sourceId))
+                    .filter(contribution -> Objects.equals(contribution.sourceId(), sourceId))
                     .findFirst().orElse(null);
         }
 
@@ -1785,7 +1785,7 @@ public class EntityExtractionService {
             log.debug("同来源重复关系记录权重提升：端点对=[{}~{}]，来源=[{}]，原权重=[{}]，新权重=[{}]",
                     pairSource, pairTarget, sourceId, covered.weight(), weight);
             return contributions.stream()
-                    .map(contribution -> ObjectUtils.equals(contribution.sourceId(), sourceId)
+                    .map(contribution -> Objects.equals(contribution.sourceId(), sourceId)
                             ? new RelationContribution(sourceId, weight) : contribution)
                     .toList();
         }

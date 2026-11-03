@@ -461,24 +461,23 @@ class ChunkApplicationServiceTest {
         // when
         Chunk saved = service.create(createCommand("TEXT"));
 
-        // then：派生表示携带向量与切片正文，身份三元组取自落库切片
+        // then：派生表示携带向量，身份三元组取自落库切片（全文索引随主表正文自动维护，无派生表示）
         ArgumentCaptor<ChunkRepresentation> captor = ArgumentCaptor.forClass(ChunkRepresentation.class);
         verify(chunkRepresentationRepository).upsert(captor.capture(), isNull());
         assertEquals(KB_ID, captor.getValue().kbId());
         assertEquals(DOC_ID, captor.getValue().documentId());
         assertEquals(CHUNK_ID, captor.getValue().chunkId());
         assertEquals("[0.1,0.2]", captor.getValue().embeddingVector());
-        assertEquals("切片内容", captor.getValue().chunkContent());
         assertEquals(CHUNK_ID, saved.id());
         // 新增路径零删除 / 零投递副作用（待重建信号与重建投递已随聚合根一并移除）
         verifyNoInteractions(mediaImageCleanupService, chunkPhysicalDeleteService);
     }
 
     /**
-     * 未配置嵌入模型的降级口径：契约以「无向量」返回空，新增仍成功、照写全文表示。
+     * 未配置嵌入模型的降级口径：契约以「无向量」返回空，新增仍成功、不产生派生表示行。
      */
     @Test
-    void should_writeFullTextRepresentationOnly_when_create_given_noEmbeddingModel() {
+    void should_writeNoRepresentation_when_create_given_noEmbeddingModel() {
         // given：知识库未配置嵌入模型（返回 null，不抛异常）
         when(knowledgeBaseRepository.findByIdAndOwner(KB_ID, OWNER_ID))
                 .thenReturn(Optional.of(buildKb(LifecycleStatus.ACTIVE)));
@@ -492,11 +491,10 @@ class ChunkApplicationServiceTest {
         // when
         Chunk saved = service.create(createCommand("TEXT"));
 
-        // then：表示仅含全文（向量为空），切片照常落库
+        // then：表示无向量（由仓储短路），切片正文照常落主表
         ArgumentCaptor<ChunkRepresentation> captor = ArgumentCaptor.forClass(ChunkRepresentation.class);
         verify(chunkRepresentationRepository).upsert(captor.capture(), isNull());
         assertNull(captor.getValue().embeddingVector());
-        assertEquals("切片内容", captor.getValue().chunkContent());
         assertEquals("切片内容", saved.chunkContent());
     }
 
@@ -562,14 +560,13 @@ class ChunkApplicationServiceTest {
         // when
         Chunk updated = service.update(new UpdateChunkCommand(CHUNK_ID, "新内容", 30));
 
-        // then：派生表示携带新正文与新向量，身份三元组取自被编辑切片
+        // then：派生表示携带新向量，身份三元组取自被编辑切片（全文索引随主表正文更新自动维护）
         ArgumentCaptor<ChunkRepresentation> captor = ArgumentCaptor.forClass(ChunkRepresentation.class);
         verify(chunkRepresentationRepository).upsert(captor.capture(), isNull());
         assertEquals(KB_ID, captor.getValue().kbId());
         assertEquals(DOC_ID, captor.getValue().documentId());
         assertEquals(CHUNK_ID, captor.getValue().chunkId());
         assertEquals("[0.5,0.5]", captor.getValue().embeddingVector());
-        assertEquals("新内容", captor.getValue().chunkContent());
         assertEquals("新内容", updated.chunkContent());
         // 时序口径：向量化先于事务开启，事务内只做 DB 写入
         InOrder order = inOrder(chunkEmbeddingApi, transactionTemplate);
@@ -581,10 +578,10 @@ class ChunkApplicationServiceTest {
     }
 
     /**
-     * 未配置嵌入模型的降级口径：编辑仍成功、查看表示仅含全文（向量为空）。
+     * 未配置嵌入模型的降级口径：编辑仍成功、不产生派生表示行（向量为空）。
      */
     @Test
-    void should_writeFullTextRepresentationOnly_when_update_given_noEmbeddingModel() {
+    void should_writeNoRepresentation_when_update_given_noEmbeddingModel() {
         // given：知识库未配置嵌入模型（返回 null，不抛异常）
         when(chunkRepository.findById(CHUNK_ID)).thenReturn(Optional.of(buildChunk("旧内容", 30)));
         when(chunkRepository.update(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -593,11 +590,10 @@ class ChunkApplicationServiceTest {
         // when
         Chunk updated = service.update(new UpdateChunkCommand(CHUNK_ID, "新内容", 30));
 
-        // then：表示仅含全文（向量为空），切片正文照常更新
+        // then：表示无向量（由仓储短路），切片正文照常更新
         ArgumentCaptor<ChunkRepresentation> captor = ArgumentCaptor.forClass(ChunkRepresentation.class);
         verify(chunkRepresentationRepository).upsert(captor.capture(), isNull());
         assertNull(captor.getValue().embeddingVector());
-        assertEquals("新内容", captor.getValue().chunkContent());
         assertEquals("新内容", updated.chunkContent());
     }
 
@@ -1102,15 +1098,14 @@ class ChunkApplicationServiceTest {
         assertEquals(2, identityMap.size());
         assertEquals(2001L, identityMap.get(1).longValue());
         assertEquals(2002L, identityMap.get(2).longValue());
-        // 清退旧数据 + 批写新切片 + 全量非空白切片落派生表示（全文现算、向量随有向量的切片） + 计数原子回写
+        // 清退旧数据 + 批写新切片 + 仅携带向量的切片落派生表示（全文索引随主表正文自动维护） + 计数原子回写
         verify(chunkRepository).deleteByDocumentId(DOC_ID);
         verify(chunkRepresentationRepository).deleteByDocumentId(DOC_ID);
         verify(chunkRepository).saveBatch(anyList(), eq("7"));
         ArgumentCaptor<List<ChunkRepresentation>> repCaptor = ArgumentCaptor.forClass(List.class);
         verify(chunkRepresentationRepository).saveBatch(repCaptor.capture(), eq("7"));
-        assertEquals(2, repCaptor.getValue().size());
+        assertEquals(1, repCaptor.getValue().size());
         assertEquals(2001L, repCaptor.getValue().get(0).chunkId());
-        assertEquals(2002L, repCaptor.getValue().get(1).chunkId());
         ArgumentCaptor<Document> docCaptor = ArgumentCaptor.forClass(Document.class);
         verify(documentRepository).update(docCaptor.capture());
         assertEquals(2, docCaptor.getValue().chunkCount().intValue());
@@ -1322,13 +1317,13 @@ class ChunkApplicationServiceTest {
         // when
         service.replaceForDocument(DOC_ID, drafts, 7L);
 
-        // then：切片主表一次批写；草稿均携带切片正文 → 全文现算派生表示同数落库（向量仅随有向量的切片）
+        // then：切片主表一次批写；草稿均无向量 → 无派生表示行（全文索引随主表正文自动维护）
         ArgumentCaptor<List<Chunk>> chunkCaptor = ArgumentCaptor.forClass(List.class);
         verify(chunkRepository).saveBatch(chunkCaptor.capture(), eq("7"));
         assertEquals(1000, chunkCaptor.getValue().size());
         ArgumentCaptor<List<ChunkRepresentation>> repCaptor = ArgumentCaptor.forClass(List.class);
         verify(chunkRepresentationRepository).saveBatch(repCaptor.capture(), eq("7"));
-        assertEquals(1000, repCaptor.getValue().size());
+        assertEquals(0, repCaptor.getValue().size());
     }
 
     @Test

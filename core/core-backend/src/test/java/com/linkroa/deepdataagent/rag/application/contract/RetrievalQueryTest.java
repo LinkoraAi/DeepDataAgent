@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link RetrievalQuery} 与 {@link RetrievalMultimodalOptions} 契约单元测试
- * <p>覆盖：① 九参/十参兼容构造器多模态开关归一为默认全开；② 全参构造器显式 false 保留；
+ * <p>覆盖：① 七参/八参便捷构造器多模态开关归一为默认全开；② 全参构造器显式 false 保留；
  * ③ multimodal 组件 null 回落 defaults；④ Integer 预算 null 归默认值基线口径不漂移；
  * ⑤ images null 归不可变空表；⑥ 必填缺失拒绝；⑦ defaults() 工厂双 true；
  * ⑧ 图谱召回上限（graphEdgeTop / graphEdgeChunkLimit）null 归 RetrievalConstants 默认值、
@@ -36,12 +36,12 @@ class RetrievalQueryTest {
             "PNG-BYTES".getBytes(StandardCharsets.UTF_8));
 
     /**
-     * 构造九参纯文本请求（引入 images 组件前的基线形态）。
+     * 构造七参纯文本请求（引入 images 组件前的基线形态，通道召回数量恒 null 走默认）。
      *
      * @return 检索请求
      */
-    private static RetrievalQuery nineArgQuery() {
-        return new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null, null);
+    private static RetrievalQuery sevenArgQuery() {
+        return new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null);
     }
 
     @Test
@@ -55,11 +55,11 @@ class RetrievalQueryTest {
     }
 
     @Test
-    void should_defaultOptionsToTrue_when_constructor_given_nineArgConvenienceForm() {
+    void should_defaultOptionsToTrue_when_constructor_given_sevenArgConvenienceForm() {
         // given // when
-        RetrievalQuery query = nineArgQuery();
+        RetrievalQuery query = sevenArgQuery();
 
-        // then：九参兼容构造器落默认全开 options，附图归空表
+        // then：七参便捷构造器落默认全开 options，附图归空表
         assertNotNull(query.multimodal());
         assertTrue(query.multimodal().queryImageTranscribe());
         assertTrue(query.multimodal().answerImageDirectRead());
@@ -67,14 +67,14 @@ class RetrievalQueryTest {
     }
 
     @Test
-    void should_defaultOptionsToTrue_when_constructor_given_tenArgWithImagesForm() {
+    void should_defaultOptionsToTrue_when_constructor_given_eightArgWithImagesForm() {
         // given
         List<LlmImage> images = List.of(IMAGE);
 
         // when
-        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null, null, images);
+        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, images);
 
-        // then：十参兼容构造器（基线带图形态）同样落默认全开 options
+        // then：八参便捷构造器（基线带图形态）同样落默认全开 options
         assertTrue(query.multimodal().queryImageTranscribe());
         assertTrue(query.multimodal().answerImageDirectRead());
         assertEquals(1, query.images().size());
@@ -86,8 +86,8 @@ class RetrievalQueryTest {
         RetrievalMultimodalOptions options = new RetrievalMultimodalOptions(false, true);
 
         // when
-        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null, null,
-                List.of(IMAGE), options, null, null);
+        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null,
+                null, null, List.of(IMAGE), options, null, null);
 
         // then：显式 false 原样保留，不被归一篡改
         assertFalse(query.multimodal().queryImageTranscribe());
@@ -97,8 +97,8 @@ class RetrievalQueryTest {
     @Test
     void should_fallbackToDefaults_when_constructor_given_nullMultimodalComponent() {
         // given // when
-        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null, null,
-                List.of(IMAGE), null, null, null);
+        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null,
+                null, null, List.of(IMAGE), null, null, null);
 
         // then：紧凑构造器 null→defaults() 归一，契约内开关非空无三态
         assertNotNull(query.multimodal());
@@ -109,21 +109,55 @@ class RetrievalQueryTest {
     @Test
     void should_normalizeIntegerBudgets_when_constructor_given_nullFields() {
         // given // when
-        RetrievalQuery query = nineArgQuery();
+        RetrievalQuery query = sevenArgQuery();
 
-        // then：Integer 预算 null 归默认值口径与基线一致（chunkTopK 回退 topK）
-        assertEquals(RetrievalQuery.DEFAULT_TOP_K, query.topK());
-        assertEquals(RetrievalQuery.DEFAULT_TOP_K, query.chunkTopK());
+        // then：Integer 预算/数量 null 归默认值口径与基线一致（三通道数量独立归一）
+        assertEquals(RetrievalQuery.DEFAULT_QUERY_COUNT, query.vectorQueryCount());
+        assertEquals(RetrievalQuery.DEFAULT_QUERY_COUNT, query.bm25QueryCount());
+        assertEquals(RetrievalQuery.DEFAULT_QUERY_COUNT, query.graphQueryCount());
         assertEquals(RetrievalQuery.DEFAULT_MAX_TOTAL_TOKENS, query.maxTotalTokens());
         assertEquals(RetrievalQuery.DEFAULT_MAX_ENTITY_TOKENS, query.maxEntityTokens());
         assertEquals(RetrievalQuery.DEFAULT_MAX_RELATION_TOKENS, query.maxRelationTokens());
     }
 
     @Test
+    void should_keepExplicitQueryCounts_when_constructor_given_channelCounts() {
+        // given // when：三通道数量独立取值（显式配置即生效）
+        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, 30, 15, 25, null, null, null,
+                null, RetrievalMultimodalOptions.defaults(), null, null);
+
+        // then
+        assertEquals(30, query.vectorQueryCount());
+        assertEquals(15, query.bm25QueryCount());
+        assertEquals(25, query.graphQueryCount());
+    }
+
+    @Test
+    void should_normalizePerChannel_when_constructor_given_partialChannelCounts() {
+        // given // when：仅显式指定部分通道，其余独立归默认值（互不传染）
+        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, 30, null, null, null, null, null,
+                null, RetrievalMultimodalOptions.defaults(), null, null);
+
+        // then
+        assertEquals(30, query.vectorQueryCount());
+        assertEquals(RetrievalQuery.DEFAULT_QUERY_COUNT, query.bm25QueryCount());
+        assertEquals(RetrievalQuery.DEFAULT_QUERY_COUNT, query.graphQueryCount());
+    }
+
+    @Test
+    void should_throwIllegalArgumentException_when_constructor_given_nonPositiveQueryCount() {
+        // given // when // then：数量直下 SQL LIMIT，非正即非法
+        assertThrows(IllegalArgumentException.class, () -> new RetrievalQuery(KB_ID, QUERY, null, null,
+                0, null, null, null, null, null, null, RetrievalMultimodalOptions.defaults(), null, null));
+        assertThrows(IllegalArgumentException.class, () -> new RetrievalQuery(KB_ID, QUERY, null, null,
+                null, -5, null, null, null, null, null, RetrievalMultimodalOptions.defaults(), null, null));
+    }
+
+    @Test
     void should_returnEmptyImages_when_constructor_given_nullImages() {
         // given // when
-        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null, null,
-                null, RetrievalMultimodalOptions.defaults(), null, null);
+        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null,
+                null, null, null, RetrievalMultimodalOptions.defaults(), null, null);
 
         // then：images 空值归一为不可变空列表
         assertNotNull(query.images());
@@ -133,7 +167,7 @@ class RetrievalQueryTest {
     @Test
     void should_normalizeGraphLimitsToConstants_when_constructor_given_nullGraphFields() {
         // given // when
-        RetrievalQuery query = nineArgQuery();
+        RetrievalQuery query = sevenArgQuery();
 
         // then：图谱召回上限 null 回落 RetrievalConstants 默认值（与常量化时代行为一致）
         assertEquals(RetrievalConstants.GRAPH_EDGE_TOP, query.graphEdgeTop());
@@ -143,8 +177,8 @@ class RetrievalQueryTest {
     @Test
     void should_keepExplicitGraphLimits_when_constructor_given_positiveValues() {
         // given // when
-        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null, null,
-                List.of(), RetrievalMultimodalOptions.defaults(), 7, 3);
+        RetrievalQuery query = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null,
+                null, null, List.of(), RetrievalMultimodalOptions.defaults(), 7, 3);
 
         // then：显式正值原样保留，供 Stage 1 图谱通道消费
         assertEquals(7, query.graphEdgeTop());
@@ -159,9 +193,9 @@ class RetrievalQueryTest {
 
         // when & then
         assertThrows(IllegalArgumentException.class, () -> new RetrievalQuery(KB_ID, QUERY, null, null,
-                null, null, null, null, null, images, options, 0, null));
+                null, null, null, null, null, null, images, options, 0, null));
         assertThrows(IllegalArgumentException.class, () -> new RetrievalQuery(KB_ID, QUERY, null, null,
-                null, null, null, null, null, images, options, null, -1));
+                null, null, null, null, null, null, images, options, null, -1));
     }
 
     @Test
@@ -171,10 +205,10 @@ class RetrievalQueryTest {
 
         // when & then：必填口径不因新增组件变化
         assertThrows(IllegalArgumentException.class, () -> new RetrievalQuery(KB_ID, blankQuery,
-                null, null, null, null, null, null, null, List.of(), RetrievalMultimodalOptions.defaults(),
-                null, null));
+                null, null, null, null, null, null, null, null, List.of(),
+                RetrievalMultimodalOptions.defaults(), null, null));
         assertThrows(IllegalArgumentException.class, () -> new RetrievalQuery(null, QUERY,
-                null, null, null, null, null, null, null, List.of(), RetrievalMultimodalOptions.defaults(),
-                null, null));
+                null, null, null, null, null, null, null, null, List.of(),
+                RetrievalMultimodalOptions.defaults(), null, null));
     }
 }

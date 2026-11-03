@@ -5,6 +5,7 @@ import com.linkroa.deepdataagent.knowledgebase.application.contract.ChunkScoreDT
 import com.linkroa.deepdataagent.knowledgebase.application.contract.KnowledgeBaseReferenceDTO;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.Chunk;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.ChunkScoreHit;
+import com.linkroa.deepdataagent.knowledgebase.domain.model.ChannelQueryCountConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.EntityType;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.FusionStrategyConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.KnowledgeBase;
@@ -36,6 +37,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 
 /**
  * 知识库服务契约实现（{@link KnowledgeBaseApi}）。
@@ -71,6 +73,18 @@ public class DefaultKnowledgeBaseApi implements KnowledgeBaseApi {
 
     /** 检索策略 JSON 字段名：融合配置 */
     private static final String FIELD_FUSION_CONFIG = "fusionConfig";
+
+    /** 检索策略 JSON 字段名：通道召回数量配置 */
+    private static final String FIELD_CHANNEL_QUERY_COUNT_CONFIG = "channelQueryCountConfig";
+
+    /** 通道召回数量配置字段名：向量通道数量 */
+    private static final String FIELD_VECTOR_QUERY_COUNT = "vectorQueryCount";
+
+    /** 通道召回数量配置字段名：BM25 通道数量 */
+    private static final String FIELD_BM25_QUERY_COUNT = "bm25QueryCount";
+
+    /** 通道召回数量配置字段名：图谱通道数量 */
+    private static final String FIELD_GRAPH_QUERY_COUNT = "graphQueryCount";
 
     /** 重排配置字段名：是否启用 */
     private static final String FIELD_ENABLED = "enabled";
@@ -447,7 +461,8 @@ public class DefaultKnowledgeBaseApi implements KnowledgeBaseApi {
                     readInteger(root, FIELD_RESULT_CHUNK_COUNT),
                     readFloat(root, FIELD_SIMILAR_THRESHOLD),
                     parseRerankConfig(root.path(FIELD_RERANK_CONFIG)),
-                    parseFusionConfig(root.path(FIELD_FUSION_CONFIG)));
+                    parseFusionConfig(root.path(FIELD_FUSION_CONFIG)),
+                    parseChannelQueryCountConfig(root.path(FIELD_CHANNEL_QUERY_COUNT_CONFIG)));
         } catch (IllegalArgumentException e) {
             // 领域 record 紧凑构造器不变量冲突（如策略类型缺失），属库中数据损坏
             log.error("检索策略配置与领域模型不变量冲突，原始值={}", strategyJson, e);
@@ -467,11 +482,29 @@ public class DefaultKnowledgeBaseApi implements KnowledgeBaseApi {
         }
         String normalized = StringUtils.trimToEmpty(node.stringValue()).toUpperCase(Locale.ROOT);
         for (RetrievalStrategyType candidate : RetrievalStrategyType.values()) {
-            if (StringUtils.equals(candidate.name(), normalized)) {
+            if (Objects.equals(candidate.name(), normalized)) {
                 return candidate;
             }
         }
         return null;
+    }
+
+    /**
+     * 解析通道召回数量配置节点：缺失、非对象返回 {@code null}（表示未配置，消费侧归一默认值）。
+     * <p>三字段独立防御式读取：字段缺失或类型不符按 {@code null} 传递（与
+     * {@code parseRerankConfig} 同口径），不做范围校验（写入口已校验）。</p>
+     *
+     * @param node 通道召回数量配置节点
+     * @return 通道召回数量配置；未配置返回 {@code null}
+     */
+    private static ChannelQueryCountConfig parseChannelQueryCountConfig(JsonNode node) {
+        if (node.isMissingNode() || node.isNull() || !node.isObject()) {
+            return null;
+        }
+        return new ChannelQueryCountConfig(
+                readInteger(node, FIELD_VECTOR_QUERY_COUNT),
+                readInteger(node, FIELD_BM25_QUERY_COUNT),
+                readInteger(node, FIELD_GRAPH_QUERY_COUNT));
     }
 
     /**
@@ -520,7 +553,7 @@ public class DefaultKnowledgeBaseApi implements KnowledgeBaseApi {
         }
         String normalized = StringUtils.trimToEmpty(node.stringValue()).toUpperCase(Locale.ROOT);
         for (FusionStrategyType candidate : FusionStrategyType.values()) {
-            if (StringUtils.equals(candidate.name(), normalized)) {
+            if (Objects.equals(candidate.name(), normalized)) {
                 return candidate;
             }
         }
@@ -562,7 +595,7 @@ public class DefaultKnowledgeBaseApi implements KnowledgeBaseApi {
      */
     private static RetrievalChannel parseChannel(String raw) {
         for (RetrievalChannel candidate : RetrievalChannel.values()) {
-            if (StringUtils.equals(candidate.name(), raw)) {
+            if (Objects.equals(candidate.name(), raw)) {
                 return candidate;
             }
         }

@@ -8,6 +8,7 @@ import com.linkroa.deepdataagent.knowledgebase.application.command.DeleteKnowled
 import com.linkroa.deepdataagent.knowledgebase.application.command.UpdateEntityTypeConfigCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.UpdateKnowledgeBaseCommand;
 import com.linkroa.deepdataagent.knowledgebase.application.command.UpdateRetrievalConfigCommand;
+import com.linkroa.deepdataagent.knowledgebase.application.contract.ChannelQueryCountDTO;
 import com.linkroa.deepdataagent.knowledgebase.application.contract.RetrievalConfigDTO;
 import com.linkroa.deepdataagent.knowledgebase.application.query.ListKnowledgeBaseQuery;
 import com.linkroa.deepdataagent.knowledgebase.application.validation.EntityTypeConfigValidator;
@@ -88,6 +89,9 @@ public class KnowledgeBaseApplicationService {
 
     /** 检索策略 JSON 的字段名：融合配置 */
     private static final String FIELD_FUSION_CONFIG = "fusionConfig";
+
+    /** 检索策略 JSON 字段名：通道召回数量配置 */
+    private static final String FIELD_CHANNEL_QUERY_COUNT_CONFIG = "channelQueryCountConfig";
 
     /** 检索策略 JSONB 序列化器（无状态，进程内共享） */
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -196,7 +200,7 @@ public class KnowledgeBaseApplicationService {
         return transactionTemplate.execute(status -> {
             KnowledgeBase current = requireOwnedActiveForUpdate(command.id());
             String name = StringUtils.defaultIfBlank(command.name(), current.name());
-            if (!StringUtils.equals(name, current.name())) {
+            if (!Objects.equals(name, current.name())) {
                 // 判重范围 = 归属者内（uk_kb_name 已收敛为 (owner_id, name)）
                 KnowledgeBaseValidator.validateNameUnique(name,
                         knowledgeBaseRepository.findByNameAndOwner(name, current.ownerId())
@@ -207,7 +211,7 @@ public class KnowledgeBaseApplicationService {
                     current.ownerId());
             String description = StringUtils.defaultIfBlank(command.description(), current.description());
             if (StringUtils.isNotBlank(command.embeddingConfig())
-                    && !StringUtils.equals(command.embeddingConfig(), current.embeddingConfig())) {
+                    && !Objects.equals(command.embeddingConfig(), current.embeddingConfig())) {
                 log.warn("知识库 {} 的嵌入模型配置创建后不可变更，已忽略请求携带的新值", current.id());
             }
             KnowledgeBase updated = current.withUpdatedConfig(
@@ -375,7 +379,7 @@ public class KnowledgeBaseApplicationService {
         String strategyJson = strategyNode.toString();
         RetrievalConfigDTO snapshot = new RetrievalConfigDTO(strategyType.name(), config.rewriteQuestion(),
                 config.resultChunkCount(), config.similarThreshold(), config.graphEnabled(),
-                config.rerankConfig(), extractFusionConfigJson(strategyNode));
+                config.rerankConfig(), extractFusionConfigJson(strategyNode), config.channelQueryCountConfig());
         transactionTemplate.executeWithoutResult(status -> {
             KnowledgeBase current = requireActiveForUpdate(kbId);
             KnowledgeBase updated = current.withUpdatedConfig(
@@ -441,7 +445,7 @@ public class KnowledgeBaseApplicationService {
     private RetrievalStrategyType parseStrategyType(String strategyType) {
         String normalized = StringUtils.trimToEmpty(strategyType).toUpperCase(Locale.ROOT);
         for (RetrievalStrategyType candidate : RetrievalStrategyType.values()) {
-            if (StringUtils.equals(candidate.name(), normalized)) {
+            if (Objects.equals(candidate.name(), normalized)) {
                 return candidate;
             }
         }
@@ -467,7 +471,32 @@ public class KnowledgeBaseApplicationService {
         strategy.put(FIELD_GRAPH_ENABLED, Boolean.TRUE.equals(config.graphEnabled()));
         putRawJsonField(strategy, FIELD_RERANK_CONFIG, config.rerankConfig());
         putRawJsonField(strategy, FIELD_FUSION_CONFIG, config.fusionConfig());
+        putChannelQueryCountConfig(strategy, config.channelQueryCountConfig());
         return strategy;
+    }
+
+    /**
+     * 将类型化通道召回数量配置写入策略节点：整体为空不落节点；
+     * 非空时落 {@code channelQueryCountConfig} 对象，仅携带非空字段（空=未配置语义保留）。
+     *
+     * @param strategy 策略节点
+     * @param countConfig 通道召回数量配置契约，可为空
+     */
+    private void putChannelQueryCountConfig(ObjectNode strategy, ChannelQueryCountDTO countConfig) {
+        if (ObjectUtils.isEmpty(countConfig)) {
+            return;
+        }
+        ObjectNode countNode = OBJECT_MAPPER.createObjectNode();
+        if (ObjectUtils.isNotEmpty(countConfig.vectorQueryCount())) {
+            countNode.put("vectorQueryCount", countConfig.vectorQueryCount());
+        }
+        if (ObjectUtils.isNotEmpty(countConfig.bm25QueryCount())) {
+            countNode.put("bm25QueryCount", countConfig.bm25QueryCount());
+        }
+        if (ObjectUtils.isNotEmpty(countConfig.graphQueryCount())) {
+            countNode.put("graphQueryCount", countConfig.graphQueryCount());
+        }
+        strategy.set(FIELD_CHANNEL_QUERY_COUNT_CONFIG, countNode);
     }
 
     /**

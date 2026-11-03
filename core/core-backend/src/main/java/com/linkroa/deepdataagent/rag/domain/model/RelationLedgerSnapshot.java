@@ -4,6 +4,7 @@ import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 关系条目「账本 + 当前属性」快照值对象（重建分类阶段的读取载体，design D3 步骤②）。
@@ -39,7 +40,7 @@ public record RelationLedgerSnapshot(
             throw new IllegalArgumentException("关系账本快照必须关联知识库");
         }
         if (StringUtils.isBlank(sourceName) || StringUtils.isBlank(targetName)
-                || StringUtils.equals(sourceName, targetName)) {
+                || Objects.equals(sourceName, targetName)) {
             throw new IllegalArgumentException("关系账本快照端点非法（空或自环）");
         }
         if (sourceName.compareTo(targetName) > 0) {
