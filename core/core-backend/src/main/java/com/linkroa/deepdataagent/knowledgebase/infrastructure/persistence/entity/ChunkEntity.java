@@ -12,7 +12,8 @@ import java.time.OffsetDateTime;
 
 /**
  * 切片持久化实体（对应 chunk 表）。
- * <p>主表仅承载业务字段，向量与全文分词分别由 chunk_vector / chunk_tsv 独立表承载。</p>
+ * <p>主表承载业务字段与切片正文；向量由 chunk_vector 独立表承载，
+ * 全文检索由建在 {@code chunk_content} 上的 BM25 索引在存储侧自动维护。</p>
  * <p>彻底物理删体系：不继承 {@code shared.BaseEntity}、
  * 无 is_deleted 列，audit 字段自持并由 {@code KbAuditFieldUtils} 在 Repository 层显式填充。</p>
  */

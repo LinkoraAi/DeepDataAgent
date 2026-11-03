@@ -37,10 +37,10 @@ import java.util.Map;
  * <p>不变量：本方法在事务外调用（远程/耗时计算与 DB 操作分离）；向量化远程调用
  * 在本方法内、事务外<b>预趟分批</b>完成（单批条数 {@code app.rag.ingestion.embed.batch-size}，
  * 缺省 16，配置小于 1 时按 1 即逐条）——本类即产出 pgvector 字面量并随草案一并落库，
- * 不再交由后续 Stage 计算回写。全文表示（tsvector）自起由知识库
- * 落库 SQL 内 {@code to_tsvector} 对草案原文现算，本服务不再传递预分词字面量。
+ * 不再交由后续 Stage 计算回写。全文检索无派生表示：BM25 索引直接建在
+ * {@code chunk.chunk_content} 上，落库即进入索引，本服务不传递任何分词产物。
  * {@code embeddingModelProfileId} 为空白时降级：跳过向量化远程调用、向量字面量置 null
- * （全文表示不受影响，始终随原文生成）；embedBatch 抛出的异常原样上抛
+ * （全文索引不受影响，由主表正文自动维护）；embedBatch 抛出的异常原样上抛
  * （一批失败即整篇落库失败，重跑整篇，爆炸半径与逐条时代一致）。</p>
  */
 @Service
@@ -90,8 +90,8 @@ public class ChunkPersistenceService {
      *       （形如 {@code [0.1,0.2]}）；{@code embeddingModelProfileId} 为空白时降级——
      *       不发起远程调用、向量字面量置 null；embedBatch 抛出的异常原样上抛
      *       （事务外，无部分落库，一批失败即整篇失败）。</li>
-     *   <li>全文：草案仅携带切片原文，tsvector 由知识库落库 SQL 内现算（DB 侧分词），
-     *       与向量降级无关，始终生成。</li>
+     *   <li>全文：无额外写入步骤——BM25 索引直接建在 {@code chunk.chunk_content} 上，
+     *       切片落库即自动进入索引（分词与语料统计由索引内部承载）。</li>
      * </ul>
      *
      * @param documentId              目标文档主键

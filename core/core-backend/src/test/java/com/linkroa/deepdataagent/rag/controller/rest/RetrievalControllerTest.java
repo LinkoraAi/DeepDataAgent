@@ -94,7 +94,7 @@ class RetrievalControllerTest {
      * @return 请求 DTO
      */
     private RetrievalRequest textOnlyRequest() {
-        return new RetrievalRequest(KB_ID, QUERY, null, null, null, null, null, null, null,
+        return new RetrievalRequest(KB_ID, QUERY, null, null, null, null, null,
                 null, null, null);
     }
 
@@ -125,7 +125,8 @@ class RetrievalControllerTest {
      * @return 策略配置
      */
     private static RetrievalStrategyConfig nearestStrategyConfig() {
-        return new RetrievalStrategyConfig(RetrievalStrategyType.NAIVE, Boolean.FALSE, 5, 0.2F, null, null);
+        return new RetrievalStrategyConfig(RetrievalStrategyType.NAIVE, Boolean.FALSE, 5, 0.2F, null,
+                null, null);
     }
 
     // ==================== 答案端点 ====================
@@ -178,7 +179,7 @@ class RetrievalControllerTest {
     @Test
     void should_keepExplicitFlags_when_retrieveAnswer_given_falseQueryImageTranscribe() {
         // given：显式 queryImageTranscribe=false、answerImageDirectRead 缺省
-        RetrievalRequest request = new RetrievalRequest(KB_ID, QUERY, null, null, null, null, null, null, null,
+        RetrievalRequest request = new RetrievalRequest(KB_ID, QUERY, null, null, null, null, null,
                 null, Boolean.FALSE, null);
         when(retrievalApplicationService.generateAnswerStream(any(RetrievalQuery.class), any()))
                 .thenReturn(answerStream());
@@ -194,11 +195,11 @@ class RetrievalControllerTest {
 
     @Test
     void should_passBudgetKeywordsAndDecodedImageToContract_when_retrieveAnswer_given_allOptionalFields() {
-        // given：预算/关键词/附图全量携带
+        // given：预算/关键词/附图全量携带（请求体不再承载通道召回数量）
         List<QueryImageDTO> images = List.of(
                 new QueryImageDTO("image/png", Base64.getEncoder().encodeToString(PNG_BYTES)));
         RetrievalRequest request = new RetrievalRequest(KB_ID, QUERY, List.of("发货"), List.of("订单"),
-                15, 8, 6000, 2500, 3500, images, Boolean.TRUE, Boolean.FALSE);
+                6000, 2500, 3500, images, Boolean.TRUE, Boolean.FALSE);
         when(retrievalApplicationService.generateAnswerStream(any(RetrievalQuery.class), any()))
                 .thenReturn(answerStream());
 
@@ -209,8 +210,10 @@ class RetrievalControllerTest {
         RetrievalQuery query = captureAnswerQuery();
         assertEquals(List.of("发货"), query.hlKeywords());
         assertEquals(List.of("订单"), query.llKeywords());
-        assertEquals(15, query.topK());
-        assertEquals(8, query.chunkTopK());
+        // 请求体不再承载通道召回数量（历史 topK/chunkTopK 已删除），恒走默认值（库级配置驱动）
+        assertEquals(RetrievalQuery.DEFAULT_QUERY_COUNT, query.vectorQueryCount());
+        assertEquals(RetrievalQuery.DEFAULT_QUERY_COUNT, query.bm25QueryCount());
+        assertEquals(RetrievalQuery.DEFAULT_QUERY_COUNT, query.graphQueryCount());
         assertEquals(6000, query.maxTotalTokens());
         assertEquals(2500, query.maxEntityTokens());
         assertEquals(3500, query.maxRelationTokens());
@@ -327,7 +330,7 @@ class RetrievalControllerTest {
      */
     private RetrievalRequest illegalImageRequest() {
         List<QueryImageDTO> images = List.of(new QueryImageDTO("image/png", "非法@base64!字符"));
-        return new RetrievalRequest(KB_ID, QUERY, null, null, null, null, null, null, null,
+        return new RetrievalRequest(KB_ID, QUERY, null, null, null, null, null,
                 images, null, null);
     }
 

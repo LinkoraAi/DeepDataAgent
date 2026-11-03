@@ -29,6 +29,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
@@ -36,6 +37,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -337,11 +339,11 @@ class JdbcGraphSearchRepositoryTest {
         row.setKeywordsRaw("[\"k1\",\"k2\"]");
         row.setFilePathsRaw(filePathsRawOf("docs/edge.md"));
         row.setCreatedAt(CREATED_AT);
-        when(relationEdgeGraphMapper.searchRelatedEdgesByDegree(eq(KB_ID), anyList(), eq(LIMIT)))
+        when(relationEdgeGraphMapper.searchRelatedEdgesByDegree(eq(KB_ID), anyList(), eq(LIMIT), isNull()))
                 .thenReturn(List.of(row));
 
         // when
-        List<GraphEdgeHit> edges = repository.relatedEdges(KB_ID, List.of("张三", "李四"), LIMIT);
+        List<GraphEdgeHit> edges = repository.relatedEdges(KB_ID, List.of("张三", "李四"), LIMIT, null);
 
         // then：全字段装配
         assertEquals(1, edges.size());
@@ -365,11 +367,11 @@ class JdbcGraphSearchRepositoryTest {
         row.setTargetName("乙");
         row.setEdgeDegree(null);
         row.setWeight(null);
-        when(relationEdgeGraphMapper.searchRelatedEdgesByDegree(eq(KB_ID), anyList(), eq(LIMIT)))
+        when(relationEdgeGraphMapper.searchRelatedEdgesByDegree(eq(KB_ID), anyList(), eq(LIMIT), isNull()))
                 .thenReturn(List.of(row));
 
         // when
-        List<GraphEdgeHit> edges = repository.relatedEdges(KB_ID, List.of("甲"), LIMIT);
+        List<GraphEdgeHit> edges = repository.relatedEdges(KB_ID, List.of("甲"), LIMIT, null);
 
         // then：度数兜 0、权重归一 1.0
         assertEquals(0, edges.get(0).edgeDegree());
@@ -379,11 +381,109 @@ class JdbcGraphSearchRepositoryTest {
     @Test
     void should_returnEmptyWithoutQuery_when_relatedEdges_given_emptyNames() {
         // when
-        List<GraphEdgeHit> edges = repository.relatedEdges(KB_ID, List.of(), LIMIT);
+        List<GraphEdgeHit> edges = repository.relatedEdges(KB_ID, List.of(), LIMIT, null);
 
         // then：空名称集合短路，不触碰 Mapper
         assertTrue(edges.isEmpty());
-        verify(relationEdgeGraphMapper, never()).searchRelatedEdgesByDegree(any(), anyList(), anyInt());
+        verify(relationEdgeGraphMapper, never()).searchRelatedEdgesByDegree(any(), anyList(), anyInt(), any());
+    }
+
+    @Test
+    void should_passNullVector_when_relatedEdges_given_nullQueryVector() {
+        // given：无 hl 查询向量
+        GraphEdgeProjection row = new GraphEdgeProjection();
+        row.setSourceName("甲");
+        row.setTargetName("乙");
+        row.setEdgeDegree(2);
+        row.setWeight(1.5D);
+        when(relationEdgeGraphMapper.searchRelatedEdgesByDegree(eq(KB_ID), anyList(), eq(LIMIT), isNull()))
+                .thenReturn(List.of(row));
+
+        // when
+        List<GraphEdgeHit> edges = repository.relatedEdges(KB_ID, List.of("甲"), LIMIT, null);
+
+        // then：查询以 null 向量下发（边分全部走端点回退）
+        assertEquals(1, edges.size());
+        verify(relationEdgeGraphMapper).searchRelatedEdgesByDegree(eq(KB_ID), anyList(), eq(LIMIT), isNull());
+    }
+
+    @Test
+    void should_mapRelationScore_when_relatedEdges_given_projectionWithScore() {
+        // given：投影携带关系向量余弦分 0.87
+        GraphEdgeProjection row = new GraphEdgeProjection();
+        row.setSourceName("甲");
+        row.setTargetName("乙");
+        row.setEdgeDegree(3);
+        row.setWeight(2.0D);
+        row.setRelationScore(0.87D);
+        when(relationEdgeGraphMapper.searchRelatedEdgesByDegree(eq(KB_ID), anyList(), eq(LIMIT), anyString()))
+                .thenReturn(List.of(row));
+
+        // when
+        List<GraphEdgeHit> edges = repository.relatedEdges(KB_ID, List.of("甲"), LIMIT, QUERY_VECTOR);
+
+        // then：relation_score 原样映射为 vectorSimilarity（不做兜底）
+        assertEquals(0.87D, edges.get(0).vectorSimilarity(), 1e-9);
+        assertEquals(2.0D, edges.get(0).weight(), 1e-9);
+    }
+
+    @Test
+    void should_keepNullVectorSimilarity_when_relatedEdges_given_nullRelationScore() {
+        // given：投影 relation_score 为 NULL（content_vector 为 NULL / queryVector 为空）
+        GraphEdgeProjection row = new GraphEdgeProjection();
+        row.setSourceName("甲");
+        row.setTargetName("乙");
+        row.setEdgeDegree(3);
+        row.setWeight(9.0D);
+        row.setRelationScore(null);
+        when(relationEdgeGraphMapper.searchRelatedEdgesByDegree(eq(KB_ID), anyList(), eq(LIMIT), anyString()))
+                .thenReturn(List.of(row));
+
+        // when
+        List<GraphEdgeHit> edges = repository.relatedEdges(KB_ID, List.of("甲"), LIMIT, QUERY_VECTOR);
+
+        // then：MUST NOT 拆箱、MUST NOT 回退 weight
+        assertNull(edges.get(0).vectorSimilarity());
+        assertEquals(9.0D, edges.get(0).weight(), 1e-9);
+    }
+
+    @Test
+    void should_retryWithoutVector_when_relatedEdges_givenVectorQueryFails() {
+        // given：带向量查询抛异常（疑似维度不一致），去参重试返回投影
+        GraphEdgeProjection row = new GraphEdgeProjection();
+        row.setSourceName("甲");
+        row.setTargetName("乙");
+        row.setEdgeDegree(2);
+        row.setWeight(1.0D);
+        row.setRelationScore(null);
+        when(relationEdgeGraphMapper.searchRelatedEdgesByDegree(eq(KB_ID), anyList(), eq(LIMIT), anyString()))
+                .thenThrow(new RuntimeException("different vector dimensions 512 and 1024"));
+        when(relationEdgeGraphMapper.searchRelatedEdgesByDegree(eq(KB_ID), anyList(), eq(LIMIT), isNull()))
+                .thenReturn(List.of(row));
+
+        ch.qos.logback.classic.Logger repoLogger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(JdbcGraphSearchRepository.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        repoLogger.addAppender(appender);
+        try {
+            // when
+            List<GraphEdgeHit> edges = repository.relatedEdges(KB_ID, List.of("甲"), LIMIT, QUERY_VECTOR);
+
+            // then：重试成功且 relation_score 退化为 null
+            assertEquals(1, edges.size());
+            assertNull(edges.get(0).vectorSimilarity());
+            verify(relationEdgeGraphMapper).searchRelatedEdgesByDegree(eq(KB_ID), anyList(), eq(LIMIT), anyString());
+            verify(relationEdgeGraphMapper).searchRelatedEdgesByDegree(eq(KB_ID), anyList(), eq(LIMIT), isNull());
+            // then：WARN 含 kbId、查询向量长度与期望维度
+            assertTrue(appender.list.stream().anyMatch(event -> event.getLevel() == Level.WARN
+                            && event.getFormattedMessage().contains("kbId=" + KB_ID)
+                            && event.getFormattedMessage().contains("queryVectorLength=" + QUERY_VECTOR.length)
+                            && event.getFormattedMessage().contains("expectedContentVectorDimension=1024")),
+                    "维度不一致重试前应输出含 kbId 与维度的 WARN");
+        } finally {
+            repoLogger.detachAppender(appender);
+        }
     }
 
     // ===== 端点属性批量回查（2.6b） =====

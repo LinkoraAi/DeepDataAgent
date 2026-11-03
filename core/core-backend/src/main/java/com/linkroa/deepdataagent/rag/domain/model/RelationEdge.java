@@ -41,7 +41,7 @@ public record RelationEdge(Long kbId, String sourceName, String targetName, Rela
         if (StringUtils.isBlank(sourceName) || StringUtils.isBlank(targetName)) {
             throw new IllegalArgumentException("关系端点不能为空");
         }
-        if (StringUtils.equals(sourceName, targetName)) {
+        if (Objects.equals(sourceName, targetName)) {
             throw new IllegalArgumentException("关系拒绝自环：" + sourceName);
         }
         properties = ObjectUtils.isEmpty(properties) ? RelationProperties.empty() : properties;

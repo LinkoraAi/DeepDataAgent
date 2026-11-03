@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.linkroa.deepdataagent.knowledgebase.api.KnowledgeBaseApi;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.Chunk;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.FusionStrategyConfig;
+import com.linkroa.deepdataagent.knowledgebase.domain.model.ChannelQueryCountConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.RetrievalStrategyConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FusionStrategyType;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.RetrievalChannel;
@@ -38,12 +39,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import java.util.Objects;
 
 /**
  * 检索编排应用服务（Stage 0~5 全链路入口）。
@@ -124,10 +127,11 @@ public class RetrievalApplicationService {
 
     /**
      * 库未配置检索策略时的 NAIVE 兜底配置常量（不改写问题、其余取记录默认）。
-     * <p>record 各分量为不可变/空值形态，可安全共享（口径同 {@link #EMPTY_KG_RESULT}）。</p>
+     * <p>record 各分量为不可变/空值形态，可安全共享（口径同 {@link #EMPTY_KG_RESULT}）。
+     * 通道召回数量为 {@code null}（未配置），由检索执行链归一默认值 20。</p>
      */
     private static final RetrievalStrategyConfig FALLBACK_NAIVE_STRATEGY_CONFIG =
-            new RetrievalStrategyConfig(RetrievalStrategyType.NAIVE, false, null, null, null, null);
+            new RetrievalStrategyConfig(RetrievalStrategyType.NAIVE, false, null, null, null, null, null);
 
     /**
      * 库级配置未携带 fusionConfig 时的 RRF 兜底融合配置常量（k 取
@@ -357,7 +361,7 @@ public class RetrievalApplicationService {
         if (CollectionUtils.isNotEmpty(q.images())) {
             if (q.multimodal().queryImageTranscribe()) {
                 String transcribed = queryImageTranscriber.transcribe(q.kbId(), originalQuery, q.images());
-                if (StringUtils.isNotBlank(transcribed) && !StringUtils.equals(transcribed, originalQuery)) {
+                if (StringUtils.isNotBlank(transcribed) && !Objects.equals(transcribed, originalQuery)) {
                     understandQuery = transcribed;
                 }
             } else {
@@ -376,6 +380,10 @@ public class RetrievalApplicationService {
             rewritten = understandQuery;
             log.error("Stage 0 问题改写异常，回退送入检索的 query 继续: kbId={}", q.kbId(), e);
         }
+        log.info("Stage 0 问题改写{} | kbId={} rewriteEnabled={} changed={} queryLength={}→{}",
+                Objects.equals(rewritten, understandQuery) ? "未生效（未启用/未变化/降级回退）" : "完成",
+                q.kbId(), cfg.rewriteQuestion(), !Objects.equals(rewritten, understandQuery),
+                understandQuery.length(), rewritten.length());
         // ---- Stage 0：双层关键词提取（异常取空关键词继续）----
         KeywordPair pair = new KeywordPair(List.of(), List.of());
         try {
@@ -392,13 +400,23 @@ public class RetrievalApplicationService {
         stageMark = System.nanoTime();
         List<String> hl = CollectionUtils.isEmpty(pair.hl()) ? List.of() : pair.hl();
         List<String> ll = CollectionUtils.isEmpty(pair.ll()) ? List.of() : pair.ll();
+        log.info("Stage 0 关键词提取完成 | kbId={} strategy={} llCount={} hlCount={} ll={} hl={} 显式传入={}",
+                q.kbId(), cfg.strategyType(), ll.size(), hl.size(), ll, hl,
+                StringUtils.isNotBlank(q.query()) && (CollectionUtils.isNotEmpty(q.llKeywords())
+                        || CollectionUtils.isNotEmpty(q.hlKeywords())));
         // 改写 query 与提取关键词重建执行请求（RetrievalQuery 不可变），后续 Stage 1/5 均消费 effective；
         // 检索附图不进 effective（附件仅由 Stage 0 前置的转译消费，零持久化、不向下游传播）；
         // 多模态开关分量原样携带（通路 B 生效点在作答层，
         // 开关丢失会导致后半链路按默认执行，属必须防住的回归点）；
-        // 图谱召回上限分量同样原样携带（丢失即回落默认值，Stage 1 消费的将是本请求的显式取值）
+        // 图谱召回上限分量同样原样携带（丢失即回落默认值，Stage 1 消费的将是本请求的显式取值）；
+        // 通道召回数量在此从库级 channelQueryCountConfig 填充（检索与问答统一取值点）：
+        // 配置分量为 null 时传 null 由契约紧凑构造器归一默认值（未配置语义与显式配置可区分）
+        ChannelQueryCountConfig countConfig = cfg.channelQueryCountConfig();
         RetrievalQuery effective = new RetrievalQuery(q.kbId(), rewritten, hl, ll,
-                q.topK(), q.chunkTopK(), q.maxTotalTokens(), q.maxEntityTokens(), q.maxRelationTokens(),
+                ObjectUtils.isEmpty(countConfig) ? null : countConfig.vectorQueryCount(),
+                ObjectUtils.isEmpty(countConfig) ? null : countConfig.bm25QueryCount(),
+                ObjectUtils.isEmpty(countConfig) ? null : countConfig.graphQueryCount(),
+                q.maxTotalTokens(), q.maxEntityTokens(), q.maxRelationTokens(),
                 List.of(), q.multimodal(), q.graphEdgeTop(), q.graphEdgeChunkLimit());
 
         boolean keywordFailed = cfg.strategyType() == RetrievalStrategyType.MIX
@@ -461,7 +479,17 @@ public class RetrievalApplicationService {
                 degraded = true;
                 log.error("Stage 3 精排异常，直出粗排结果: kbId={}", q.kbId(), e);
             }
+            // 结果返回数量统一截断（add-channel-query-count-config 上移至此）：与重排开启/关闭无关，
+            // 精排开启路径行为不变（同值二次截断幂等）；重排关闭（默认态）从融合全量直出
+            // 修正为按配置截断——历史实现仅在精排开启路径末尾截断属口径缺陷
+            ranked = limitResultCount(ranked, cfg.resultChunkCount());
             stage3Ms = elapsedMillis(stageMark);
+            log.info("Stage 3 精排{} | kbId={} rerankEnabled={} 输入={} 打分后输出={} resultChunkCount={} 耗时ms={}",
+                    ObjectUtils.isEmpty(cfg.rerankConfig()) || !cfg.rerankConfig().isEnabled()
+                            ? "未启用（直出融合结果）" : "完成",
+                    q.kbId(),
+                    ObjectUtils.isEmpty(cfg.rerankConfig()) ? false : cfg.rerankConfig().isEnabled(),
+                    fused.size(), ranked.size(), cfg.resultChunkCount(), stage3Ms);
             stageMark = System.nanoTime();
             if (mode == RetrievalOutputMode.CHUNKS_ONLY) {
                 // 切片形态：上下文构建与答案生成均只服务作答，且作答 token 预算会裁剪召回结果，
@@ -785,6 +813,24 @@ public class RetrievalApplicationService {
     }
 
     /**
+     * 按结果返回数量截断（Stage 3 之后的统一收口，与重排开关无关）。
+     * <p>语义与原精排内实现逐字一致：未配置/非正数不截断；已不足上限原样返回；
+     * 截断保持既有相对次序（打分在前、未打分置尾）。返回新列表，不修改入参。</p>
+     *
+     * @param ranked           精排后的完整候选（可空）
+     * @param resultChunkCount 结果返回数量，可为空（空或非正数表示不截断）
+     * @return 截断后的候选列表
+     */
+    private static List<RankedChunk> limitResultCount(List<RankedChunk> ranked, Integer resultChunkCount) {
+        if (CollectionUtils.isEmpty(ranked)
+                || ObjectUtils.isEmpty(resultChunkCount) || resultChunkCount <= 0
+                || ranked.size() <= resultChunkCount) {
+            return ranked;
+        }
+        return new ArrayList<>(ranked.subList(0, resultChunkCount));
+    }
+
+    /**
      * 统计指定召回通道的候选数（收尾摘要三通道口径）。
      *
      * @param candidates 三路召回合并候选列表（可空）
@@ -803,8 +849,9 @@ public class RetrievalApplicationService {
     /**
      * 读取库级检索策略快照；未配置（返回 null）时按 NAIVE 默认策略兜底。
      * <p>兜底口径：rewriteQuestion=false（不改写）、strategyType=NAIVE（不做关键词提取、
-     * 不触发图谱通道）；resultChunkCount / similarThreshold / rerankConfig / fusionConfig
-     * 传 null——两数值字段的判空语义已由下游服务承接（精排不截断、向量通道按默认阈值口径），
+     * 不触发图谱通道）；resultChunkCount / similarThreshold / rerankConfig / fusionConfig /
+     * channelQueryCountConfig 传 null——数值字段的判空语义已由下游承接
+     * （结果数量不截断、向量通道按默认阈值口径、通道召回数量归一默认值 20），
      * 融合配置缺失由编排层兜底 RRF。</p>
      *
      * @param kbId 知识库主键

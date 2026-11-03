@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.Objects;
 
 /**
  * 远程 MinerU 文档解析实现（provider=MINERU 时使用）。
@@ -256,16 +257,16 @@ public class MineruDocumentParser implements DocumentParser {
      * MinerU 原始类型映射为 ContentBlockVO 五类统一类型；未知类型兜底 GENERIC。
      */
     private String mapType(String rawType) {
-        if (StringUtils.equals(rawType, RAW_TYPE_TEXT)) {
+        if (Objects.equals(rawType, RAW_TYPE_TEXT)) {
             return ContentBlockVO.TYPE_TEXT;
         }
-        if (StringUtils.equals(rawType, RAW_TYPE_IMAGE)) {
+        if (Objects.equals(rawType, RAW_TYPE_IMAGE)) {
             return ContentBlockVO.TYPE_IMAGE;
         }
-        if (StringUtils.equals(rawType, RAW_TYPE_TABLE)) {
+        if (Objects.equals(rawType, RAW_TYPE_TABLE)) {
             return ContentBlockVO.TYPE_TABLE;
         }
-        if (StringUtils.equals(rawType, RAW_TYPE_EQUATION)) {
+        if (Objects.equals(rawType, RAW_TYPE_EQUATION)) {
             return ContentBlockVO.TYPE_EQUATION;
         }
         return ContentBlockVO.TYPE_GENERIC;
@@ -280,9 +281,9 @@ public class MineruDocumentParser implements DocumentParser {
      */
     private String extractText(MineruClient.Block block) {
         String key = FIELD_TEXT;
-        if (StringUtils.equals(block.type(), RAW_TYPE_IMAGE)) {
+        if (Objects.equals(block.type(), RAW_TYPE_IMAGE)) {
             key = FIELD_IMAGE_CAPTION;
-        } else if (StringUtils.equals(block.type(), RAW_TYPE_TABLE)) {
+        } else if (Objects.equals(block.type(), RAW_TYPE_TABLE)) {
             key = FIELD_TABLE_CAPTION;
         }
         Object value = block.fields().get(key);

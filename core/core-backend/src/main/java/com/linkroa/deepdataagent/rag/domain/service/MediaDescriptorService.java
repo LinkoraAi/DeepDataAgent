@@ -15,7 +15,6 @@ import com.linkroa.deepdataagent.rag.domain.port.LlmImage;
 import com.linkroa.deepdataagent.rag.domain.port.MultimodalConstraints;
 import com.linkroa.deepdataagent.rag.infrastructure.prompts.catalog.PromptCatalog;
 import com.linkroa.deepdataagent.rag.infrastructure.prompts.catalog.PromptTemplates;
-import io.agentscope.extensions.model.openai.OpenAIClient;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -34,7 +33,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 媒体描述生成服务（多模态 7-Stage 管线 Stage1）。
- * <p>按 {@link ContentBlockVO#getType()} 分流为 image / table / equation / generic 四类：</p>
+ * <p>按分流为 image / table / equation / generic 四类：</p>
  * <ul>
  *   <li>image / table / equation：渲染系统提示（7-1）+ 分析用户提示（7-2/7-3/7-4，
  *       meta 存在邻近文本时切 {@code *_with_context} 变体），经 {@link LlmClient} 端口调用
@@ -137,6 +136,19 @@ public class MediaDescriptorService {
     private static final String ENTITY_NAME_PAGE_CONNECTOR = "_p";
     /** 主实体名内容类型后缀模板（前空格、括号包裹块类型小写，与上游 RAG-Anything 命名一致） */
     private static final String ENTITY_TYPE_SUFFIX_TEMPLATE = " (%s)";
+
+    /** 实体命名指令：图片（{@code {entity_name}} 占位符取值，令模型自由取名，不预置名字） */
+    private static final String ENTITY_NAME_INSTRUCTION_IMAGE =
+            "a unique descriptive name for this image";
+    /** 实体命名指令：表格（{@code {entity_name}} 占位符取值，令模型自由取名，不预置名字） */
+    private static final String ENTITY_NAME_INSTRUCTION_TABLE =
+            "a unique descriptive name for this table";
+    /** 实体命名指令：公式（{@code {entity_name}} 占位符取值，令模型自由取名，不预置名字） */
+    private static final String ENTITY_NAME_INSTRUCTION_EQUATION =
+            "a unique descriptive name for this equation";
+    /** 实体命名指令：通用块（{@code {entity_name}} 占位符取值，令模型自由取名，不预置名字） */
+    private static final String ENTITY_NAME_INSTRUCTION_GENERIC =
+            "a unique descriptive name for this content";
 
     /** 原图 contentType 缺省值（对象元数据不可得且后缀无法识别时按二进制流传递） */
     private static final String CONTENT_TYPE_DEFAULT = "application/octet-stream";
@@ -445,6 +457,9 @@ public class MediaDescriptorService {
 
     /**
      * 组装用户模板变量（全部归一为非空白值，适配渲染端口 fail-fast 契约）。
+     * <p>{@code {entity_name}} 不再注入派生名，而是按块类型注入一句命名指令，
+     * 由模型在响应 JSON 中自由给出语义化名称；派生名仅保留为模型未给名时的兜底
+     * （见 {@link #deriveEntityName}）。</p>
      *
      * @param type        块类型
      * @param block       内容块
@@ -456,7 +471,7 @@ public class MediaDescriptorService {
                                                 String language) {
         Map<String, String> vars = new HashMap<>();
         putVar(vars, VAR_LANGUAGE, language);
-        putVar(vars, VAR_ENTITY_NAME, deriveEntityName(type, block));
+        putVar(vars, VAR_ENTITY_NAME, entityNameInstruction(type));
         putVar(vars, VAR_SECTION_PATH,
                 MultimodalMetaKeys.metaString(block, MultimodalMetaKeys.META_KEY_SECTION_PATH));
         if (StringUtils.isNotBlank(neighborText)) {
@@ -468,6 +483,23 @@ public class MediaDescriptorService {
             default -> buildEquationVars(vars, block);
         }
         return vars;
+    }
+
+    /**
+     * 取当前块类型的实体命名指令（{@code {entity_name}} 占位符取值）。
+     * <p>指令随块类型变化，使模型按“图片/表格/公式/通用内容”各自的语义自由取名；
+     * 不携带任何预置名、题注或文件名，避免把物理标识写进实体身份。</p>
+     *
+     * @param type 块类型（IMAGE / TABLE / EQUATION / GENERIC）
+     * @return 英文命名指令（非空白）
+     */
+    private String entityNameInstruction(String type) {
+        return switch (type) {
+            case ContentBlockVO.TYPE_IMAGE -> ENTITY_NAME_INSTRUCTION_IMAGE;
+            case ContentBlockVO.TYPE_TABLE -> ENTITY_NAME_INSTRUCTION_TABLE;
+            case ContentBlockVO.TYPE_EQUATION -> ENTITY_NAME_INSTRUCTION_EQUATION;
+            default -> ENTITY_NAME_INSTRUCTION_GENERIC;
+        };
     }
 
     /**

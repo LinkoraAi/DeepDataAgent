@@ -34,6 +34,18 @@ export interface RetrievalDraft {
   rerankConfig: RetrievalDraftRerank;
   /** 融合配置（可编辑态） */
   fusionConfig: RetrievalDraftFusion;
+  /** 通道召回数量配置（可编辑态；NAIVE 序列化时不提交图谱数量） */
+  channelQueryCountConfig: RetrievalDraftChannelQueryCount;
+}
+
+/** 草稿态通道召回数量（三值恒存在，滑块直接绑定；1~100，默认 20） */
+export interface RetrievalDraftChannelQueryCount {
+  /** 向量通道召回数量 */
+  vectorQueryCount: number;
+  /** BM25 通道召回数量 */
+  bm25QueryCount: number;
+  /** 图谱通道召回数量（实体/关系路共用单值；NAIVE 下保存但序列化不提交） */
+  graphQueryCount: number;
 }
 
 /** 草稿态重排配置（enabled 与模型引用恒存在，topK 留空表示不限制） */
@@ -52,7 +64,7 @@ export interface RetrievalDraftFusion {
   fusionType: string;
   /** RRF 常数 K（仅 RRF 分支提交，必须 &gt; 0） */
   rrfK: number;
-  /** 三通道稠密权重（仅加权分支提交，键为通道枚举名） */
+  /** 三通道稠密权重（仅加权分支提交，键为通道枚举名；0.1 步进、合计恒为 1.0） */
   channelDenseWeight: Record<string, number>;
 }
 
@@ -78,7 +90,7 @@ export const SIMILAR_THRESHOLD_MIN = 0;
 /** 相似度阈值上限（对齐后端 RetrievalConfigDTO.SIMILAR_THRESHOLD_MAX） */
 export const SIMILAR_THRESHOLD_MAX = 1;
 /** 结果返回数量默认值（对齐后端检索契约默认召回量） */
-export const DEFAULT_RESULT_CHUNK_COUNT = 20;
+export const DEFAULT_RESULT_CHUNK_COUNT = 50;
 /** RRF 常数 K 默认值（对齐后端 FusionStrategyConfig.DEFAULT_RRF_K） */
 export const DEFAULT_RRF_K = 60;
 /** RRF 常数 K 下限（后端要求严格大于 0） */
@@ -87,17 +99,33 @@ export const RRF_K_MIN = 1;
 export const RRF_K_MAX = Number.MAX_SAFE_INTEGER;
 /** 重排保留条数下限（topK 为正整数，留空表示不限制） */
 export const RERANK_TOP_K_MIN = 1;
-/** 重排保留条数默认值（开启重排时的常用保留量，仍可在面板中清空表示不限制） */
-export const DEFAULT_RERANK_TOP_K = 10;
+/** 重排保留条数默认值（对齐后端 RetrievalConstants.RERANK_TOP_K_DEFAULT=50 唯一口径） */
+export const DEFAULT_RERANK_TOP_K = 50;
+/** 通道召回数量下限（对齐后端 ChannelQueryCountDTO 1~100 校验） */
+export const QUERY_COUNT_MIN = 1;
+/** 通道召回数量上限（对齐后端 ChannelQueryCountDTO.QUERY_COUNT_MAX） */
+export const QUERY_COUNT_MAX = 100;
+/** 通道召回数量默认值（对齐后端 RetrievalQuery.DEFAULT_QUERY_COUNT） */
+export const DEFAULT_QUERY_COUNT = 20;
 /** 通道稠密权重输入下限（后端校验为开区间 (0,1)，控件边界仅允许贴近 0） */
 export const CHANNEL_WEIGHT_FLOOR = 0;
 /** 通道稠密权重输入上限（后端校验为开区间 (0,1)，控件边界仅允许贴近 1） */
 export const CHANNEL_WEIGHT_CEIL = 1;
-/** 加权求和各通道默认权重（键为 RetrievalChannel 枚举名） */
+/** 单通道权重下限（1 刻度 = 0.1；后端要求开区间 (0,1)，0 权通道不可提交） */
+export const CHANNEL_WEIGHT_MIN = 0.1;
+/** 单通道权重上限（8 刻度 = 0.8；其余两通道各至少保留 1 刻度） */
+export const CHANNEL_WEIGHT_MAX = 0.8;
+/** 通道权重步进（0.1，即 1 个刻度，滑块单步） */
+export const CHANNEL_WEIGHT_STEP = 0.1;
+/** 权重刻度总数：三通道权重合计恒为 10 刻度 = 1.0 */
+export const CHANNEL_WEIGHT_TOTAL_TICKS = 10;
+/** 权重合计比较容差（0.1 步长输入下规避 0.7+0.2+0.1 这类二进制误差误判） */
+const WEIGHT_SUM_EPSILON = 1e-9;
+/** 加权求和各通道默认权重（键为 RetrievalChannel 枚举名；合计 1.0） */
 export const DEFAULT_CHANNEL_WEIGHTS: Record<string, number> = {
-  VECTOR: 0.7,
-  BM25: 0.2,
-  GRAPH: 0.1,
+  VECTOR: 0.4,
+  BM25: 0.3,
+  GRAPH: 0.3,
 };
 
 /** 检索附图数量上限（对齐后端 MultimodalConstraints.MAX_IMAGES_PER_QUERY_REQUEST） */
@@ -113,7 +141,103 @@ function defaultChannelWeights(): Record<string, number> {
 }
 
 /**
- * 默认检索策略配置：NAIVE / 不改写 / 结果数量 20 / 阈值不过滤（0）/ 重排关闭（topK 预填 10）/ RRF（K=60）。
+ * 权重转整数刻度（就近取整并夹取到 0.1~0.8，即 1~8 刻度）。
+ * @param weight 权重值（可能为脏数据）
+ * @param fallback 非法值回落的权重（一般为该通道默认权重；后端拒绝 0 权通道，故最小可用为 1 刻度）
+ * @returns 整数刻度（1~8）
+ */
+function toWeightTicks(weight: unknown, fallback: number): number {
+  const value = typeof weight === 'number' && Number.isFinite(weight) ? weight : fallback;
+  const ticks = Math.round(value * 10);
+  const minTicks = Math.round(CHANNEL_WEIGHT_MIN * 10);
+  const maxTicks = Math.round(CHANNEL_WEIGHT_MAX * 10);
+  return Math.max(minTicks, Math.min(ticks, maxTicks));
+}
+
+/**
+ * 按比例把 total 个刻度分配给定通道，每通道保底 1 刻度。
+ * <p>全程整数运算（先各留 1 刻度的底，剩余额度按当前刻度的比例用最大余数法分配），
+ * 避免 0.1 在双精度下的累加误差；比例全为 0 时按等分处理，余量按小数部分从大到小补齐，
+ * 同余量保持通道顺序，保证同一入参恒得同一结果。</p>
+ * @param ticks 各通道当前刻度（非负整数）
+ * @param total 待分配刻度总数
+ * @returns 分配后的各通道刻度（和恒为 total，每通道 ≥ 1）
+ */
+function allocateTicks(ticks: number[], total: number): number[] {
+  // 已是目标总和且每路都在合法区间的脏数据，原样返回（回显/往返不产生额外漂移）
+  const sum = ticks.reduce((acc, value) => acc + value, 0);
+  if (sum === total && ticks.every((value) => value >= 1)) {
+    return ticks;
+  }
+  const extra = Math.max(0, total - ticks.length);
+  const shares = ticks.map((value) => (sum > 0 ? (value / sum) * extra : extra / ticks.length));
+  const allocated = shares.map((share) => Math.floor(share));
+  let remainder = extra - allocated.reduce((acc, value) => acc + value, 0);
+  const order = shares
+    .map((share, index) => ({ index, fraction: share - Math.floor(share) }))
+    .sort((left, right) => right.fraction - left.fraction || left.index - right.index);
+  for (const item of order) {
+    if (remainder <= 0) {
+      break;
+    }
+    allocated[item.index] += 1;
+    remainder -= 1;
+  }
+  return ticks.map((_, index) => 1 + allocated[index]);
+}
+
+/** 刻度数组转为「通道 → 权重」映射（键顺序对齐通道枚举，单值均为 0.1 的整数倍） */
+function toWeightRecord(channels: string[], ticks: number[]): Record<string, number> {
+  const record: Record<string, number> = {};
+  channels.forEach((channel, index) => {
+    record[channel] = ticks[index] / 10;
+  });
+  return record;
+}
+
+/**
+ * 三通道权重联动调整：把目标通道设为给定权重，其余通道按当前比例分摊剩余额度。
+ * <p>口径：三通道权重合计恒为 1.0（10 个 0.1 刻度），单通道落在 0.1~0.8。
+ * 目标权重按 0.1 就近取整并夹取边界后，其余两通道自动让位/回补，
+ * 因此合计永远不会大于 1，也不会产生后端拒绝的 0 权通道。</p>
+ * @param weights 当前三通道权重（键为通道枚举名；缺失或脏值按默认权重处理）
+ * @param channel 被调整的通道枚举名（不在三通道内时返回归一后的原权重）
+ * @param nextWeight 目标权重（0.1 步进；非数值时保持该通道当前刻度）
+ * @returns 调整后的三通道权重（合计恒为 1.0）
+ */
+export function rebalanceChannelWeights(
+  weights: Record<string, number> | undefined,
+  channel: string,
+  nextWeight: number,
+): Record<string, number> {
+  const channels = RETRIEVAL_CHANNELS.map((item) => item.value);
+  const ticks = channels.map((value) => toWeightTicks(weights?.[value], DEFAULT_CHANNEL_WEIGHTS[value]));
+  const targetIndex = channels.indexOf(channel);
+  if (targetIndex < 0) {
+    return toWeightRecord(channels, allocateTicks(ticks, CHANNEL_WEIGHT_TOTAL_TICKS));
+  }
+  const targetTicks = typeof nextWeight === 'number' && Number.isFinite(nextWeight)
+    ? toWeightTicks(nextWeight, ticks[targetIndex])
+    : ticks[targetIndex];
+  const others = ticks.filter((_, index) => index !== targetIndex);
+  // 目标通道固定，剩余额度按另外两路当前比例分配（每路保底 1 刻度）
+  const allocated = allocateTicks(others, CHANNEL_WEIGHT_TOTAL_TICKS - targetTicks);
+  const result = ticks.slice();
+  result[targetIndex] = targetTicks;
+  let cursor = 0;
+  channels.forEach((_, index) => {
+    if (index === targetIndex) {
+      return;
+    }
+    result[index] = allocated[cursor];
+    cursor += 1;
+  });
+  return toWeightRecord(channels, result);
+}
+
+/**
+ * 默认检索策略配置：NAIVE / 不改写 / 结果数量 20 / 阈值不过滤（0）/ 重排关闭（topK 预填 50）/
+ * RRF（K=60）/ 三通道召回数量各 20。
  * <p>产物为「完整草稿形态」——嵌套配置与各通道权重均已补齐，可直接绑定表单，
  * 也是 parseStrategyJson 防御回退的基准。</p>
  * @returns 默认配置对象（每次新建，不与外部共享引用）
@@ -126,6 +250,11 @@ export function defaultRetrievalConfig(): RetrievalDraft {
     similarThreshold: SIMILAR_THRESHOLD_MIN,
     rerankConfig: { enabled: false, modelProfileId: '', topK: DEFAULT_RERANK_TOP_K },
     fusionConfig: { fusionType: FUSION_RRF, rrfK: DEFAULT_RRF_K, channelDenseWeight: defaultChannelWeights() },
+    channelQueryCountConfig: {
+      vectorQueryCount: DEFAULT_QUERY_COUNT,
+      bm25QueryCount: DEFAULT_QUERY_COUNT,
+      graphQueryCount: DEFAULT_QUERY_COUNT,
+    },
   };
 }
 
@@ -198,6 +327,7 @@ function numberOrDefault(value: unknown, min: number, max: number, fallback: num
  * 由配置装配 retrieval-config 端点请求用的 JSON 字符串。
  * <p>裁剪口径：重排关闭时只写 {@code {enabled:false}}（避免残留模型引用）；
  * 融合 RRF 只写 rrfK、WEIGHTED_SUM 只写三通道权重（两者互斥，均与后端校验器分支一致）。
+ * 通道数量节点：NAIVE 不提交图谱数量（该策略不消费图谱通道），向量/BM25 恒提交；
  * 非法 / 缺省标量在装配时归一为默认值，保证产物必然通过后端校验。</p>
  * @param config 表单绑定的配置对象
  * @returns 后端要求的检索策略 JSON 字符串
@@ -215,8 +345,27 @@ export function buildStrategyJson(config: RetrievalStrategyConfig): string {
       SIMILAR_THRESHOLD_MIN),
     rerankConfig: buildRerankJson(rerank),
     fusionConfig: buildFusionJson(fusion),
+    channelQueryCountConfig: buildChannelQueryCountJson(strategyType, config.channelQueryCountConfig),
   };
   return JSON.stringify(json);
+}
+
+/** 装配 channelQueryCountConfig 节点（NAIVE 不提交图谱数量；各值越界/非法归一默认 20） */
+function buildChannelQueryCountJson(
+  strategyType: string,
+  counts: RetrievalStrategyConfig['channelQueryCountConfig'],
+): Record<string, unknown> {
+  const node: Record<string, unknown> = {
+    vectorQueryCount: numberOrDefault(counts?.vectorQueryCount, QUERY_COUNT_MIN, QUERY_COUNT_MAX,
+      DEFAULT_QUERY_COUNT),
+    bm25QueryCount: numberOrDefault(counts?.bm25QueryCount, QUERY_COUNT_MIN, QUERY_COUNT_MAX,
+      DEFAULT_QUERY_COUNT),
+  };
+  if (strategyType === STRATEGY_MIX) {
+    node.graphQueryCount = numberOrDefault(counts?.graphQueryCount, QUERY_COUNT_MIN, QUERY_COUNT_MAX,
+      DEFAULT_QUERY_COUNT);
+  }
+  return node;
 }
 
 /** 装配 rerankConfig 节点（关闭态不携带模型引用与 topK） */
@@ -234,18 +383,19 @@ function buildRerankJson(rerank: RetrievalStrategyConfig['rerankConfig']): Recor
   return { enabled: false };
 }
 
-/** 装配 fusionConfig 节点（RRF 与加权求和互斥） */
+/** 装配 fusionConfig 节点（RRF 与加权求和互斥；加权权重归一为 0.1 刻度、合计 1.0） */
 function buildFusionJson(fusion: RetrievalStrategyConfig['fusionConfig']): Record<string, unknown> {
   const fusionType = readString(fusion?.fusionType, FUSION_RRF);
   if (fusionType === FUSION_WEIGHTED_SUM) {
-    const weights: Record<string, number> = {};
-    RETRIEVAL_CHANNELS.forEach((channel) => {
-      const weight = fusion?.channelDenseWeight?.[channel.value];
-      if (typeof weight === 'number' && Number.isFinite(weight)) {
-        weights[channel.value] = weight;
-      }
-    });
-    return { fusionType: FUSION_WEIGHTED_SUM, channelDenseWeight: weights };
+    const channels = RETRIEVAL_CHANNELS.map((channel) => channel.value);
+    const ticks = channels.map((channel) => toWeightTicks(
+      fusion?.channelDenseWeight?.[channel],
+      DEFAULT_CHANNEL_WEIGHTS[channel],
+    ));
+    return {
+      fusionType: FUSION_WEIGHTED_SUM,
+      channelDenseWeight: toWeightRecord(channels, allocateTicks(ticks, CHANNEL_WEIGHT_TOTAL_TICKS)),
+    };
   }
   const rrfK = typeof fusion?.rrfK === 'number' && Number.isFinite(fusion.rrfK) && fusion.rrfK > 0
     ? Math.trunc(fusion.rrfK)
@@ -270,6 +420,7 @@ export function parseStrategyJson(raw: string | null | undefined): RetrievalDraf
   const rerankNode = readObject(root.rerankConfig);
   const fusionNode = readObject(root.fusionConfig);
   const fusionType = readString(fusionNode?.fusionType, fallback.fusionConfig.fusionType);
+  const countNode = readObject(root.channelQueryCountConfig);
   return {
     strategyType: isInOptions(strategyType, RETRIEVAL_STRATEGIES) ? strategyType : STRATEGY_NAIVE,
     rewriteQuestion: readBoolean(root.rewriteQuestion, false),
@@ -287,29 +438,34 @@ export function parseStrategyJson(raw: string | null | undefined): RetrievalDraf
       rrfK: Math.trunc(numberOrDefault(fusionNode?.rrfK, RRF_K_MIN, RRF_K_MAX, DEFAULT_RRF_K)),
       channelDenseWeight: parseChannelWeights(fusionNode?.channelDenseWeight),
     },
+    channelQueryCountConfig: {
+      vectorQueryCount: numberOrDefault(countNode?.vectorQueryCount, QUERY_COUNT_MIN, QUERY_COUNT_MAX,
+        DEFAULT_QUERY_COUNT),
+      bm25QueryCount: numberOrDefault(countNode?.bm25QueryCount, QUERY_COUNT_MIN, QUERY_COUNT_MAX,
+        DEFAULT_QUERY_COUNT),
+      graphQueryCount: numberOrDefault(countNode?.graphQueryCount, QUERY_COUNT_MIN, QUERY_COUNT_MAX,
+        DEFAULT_QUERY_COUNT),
+    },
   };
 }
 
-/** 反解三通道权重（缺失或非数值回退默认权重） */
+/** 反解三通道权重（缺失或非数值回退默认权重，再按 0.1 刻度归一到合计 1.0） */
 function parseChannelWeights(node: unknown): Record<string, number> {
-  const weights = defaultChannelWeights();
   const source = readObject(node);
-  if (source === null) {
-    return weights;
-  }
-  RETRIEVAL_CHANNELS.forEach((channel) => {
-    const value = source[channel.value];
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      weights[channel.value] = value;
-    }
-  });
-  return weights;
+  const channels = RETRIEVAL_CHANNELS.map((channel) => channel.value);
+  const ticks = channels.map((channel) => toWeightTicks(
+    source?.[channel],
+    DEFAULT_CHANNEL_WEIGHTS[channel],
+  ));
+  return toWeightRecord(channels, allocateTicks(ticks, CHANNEL_WEIGHT_TOTAL_TICKS));
 }
 
 /**
  * 提交前置校验：字段级错误集合（键为字段路径，值为用户可读文案，空对象表示通过）。
  * <p>口径严格对齐 RetrievalConfigValidator：数量 1~100、阈值 0~1、重排开启必须有模型、
- * RRF 的 K 必须 > 0、加权求和的三通道权重必填且落在开区间 (0,1)（后端对越界值直接 400）。</p>
+ * RRF 的 K 必须 > 0、加权求和的三通道权重必填且落在开区间 (0,1)、三路权重合计不得大于 1
+ * （后端对越界值直接 400）。通道召回数量同样按 1~100 整数校验；图谱数量仅在 MIX 策略下校验
+ * （NAIVE 序列化不提交该字段，界面上也不渲染对应滑块，校验隐藏字段无意义）。</p>
  * @param config 表单绑定的配置对象
  * @returns 字段错误映射
  */
@@ -329,6 +485,20 @@ export function validateRetrievalConfig(config: RetrievalStrategyConfig): Record
   if (typeof threshold !== 'number' || !Number.isFinite(threshold)
     || threshold < SIMILAR_THRESHOLD_MIN || threshold > SIMILAR_THRESHOLD_MAX) {
     errors.similarThreshold = `相似度阈值须为 ${SIMILAR_THRESHOLD_MIN}~${SIMILAR_THRESHOLD_MAX} 之间的数值`;
+  }
+
+  const counts = config.channelQueryCountConfig;
+  if (!isIntInRange(counts?.vectorQueryCount, QUERY_COUNT_MIN, QUERY_COUNT_MAX)) {
+    errors['channelQueryCountConfig.vectorQueryCount'] =
+      `VECTOR 通道召回数量须为 ${QUERY_COUNT_MIN}~${QUERY_COUNT_MAX} 的整数`;
+  }
+  if (!isIntInRange(counts?.bm25QueryCount, QUERY_COUNT_MIN, QUERY_COUNT_MAX)) {
+    errors['channelQueryCountConfig.bm25QueryCount'] =
+      `BM25 通道召回数量须为 ${QUERY_COUNT_MIN}~${QUERY_COUNT_MAX} 的整数`;
+  }
+  if (strategyType === STRATEGY_MIX && !isIntInRange(counts?.graphQueryCount, QUERY_COUNT_MIN, QUERY_COUNT_MAX)) {
+    errors['channelQueryCountConfig.graphQueryCount'] =
+      `GRAPH 通道召回数量须为 ${QUERY_COUNT_MIN}~${QUERY_COUNT_MAX} 的整数`;
   }
 
   const rerank = config.rerankConfig;
@@ -355,13 +525,26 @@ export function validateRetrievalConfig(config: RetrievalStrategyConfig): Record
     const key = `fusionConfig.channelDenseWeight.${channel.value}`;
     const weight = fusion?.channelDenseWeight?.[channel.value];
     if (weight === undefined || weight === null) {
-      errors[key] = `请填写「${channel.label}」通道的稠密权重`;
+      errors[key] = `请填写「${channel.label}」的稠密权重`;
       return;
     }
     if (!Number.isFinite(weight) || weight <= CHANNEL_WEIGHT_FLOOR || weight >= CHANNEL_WEIGHT_CEIL) {
-      errors[key] = `「${channel.label}」通道权重必须落在 ${CHANNEL_WEIGHT_FLOOR}~${CHANNEL_WEIGHT_CEIL} 之间（不含两端）`;
+      errors[key] = `「${channel.label}」权重须落在 ${CHANNEL_WEIGHT_FLOOR}~${CHANNEL_WEIGHT_CEIL} 之间（不含两端，步进 ${CHANNEL_WEIGHT_STEP}）`;
     }
   });
+  // 三路权重是占比：已提供通道的合计不得大于 1（与后端 RetrievalConfigValidator 同口径）
+  const weightTotal = RETRIEVAL_CHANNELS.reduce((total, channel) => {
+    const weight = fusion?.channelDenseWeight?.[channel.value];
+    // 单值越界已由上面的分支单独报错，此处只累加合法权重，避免同一问题重复提示
+    if (typeof weight !== 'number' || !Number.isFinite(weight)) {
+      return total;
+    }
+    return weight > CHANNEL_WEIGHT_FLOOR && weight < CHANNEL_WEIGHT_CEIL ? total + weight : total;
+  }, 0);
+  if (weightTotal > CHANNEL_WEIGHT_CEIL + WEIGHT_SUM_EPSILON) {
+    errors['fusionConfig.channelDenseWeight'] =
+      `三路权重合计不能大于 ${CHANNEL_WEIGHT_CEIL}（当前 ${weightTotal.toFixed(2)}）`;
+  }
   return errors;
 }
 

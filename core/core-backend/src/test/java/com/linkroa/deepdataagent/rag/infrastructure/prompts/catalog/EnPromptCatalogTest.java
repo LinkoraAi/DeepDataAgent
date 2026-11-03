@@ -110,6 +110,48 @@ class EnPromptCatalogTest {
     }
 
     /**
+     * 场景：多模态 user 模板的实体命名约束（名称由模型自由给出）。
+     * 预期：8 个 LLM 指令模板均含 {@code {entity_name}} 占位符，并在正文声明
+     * 语义化命名约束（禁止文件名、图号与纯数字片段）；切片拼装模板不含该占位符。
+     */
+    @Test
+    void should_declareSemanticNamingConstraint_when_inspectMultimodalUserTemplates() {
+        // given
+        String[] llmTemplates = {
+                PromptTemplates.VISION_PROMPT,
+                PromptTemplates.VISION_PROMPT_WITH_CONTEXT,
+                PromptTemplates.TABLE_PROMPT,
+                PromptTemplates.TABLE_PROMPT_WITH_CONTEXT,
+                PromptTemplates.EQUATION_PROMPT,
+                PromptTemplates.EQUATION_PROMPT_WITH_CONTEXT,
+                PromptTemplates.GENERIC_PROMPT,
+                PromptTemplates.GENERIC_PROMPT_WITH_CONTEXT};
+
+        // when / then：命名占位符与语义化约束齐备
+        for (String templateName : llmTemplates) {
+            String body = EnPromptCatalog.TEMPLATES.get(templateName);
+            assertNotNull(body, "模板 [" + templateName + "] 应存在");
+            assertTrue(body.contains("{entity_name}"),
+                    "多模态指令模板 [" + templateName + "] 必须包含 {entity_name} 占位符");
+            assertTrue(body.contains("Use a semantic entity_name"),
+                    "多模态指令模板 [" + templateName + "] 必须声明语义化命名约束");
+            assertTrue(body.contains("bare numeric fragments"),
+                    "多模态指令模板 [" + templateName + "] 必须禁止纯数字片段命名");
+        }
+
+        // 切片拼装模板不是 LLM 指令，不得引入命名占位符
+        String[] chunkTemplates = {
+                PromptTemplates.IMAGE_CHUNK,
+                PromptTemplates.TABLE_CHUNK,
+                PromptTemplates.EQUATION_CHUNK,
+                PromptTemplates.GENERIC_CHUNK};
+        for (String templateName : chunkTemplates) {
+            assertFalse(EnPromptCatalog.TEMPLATES.get(templateName).contains("{entity_name}"),
+                    "切片拼装模板 [" + templateName + "] 不应包含 {entity_name}");
+        }
+    }
+
+    /**
      * 按模板正文占位符集合构造变量表：优先取既有夹具取值（旧 {@code PromptLoaderTest} 变量表迁移），
      * 夹具未覆盖的占位符以统一最小值补齐；系统常量占位符跳过（由门面注入）。
      *

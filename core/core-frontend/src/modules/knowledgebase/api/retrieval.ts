@@ -11,8 +11,9 @@ import type { SseHandle } from '@/shared/api/sse';
  *   <li>{@code POST /answer} —— SSE 流式返回 LLM 最终答案：{@code answer.started} →
  *       {@code answer.delta}×N → {@code answer.completed}（只含完整答案）或
  *       {@code answer.error}；建流前的参数/归属校验失败仍返回真实 HTTP 错误信封；</li>
- *   <li>两形态共用同一请求体：kbId / query 必填，其余可空（缺省走后端契约默认值）；</li>
- *   <li>库级检索策略（策略类型 / 结果数量 / 阈值 / 重排 / 融合）由后端从知识库配置读取，
+ *   <li>两形态共用同一请求体：kbId / query 必填，其余可空（缺省走后端契约默认值）；
+ *       通道召回数量不入请求体（历史 topK / chunkTopK 字段已删除，携带即忽略）；</li>
+ *   <li>库级检索策略（策略类型 / 结果数量 / 阈值 / 重排 / 融合 / 通道召回数量）由后端从知识库配置读取，
  *       不经本请求体下发，参数调整须走 retrieval-config 端点；</li>
  *   <li>images 为内联附图（通路 A）：数量 ≤3、单图解码后 ≤4MB、类型限
  *       image/jpeg|png|gif|webp，任一非法整请求真实 HTTP 400。</li>
@@ -43,10 +44,6 @@ export interface RetrievalPayload {
   hlKeywords?: string[];
   /** 显式低层关键词（可选，非空时跳过 LLM 提取） */
   llKeywords?: string[];
-  /** 每通道向量召回数量（可选，缺省走后端契约默认值） */
-  topK?: number;
-  /** chunk 召回数量（可选，缺省回退 topK） */
-  chunkTopK?: number;
   /** 上下文总 token 预算（可选，仅答案形态参与决策） */
   maxTotalTokens?: number;
   /** 内联附图（可选，≤3 张） */
@@ -146,6 +143,20 @@ export interface FusionConfig {
 }
 
 /**
+ * 通道召回数量配置（检索策略 JSON 的 channelQueryCountConfig 节点）。
+ * <p>三字段均可省略（省略=未配置，后端运行时按默认值 20 处理），提供时须为 1~100 整数。
+ * 图谱数量为实体/关系路共用的单值口径（对齐 LightRAG top_k），NAIVE 策略下不提交。</p>
+ */
+export interface ChannelQueryCountConfig {
+  /** 向量通道召回数量（1~100，可选） */
+  vectorQueryCount?: number;
+  /** BM25 通道召回数量（1~100，可选） */
+  bm25QueryCount?: number;
+  /** 图谱通道召回数量（1~100，可选；NAIVE 不提交） */
+  graphQueryCount?: number;
+}
+
+/**
  * 知识库检索策略配置（PUT retrieval-config 请求体中 JSON 字符串的反解形态）。
  * <p>除 strategyType 外字段均可缺省（后端按区间校验后回落默认值）。</p>
  */
@@ -162,6 +173,8 @@ export interface RetrievalStrategyConfig {
   rerankConfig?: RerankConfig;
   /** 融合配置 */
   fusionConfig?: FusionConfig;
+  /** 通道召回数量配置（向量/BM25/图谱，可空=未配置） */
+  channelQueryCountConfig?: ChannelQueryCountConfig;
 }
 
 /**

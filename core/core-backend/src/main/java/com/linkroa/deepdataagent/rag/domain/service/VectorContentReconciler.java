@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 向量内容收口原语（rag 领域层，维护不变量「向量行内容 = 已提交描述的函数」）。
@@ -142,7 +143,7 @@ public class VectorContentReconciler {
                 return Result.SKIPPED;
             }
             String current = vector.content();
-            if (StringUtils.equals(current, expected)) {
+            if (Objects.equals(current, expected)) {
                 return Result.CONSISTENT;
             }
             float[] newVector = embeddingClient.embed(embeddingModelProfileId, expected);
@@ -189,7 +190,7 @@ public class VectorContentReconciler {
                 return Result.SKIPPED;
             }
             String current = vector.content();
-            if (StringUtils.equals(current, expected)) {
+            if (Objects.equals(current, expected)) {
                 return Result.CONSISTENT;
             }
             float[] newVector = embeddingClient.embed(embeddingModelProfileId, expected);
@@ -223,8 +224,8 @@ public class VectorContentReconciler {
      */
     private static RelationEdge pickNormalizedDirectionRow(List<RelationEdge> rows, String source, String target) {
         return rows.stream()
-                .filter(row -> StringUtils.equals(row.sourceName(), source)
-                        && StringUtils.equals(row.targetName(), target))
+                .filter(row -> Objects.equals(row.sourceName(), source)
+                        && Objects.equals(row.targetName(), target))
                 .findFirst()
                 .orElseGet(() -> rows.get(0));
     }

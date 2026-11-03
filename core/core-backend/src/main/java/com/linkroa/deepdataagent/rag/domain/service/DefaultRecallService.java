@@ -46,13 +46,15 @@ import java.util.stream.Collectors;
  *
  * <p>通道语义：</p>
  * <ul>
- *     <li>VECTOR：{@code KnowledgeBaseApi.searchByVector}，LIMIT = chunkTopK
- *     （{@link RetrievalQuery} 紧凑构造器已保证未指定时回退 topK），
+ *     <li>VECTOR：{@code KnowledgeBaseApi.searchByVector}，LIMIT = vectorQueryCount
+ *     （库级 {@code channelQueryCountConfig.vectorQueryCount}，未配置归一
+ *     {@link RetrievalQuery#DEFAULT_QUERY_COUNT}），
  *     查询向量以 pgvector 字面量字符串跨边界传入；</li>
  *     <li>BM25：{@code KnowledgeBaseApi.searchByKeywords}，以改写后 query 检索，
- *     LIMIT = chunkTopK；</li>
+ *     LIMIT = bm25QueryCount（库级配置，未配置归一默认值）；</li>
  *     <li>GRAPH（仅 MIX）：实体路以 ll 向量命中 {@code searchEntities}、
- *     关系路以 hl 向量命中 {@code searchRelations}（各路 LIMIT = topK），命中记录携带图谱属性；
+ *     关系路以 hl 向量命中 {@code searchRelations}（两路共用 LIMIT = graphQueryCount，
+ *     对齐 LightRAG {@code top_k} 单值口径；库级配置，未配置归一默认值），命中记录携带图谱属性；
  *     ll/hl 单侧为空时仅退化对应子路（实体路/关系路），入口打一条可区分 WARN；
  *     <b>实体候选集</b>由「实体路命中序」与「关系路端点序（每命中贡献源、目标）」
  *     <b>逐位交错</b>合并（ll 先手、各源路内保相似度序、去重保序，RR#1）；
@@ -65,7 +67,8 @@ import java.util.stream.Collectors;
  *     {@link RetrievalConstants#GRAPH_EDGE_CHUNK_LIMIT}；边源直取边记录自带账本，
  *     <b>不再依赖本次关系路命中反查</b>），chunkId 全局去重先到先得保留来源分数，
  *     通道内按「被引用背书次数」降序稳定重排（E2，同次数保首现序），
- *     再按入场配额（E1 = {@link RetrievalQuery#chunkTopK()}）截断通道序前缀，
+ *     再按入场配额（E1 = {@link RetrievalQuery#graphQueryCount()}，与实体/关系路共用
+ *     图谱通道单值口径）截断通道序前缀，
  *     经 {@code chunksOf} 回正文后组装 {@link RetrievalCandidate}（channel=GRAPH）与
  *     {@link KgSearchResult}。</li>
  * </ul>
@@ -138,6 +141,12 @@ public class DefaultRecallService implements RecallService {
     /** 关系命中贡献的端点数（源、目标各一，用于端点序列预分配容量） */
     private static final int ENDPOINTS_PER_RELATION = 2;
 
+    /** 单位区间下界：边余弦分的裁剪下界，也是端点回退「两端都无分」的取值 */
+    private static final double MIN_UNIT_SCORE = 0.0D;
+
+    /** 单位区间上界：边余弦分的裁剪上界 */
+    private static final double MAX_UNIT_SCORE = 1.0D;
+
     /**
      * 空集合图谱结果常量（NAIVE 与 MISSING 统一口径，RecallService javadoc 约定）。
      * <p>record 不可变、各字段均为不可变空列表，可安全共享（口径对齐
@@ -171,7 +180,7 @@ public class DefaultRecallService implements RecallService {
     /**
      * 执行三路召回（MIX）或向量 + 全文双通道召回（NAIVE）。
      *
-     * @param q   检索内部执行请求（kbId 单库隔离，chunkTopK 已由紧凑构造器归一）
+     * @param q   检索内部执行请求（kbId 单库隔离，三通道召回数量已由紧凑构造器归一）
      * @param cfg 检索策略配置（strategyType 决定通道组合，similarThreshold 决定命中阈值）
      * @return 召回复合结果（候选按 VECTOR → BM25 → GRAPH 顺序合并；NAIVE 或图谱 MISSING 时
      *         图谱结果为空集合 {@link KgSearchResult}；embedding 批量失败时返回空结果）
@@ -273,7 +282,7 @@ public class DefaultRecallService implements RecallService {
     private List<RetrievalCandidate> recallVectorSafely(RetrievalQuery q, double distanceThreshold, float[] queryVector) {
         try {
             List<ChunkScoreDTO> hits = knowledgeBaseApi.searchByVector(q.kbId(), distanceThreshold,
-                    toVectorLiteral(queryVector), q.chunkTopK());
+                    toVectorLiteral(queryVector), q.vectorQueryCount());
             return toCandidates(hits, RetrievalChannel.VECTOR);
         } catch (Exception e) {
             log.warn("VECTOR 通道召回失败，按空结果降级: kbId={}", q.kbId(), e);
@@ -282,17 +291,21 @@ public class DefaultRecallService implements RecallService {
     }
 
     /**
-     * BM25 通道召回，通道级异常隔离：失败记录告警后按空结果降级。
+     * BM25 通道召回，通道级异常隔离：失败记录 ERROR 后按空结果降级。
+     * <p>该通道依赖 pg_textsearch 扩展与 bm25 索引；异常被静默吞掉会让系统在
+     * 「全文检索不可用」时仍以两路召回继续运行而无任何告警，故此处日志级别为 ERROR，
+     * 并显式记录知识库标识与异常摘要（异常堆栈由日志框架输出）。</p>
      *
      * @param q 检索请求（以改写后 query 做全文检索）
      * @return BM25 通道候选（可为空）
      */
     private List<RetrievalCandidate> recallBm25Safely(RetrievalQuery q) {
         try {
-            List<ChunkScoreDTO> hits = knowledgeBaseApi.searchByKeywords(q.kbId(), q.query(), q.chunkTopK());
+            List<ChunkScoreDTO> hits = knowledgeBaseApi.searchByKeywords(q.kbId(), q.query(), q.bm25QueryCount());
             return toCandidates(hits, RetrievalChannel.BM25);
         } catch (Exception e) {
-            log.warn("BM25 通道召回失败，按空结果降级: kbId={}", q.kbId(), e);
+            log.error("BM25 通道召回失败，按空结果降级: kbId={}, exception={}, message={}",
+                    q.kbId(), e.getClass().getSimpleName(), e.getMessage(), e);
             return List.of();
         }
     }
@@ -343,13 +356,15 @@ public class DefaultRecallService implements RecallService {
             int hlIndex = VECTOR_INDEX_LL + (hasLl ? 1 : 0);
             List<EntityHit> entityHits = hasLl
                     ? nullSafeList(retrievalRepository.searchEntities(q.kbId(), vectors.get(VECTOR_INDEX_LL),
-                            distanceThreshold, q.topK()))
+                            distanceThreshold, q.graphQueryCount()))
                     : List.of();
             List<RelationHit> relationHits = hasHl
                     ? nullSafeList(retrievalRepository.searchRelations(q.kbId(), vectors.get(hlIndex),
-                            distanceThreshold, q.topK()))
+                            distanceThreshold, q.graphQueryCount()))
                     : List.of();
-            return recallGraph(q, entityHits, relationHits);
+            // 1 跳边打分用的 hl 查询向量：hl 关键词为空时不传（边分全部走端点余弦回退）
+            float[] relationQueryVector = hasHl ? vectors.get(hlIndex) : null;
+            return recallGraph(q, entityHits, relationHits, relationQueryVector);
         } catch (Exception e) {
             log.warn("GRAPH 通道召回失败，按 MISSING 降级: kbId={}", q.kbId(), e);
             return new GraphOutcome(List.of(), EMPTY_KG_RESULT);
@@ -361,13 +376,14 @@ public class DefaultRecallService implements RecallService {
      * 实体候选集逐位交错合并 → 1 跳关联边 → 边并入关系视图 → 三源 chunk 抽取
      * （背书频次重排 + 入场配额截断）→ 回正文。
      *
-     * @param q            检索请求
-     * @param entityHits   实体路命中（可为空）
-     * @param relationHits 关系路命中（可为空）
+     * @param q                    检索请求
+     * @param entityHits           实体路命中（可为空）
+     * @param relationHits         关系路命中（可为空）
+     * @param relationQueryVector  1 跳边打分的 hl 查询向量（hl 关键词为空时为 {@code null}）
      * @return 图谱通道产物；两路均无命中时返回 MISSING（空候选 + 空集合图谱结果）
      */
     private GraphOutcome recallGraph(RetrievalQuery q, List<EntityHit> entityHits,
-                                     List<RelationHit> relationHits) {
+                                     List<RelationHit> relationHits, float[] relationQueryVector) {
         List<EntityHit> validEntityHits = entityHits.stream().filter(this::isValidEntityHit).toList();
         List<RelationHit> validRelationHits = relationHits.stream().filter(this::isValidRelationHit).toList();
         if (validEntityHits.isEmpty() && validRelationHits.isEmpty()) {
@@ -382,9 +398,9 @@ public class DefaultRecallService implements RecallService {
         List<GraphEdgeHit> edges = entityCandidates.isEmpty()
                 ? List.of()
                 : nullSafeList(retrievalRepository.relatedEdges(q.kbId(),
-                        new ArrayList<>(entityCandidates.keySet()), q.graphEdgeTop()));
+                        new ArrayList<>(entityCandidates.keySet()), q.graphEdgeTop(), relationQueryVector));
         // 关系视图 = 关系路命中 ∪ 关联边转换记录（按归一对去重，关系路命中优先）
-        List<RelationHit> relationView = toRelationView(validRelationHits, edges);
+        List<RelationHit> relationView = toRelationView(validRelationHits, edges, entityCandidates);
         KgSearchResult kgResult = new KgSearchResult(new ArrayList<>(entityCandidates.values()),
                 relationView, List.of());
         Map<Long, Double> chunkScores = collectGraphChunks(q, entityCandidates.values(), relationView);
@@ -482,18 +498,25 @@ public class DefaultRecallService implements RecallService {
     /**
      * 关系视图合并：关系路命中按自身顺序入列，关联边逐条转换为 {@link RelationHit}
      * 并按归一端点对去重并入（同一关系在视图中至多出现一次，关系路命中优先保留其相似度分）。
-     * <p><b>边转关系的分数口径</b>：取边 {@code weight}（图谱结构权重，非相似度）。
-     * 影响面：该分数只经「边 → 其账本 chunk」这条链落到 GRAPH 通道候选分数上——
-     * RRF 融合只消费通道内排名、不消费 score，故无影响；WEIGHTED_SUM 融合在 GRAPH 通道内
-     * 做 min-max 归一，边权重量纲（常为 1 / belongs_to 的 10）与余弦相似度 [0,1] 混合，
-     * 会使仅由边账本进入的 chunk 归一后靠近上界。此取舍见 design D-3 与
-     * {@link RelationHit#score()} 说明。</p>
+     * <p><b>边转关系的分数口径（变更 fix-weighted-sum-graph-scale）</b>：
+     * 优先取 SQL 在 {@code LIMIT} 之后算出的关系向量余弦
+     * {@link GraphEdgeHit#vectorSimilarity()}（{@code 1 - (content_vector <=> hl向量)}，裁剪到 [0,1]）；
+     * 当该值为 {@code null}（hl 为空 / 无向量行 / {@code content_vector} 为 {@code NULL}）时，
+     * 回退为端点实体余弦：两端均在候选集取 {@code max}，仅一端则取该端，两端都无分取 {@code 0.0}。
+     * 边 {@code weight} 仅用于选边排序（{@code ORDER BY edge_degree DESC, weight DESC}）与
+     * {@link RelationHit#weight()} 展示，<b>彻底退出打分</b>，避免图结构权重量纲污染
+     * WEIGHTED_SUM 的 min-max 归一口径。</p>
+     * <p>影响面：该分数只经「边 → 其账本 chunk」这条链落到 GRAPH 通道候选分数上——
+     * RRF 融合只消费通道内排名、不消费 score，故不受影响；WEIGHTED_SUM 融合因此获得
+     * 与实体/关系路一致的余弦量纲。</p>
      *
-     * @param relationHits 关系路命中（已过滤无效）
-     * @param edges        1 跳关联边记录（可为空）
+     * @param relationHits    关系路命中（已过滤无效）
+     * @param edges           1 跳关联边记录（可为空）
+     * @param entityCandidates 实体候选集（端点余弦回退的分数来源，键为实体名）
      * @return 关系视图列表（有序）
      */
-    private List<RelationHit> toRelationView(List<RelationHit> relationHits, List<GraphEdgeHit> edges) {
+    private List<RelationHit> toRelationView(List<RelationHit> relationHits, List<GraphEdgeHit> edges,
+                                              Map<String, EntityHit> entityCandidates) {
         Map<List<String>, RelationHit> viewByPair = new LinkedHashMap<>();
         for (RelationHit hit : relationHits) {
             viewByPair.putIfAbsent(hit.normalizedPair(), hit);
@@ -506,7 +529,7 @@ public class DefaultRecallService implements RecallService {
             if (pair.isEmpty()) {
                 continue;
             }
-            viewByPair.putIfAbsent(pair, toRelationHit(edge));
+            viewByPair.putIfAbsent(pair, toRelationHit(edge, entityCandidates));
         }
         return new ArrayList<>(viewByPair.values());
     }
@@ -515,12 +538,80 @@ public class DefaultRecallService implements RecallService {
      * 关联边记录 → 关系视图记录（端点/描述/关键词/权重/来源文件/创建时间原样携带，
      * 账本即边的账本；分数口径见 {@link #toRelationView}）。
      *
-     * @param edge 关联边记录
+     * @param edge             关联边记录
+     * @param entityCandidates 实体候选集（端点余弦回退的分数来源）
      * @return 关系视图记录
      */
-    private RelationHit toRelationHit(GraphEdgeHit edge) {
-        return new RelationHit(edge.sourceName(), edge.targetName(), edge.weight(), edge.chunkIds(),
+    private RelationHit toRelationHit(GraphEdgeHit edge, Map<String, EntityHit> entityCandidates) {
+        double score = resolveEdgeScore(edge, entityCandidates);
+        return new RelationHit(edge.sourceName(), edge.targetName(), score, edge.chunkIds(),
                 edge.description(), edge.keywords(), edge.weight(), edge.filePaths(), edge.createdAt());
+    }
+
+    /**
+     * 解析 1 跳边的通道分数：关系向量余弦优先，缺失时回退端点实体余弦。
+     * <p>仅在 {@link GraphEdgeHit#vectorSimilarity()} 非空时取该值并裁剪到 [0,1]；
+     * 任何情况下都不读取 {@link GraphEdgeHit#weight()}，避免回退到图结构权重。</p>
+     *
+     * @param edge             关联边记录
+     * @param entityCandidates 实体候选集（端点余弦回退的分数来源）
+     * @return 落在 [0,1] 的通道分数
+     */
+    private double resolveEdgeScore(GraphEdgeHit edge, Map<String, EntityHit> entityCandidates) {
+        Double vectorSimilarity = edge.vectorSimilarity();
+        if (ObjectUtils.isNotEmpty(vectorSimilarity)) {
+            return clipToUnitInterval(vectorSimilarity);
+        }
+        return resolveEdgeFallbackScore(edge, entityCandidates);
+    }
+
+    /**
+     * 端点实体余弦回退：两端都在候选集取 {@code max}，只有一端带分数时取该端，两端都无分取 {@code 0.0}。
+     * <p>候选集命中即“带分数”（{@link EntityHit#score()} 为基本类型 double）；
+     * 返回 {@code Double} 以便区分“无该端点”与“端点分数为 0.0”。</p>
+     *
+     * @param edge             关联边记录
+     * @param entityCandidates 实体候选集
+     * @return 回退分数，落在 [0,1]
+     */
+    private double resolveEdgeFallbackScore(GraphEdgeHit edge, Map<String, EntityHit> entityCandidates) {
+        Double sourceScore = endpointScore(entityCandidates, edge.sourceName());
+        Double targetScore = endpointScore(entityCandidates, edge.targetName());
+        if (ObjectUtils.isNotEmpty(sourceScore) && ObjectUtils.isNotEmpty(targetScore)) {
+            return Math.max(sourceScore, targetScore);
+        }
+        if (ObjectUtils.isNotEmpty(sourceScore)) {
+            return sourceScore;
+        }
+        if (ObjectUtils.isNotEmpty(targetScore)) {
+            return targetScore;
+        }
+        return MIN_UNIT_SCORE;
+    }
+
+    /**
+     * 取端点实体在候选集中的余弦分；端点名为空或不在候选集时返回 {@code null}。
+     *
+     * @param entityCandidates 实体候选集
+     * @param entityName       端点实体名
+     * @return 端点余弦分，缺失为 {@code null}
+     */
+    private Double endpointScore(Map<String, EntityHit> entityCandidates, String entityName) {
+        if (StringUtils.isBlank(entityName)) {
+            return null;
+        }
+        EntityHit hit = entityCandidates.get(entityName);
+        return ObjectUtils.isEmpty(hit) ? null : hit.score();
+    }
+
+    /**
+     * 将余弦分裁剪到闭区间 [0,1]（pgvector 距离极端值或浮点误差可能越界）。
+     *
+     * @param value 原始余弦分
+     * @return 落在 [0,1] 的分数
+     */
+    private static double clipToUnitInterval(double value) {
+        return Math.max(MIN_UNIT_SCORE, Math.min(MAX_UNIT_SCORE, value));
     }
 
     /**
@@ -530,8 +621,8 @@ public class DefaultRecallService implements RecallService {
      * 来源分数），并累计「被引用背书次数」。
      * <p>随后施加两道结构性修正：<b>E2</b> 通道内按背书次数降序<b>稳定</b>重排
      * （同次数保持首现序，仅影响通道内次序、一进融合仍是单条，不做分数叠加）；
-     * <b>E1</b> 按入场配额（{@link RetrievalQuery#chunkTopK()}）截断通道序前缀，
-     * 限制 GRAPH 通道进入融合的候选总数。</p>
+     * <b>E1</b> 按入场配额（{@link RetrievalQuery#graphQueryCount()}，与实体/关系路共用
+     * 图谱通道单值口径）截断通道序前缀，限制 GRAPH 通道进入融合的候选总数。</p>
      *
      * @param q            检索请求（每源 chunk 上限与入场配额来源）
      * @param entityView   实体候选集（实体路命中 + 端点回查/降级记录，视图内全部实体）
@@ -549,7 +640,7 @@ public class DefaultRecallService implements RecallService {
         for (RelationHit hit : relationView) {
             endorse(hit.chunkIds(), hit.score(), perSourceLimit, scoreByChunk, endorsementsByChunk);
         }
-        return reorderAndQuota(scoreByChunk, endorsementsByChunk, q.chunkTopK());
+        return reorderAndQuota(scoreByChunk, endorsementsByChunk, q.graphQueryCount());
     }
 
     /**
@@ -586,7 +677,7 @@ public class DefaultRecallService implements RecallService {
      *
      * @param scoreByChunk        chunkId → 来源分数（首现序）
      * @param endorsementsByChunk chunkId → 背书次数
-     * @param entryQuota          GRAPH 通道入场配额（{@code chunkTopK}，恒为正整数）
+     * @param entryQuota          GRAPH 通道入场配额（{@code graphQueryCount}，恒为正整数）
      * @return 重排并截断后的有序 chunkId → 分数映射
      */
     private Map<Long, Double> reorderAndQuota(Map<Long, Double> scoreByChunk,

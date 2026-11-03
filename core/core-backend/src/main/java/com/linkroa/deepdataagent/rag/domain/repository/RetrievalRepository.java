@@ -49,13 +49,18 @@ public interface RetrievalRepository {
      * <p>端点对经 SQL 侧 {@code LEAST/GREATEST} 无向归一，历史双向残留行按归一对折叠为
      * {@code updated_at} 最新一行的属性（同一归一对至多一条）；边记录自带 chunk 账本，
      * 消费方不得再依赖关系路命中做内存反查。</p>
+     * <p>边分数在 SQL 取边（{@code LIMIT}）之后计算：以 {@code relation_info_vector.content_vector}
+     * 与 {@code queryVector} 的余弦相似度承载于 {@link GraphEdgeHit#vectorSimilarity()}；
+     * {@code queryVector} 为空、无向量行或 {@code content_vector} 为 {@code NULL} 时该分为 {@code null}，
+     * 由服务层回退端点实体余弦（禁止以边 {@code weight} 兜底）。</p>
      *
      * @param kbId        所属知识库ID（单库隔离）
      * @param entityNames 实体候选集名称列表（source/target 任一端命中即返回）
      * @param limit       返回上限（关联边 Top，默认 {@code RetrievalConstants.GRAPH_EDGE_TOP} = 50）
+     * @param queryVector hl 查询向量，可空；{@code null} 表示本次无 hl 关键词，边分全部走端点回退
      * @return 关联边记录列表（无向归一 + 归一对去重，度数+权重双键降序）
      */
-    List<GraphEdgeHit> relatedEdges(Long kbId, List<String> entityNames, int limit);
+    List<GraphEdgeHit> relatedEdges(Long kbId, List<String> entityNames, int limit, float[] queryVector);
 
     /**
      * 端点实体属性批量回查（2.6b）：按名称集合点查 {@code entity_node_graph} 的展示属性与节点账本，

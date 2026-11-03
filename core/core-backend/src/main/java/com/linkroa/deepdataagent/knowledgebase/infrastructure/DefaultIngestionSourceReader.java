@@ -37,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * {@link IngestionSourceReader} 契约的默认实现（防腐层 / 契约适配器）。
@@ -361,7 +362,7 @@ public class DefaultIngestionSourceReader implements IngestionSourceReader {
         }
         String normalized = StringUtils.trimToEmpty(node.stringValue()).toUpperCase(Locale.ROOT);
         for (E candidate : candidates) {
-            if (StringUtils.equals(candidate.name(), normalized)) {
+            if (Objects.equals(candidate.name(), normalized)) {
                 return candidate;
             }
         }

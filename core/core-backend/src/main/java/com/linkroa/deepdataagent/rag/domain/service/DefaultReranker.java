@@ -33,9 +33,12 @@ import java.util.Set;
  *       批量回取 chunk 正文（单库隔离，跨库/已删除 ID 不命中）；</li>
  *   <li>一次 {@link RerankClient#scoreBatch(String, String, List)} 批量打分（多候选只发生一次远程调用），
  *       返回分数按入参顺序回填，再按重排分降序（同分保持粗排相对次序）；</li>
- *   <li>{@code score < similarThreshold} 过滤（阈值未配置则跳过过滤）；</li>
- *   <li>截断至 {@code resultChunkCount}（未配置/非正数则不截断）。</li>
+ *   <li>{@code score < similarThreshold} 过滤（阈值未配置则跳过过滤）。</li>
  * </ol>
+ * <p><b>结果返回数量（{@code resultChunkCount}）截断不在本服务执行</b>
+ * （{@code add-channel-query-count-config} 变更上移）：由编排层在精排之后统一截断，
+ * 与重排开启/关闭无关——历史实现仅在精排开启路径末尾截断，重排关闭（默认态）时
+ * 配置不生效属口径缺陷。</p>
  *
  * <p><b>降级语义</b>：回取正文与打分过程中的任何运行时异常（远程不可用、超时、参数非法）统一捕获后
  * 记 warning 并直出入参粗排结果，绝不向编排层抛出——检索可用性优先于精排准确性。
@@ -43,8 +46,7 @@ import java.util.Set;
  * 不再存在「部分候选打分成功」的中间态（逐候选打分时代码可在异常前保留已打分的候选）。</p>
  *
  * <p><b>正文缺失的候选</b>：无法取得 passage 即无法取得重排分，故跳过打分、保留粗排分与原相对次序，
- * 置于已打分结果之后（不参与 {@code similarThreshold} 过滤，因其分数为粗排分，口径不可比），
- * 但仍受 {@code resultChunkCount} 整体截断约束。</p>
+ * 置于已打分结果之后（不参与 {@code similarThreshold} 过滤，因其分数为粗排分，口径不可比）。</p>
  *
  * @author DeepDataAgent
  */
@@ -124,7 +126,7 @@ public class DefaultReranker implements Reranker {
         scored.sort(Comparator.comparingDouble(RankedChunk::score).reversed());
         List<RankedChunk> result = filterByThreshold(scored, cfg.similarThreshold());
         result.addAll(unscored);
-        return limitResultCount(result, cfg.resultChunkCount());
+        return result;
     }
 
     /**
@@ -244,19 +246,5 @@ public class DefaultReranker implements Reranker {
             }
         }
         return kept;
-    }
-
-    /**
-     * 按结果返回数量截断。
-     *
-     * @param ranked           精排后的完整候选（已打分在前、未打分置尾）
-     * @param resultChunkCount 结果返回数量，可为空（空或非正数表示不截断）
-     * @return 截断后的候选列表
-     */
-    private List<RankedChunk> limitResultCount(List<RankedChunk> ranked, Integer resultChunkCount) {
-        if (ObjectUtils.isEmpty(resultChunkCount) || resultChunkCount <= 0 || ranked.size() <= resultChunkCount) {
-            return ranked;
-        }
-        return new ArrayList<>(ranked.subList(0, resultChunkCount));
     }
 }

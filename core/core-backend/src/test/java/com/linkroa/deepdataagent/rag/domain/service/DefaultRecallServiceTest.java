@@ -62,7 +62,7 @@ import static org.mockito.Mockito.when;
  * 与各自 limit；④ 关系路端点与实体路命中逐位交错并入实体候选集（relatedEdges 收到合并去重列表）、
  * 关联边并入关系视图（与关系路命中按归一对去重）；
  * ⑤ NAIVE 不触碰图谱仓储且仅打包 query 一条文本、阈值缺失等效不过滤；
- * ⑥ 单通道（VECTOR）抛异常其余通道仍返回；⑦ embedding 批量失败整体短路；
+ * ⑥ 单通道（VECTOR / BM25）抛异常其余通道仍返回（BM25 异常须 ERROR 留痕）；⑦ embedding 批量失败整体短路；
  * ⑧ null 入参非法；⑨ 检索 profileId 与知识库投影同源（含跨库隔离）；
  * ⑩ 知识库未配置嵌入模型 → 向量召回降级且零 embedding 调用；
  * ⑪ MIX 下 ll/hl 单侧为空 → 对应子路退化 WARN 可区分、剩单路行为不变、双侧皆空不落单侧告警；
@@ -100,11 +100,14 @@ class DefaultRecallServiceTest {
     /** OTHER_KB_ID 配置的 embedding 模型 profileId（证明跨库不共享进程级单值） */
     private static final String EMBED_PROFILE_OTHER = "embed-profile-2";
 
-    /** 每通道向量召回数量（图谱实体路/关系路 limit） */
+    /** 图谱通道召回数量（实体路/关系路 limit 与 E1 入场配额共用单值，graphQueryCount 取值） */
     private static final int TOP_K = 10;
 
-    /** chunk 召回数量（VECTOR/BM25 通道 limit） */
+    /** 向量/BM25 通道召回数量（vectorQueryCount / bm25QueryCount 取值） */
     private static final int CHUNK_TOP_K = 5;
+
+    /** 图谱通道入场配额收紧值（E1 截断用例，须小于实体账本 chunk 块数 3） */
+    private static final int GRAPH_ENTRY_QUOTA = 2;
 
     /** 配置侧余弦相似度阈值（MIX 场景） */
     private static final float SIMILAR_THRESHOLD = 0.5F;
@@ -254,7 +257,7 @@ class DefaultRecallServiceTest {
         assertTrue(outcome.kgResult().entities().isEmpty());
         assertTrue(outcome.kgResult().relations().isEmpty());
         assertTrue(outcome.kgResult().chunks().isEmpty());
-        verify(retrievalRepository, never()).relatedEdges(any(), anyList(), anyInt());
+        verify(retrievalRepository, never()).relatedEdges(any(), anyList(), anyInt(), any());
         verify(retrievalRepository, never()).chunksOf(any(), anyList());
     }
 
@@ -267,7 +270,7 @@ class DefaultRecallServiceTest {
         RecallService.RecallOutcome outcome = recallService.recall(query(), mixConfig());
 
         // then：全部下游检索调用均携带 kbId 单库隔离，limit 各按口径
-        // （VECTOR/BM25 → chunkTopK；实体路/关系路 → topK；关联边 → GRAPH_EDGE_TOP）
+        // （VECTOR → vectorQueryCount；BM25 → bm25QueryCount；实体路/关系路 → graphQueryCount；关联边 → GRAPH_EDGE_TOP）
         assertEquals(5, outcome.candidates().size());
         verify(knowledgeBaseApi).searchByVector(eq(KB_ID), eq(DISTANCE_THRESHOLD),
                 eq(QUERY_VECTOR_LITERAL), eq(CHUNK_TOP_K));
@@ -277,7 +280,7 @@ class DefaultRecallServiceTest {
         verify(retrievalRepository).searchRelations(eq(KB_ID), eq(HL_VECTOR),
                 eq(DISTANCE_THRESHOLD), eq(TOP_K));
         verify(retrievalRepository).relatedEdges(eq(KB_ID), anyList(),
-                eq(RetrievalConstants.GRAPH_EDGE_TOP));
+                eq(RetrievalConstants.GRAPH_EDGE_TOP), any());
         verify(retrievalRepository).chunksOf(eq(KB_ID), anyList());
     }
 
@@ -299,7 +302,7 @@ class DefaultRecallServiceTest {
                 eq(DISTANCE_THRESHOLD), eq(TOP_K)))
                 .thenReturn(List.of(relationHit("乙", "丙", 0.8D, List.of(CHUNK_GRAPH_2))));
         when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(),
-                eq(RetrievalConstants.GRAPH_EDGE_TOP)))
+                eq(RetrievalConstants.GRAPH_EDGE_TOP), any()))
                 .thenReturn(List.of(graphEdge("甲", "乙"), graphEdge("乙", "丙")));
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "graph-1.md"),
@@ -312,7 +315,7 @@ class DefaultRecallServiceTest {
         // then：relatedEdges 收到「实体路命中 ∪ 关系路端点」逐位交错去重列表
         ArgumentCaptor<List<String>> namesCaptor = ArgumentCaptor.forClass(List.class);
         verify(retrievalRepository).relatedEdges(eq(KB_ID), namesCaptor.capture(),
-                eq(RetrievalConstants.GRAPH_EDGE_TOP));
+                eq(RetrievalConstants.GRAPH_EDGE_TOP), any());
         assertEquals(List.of("甲", "乙", "丙"), namesCaptor.getValue());
         // then：图谱实体候选集含反查端点；关系视图 = 关系路命中 ∪ 关联边（乙-丙 去重不重复出现）
         assertEquals(List.of("甲", "乙", "丙"), entityNames(outcome.kgResult()));
@@ -346,7 +349,7 @@ class DefaultRecallServiceTest {
             when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
                     eq(DISTANCE_THRESHOLD), eq(TOP_K)))
                     .thenReturn(List.of(relationHit(ENTITY_USER, ENTITY_ORDER, 0.77D, List.of(CHUNK_GRAPH_2))));
-            when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt())).thenReturn(List.of());
+            when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any())).thenReturn(List.of());
             when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                     CHUNK_GRAPH_2, graphChunkText(CHUNK_GRAPH_2, "graph-2.md")));
 
@@ -389,7 +392,7 @@ class DefaultRecallServiceTest {
             when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
                     eq(DISTANCE_THRESHOLD), eq(TOP_K)))
                     .thenReturn(List.of(entityHit(ENTITY_USER, 0.88D, List.of(CHUNK_GRAPH_1))));
-            when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt())).thenReturn(List.of());
+            when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any())).thenReturn(List.of());
             when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                     CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "graph-1.md")));
 
@@ -399,7 +402,7 @@ class DefaultRecallServiceTest {
 
             // then：关系路零查询，实体路与关联边照常执行
             verify(retrievalRepository, never()).searchRelations(any(), any(), anyDouble(), anyInt());
-            verify(retrievalRepository).relatedEdges(eq(KB_ID), anyList(), anyInt());
+            verify(retrievalRepository).relatedEdges(eq(KB_ID), anyList(), anyInt(), any());
             assertEquals(List.of(ENTITY_USER), entityNames(outcome.kgResult()));
             assertEquals(1, outcome.candidates().size());
             // then：仅打一条指明关系路退化的 WARN
@@ -456,7 +459,7 @@ class DefaultRecallServiceTest {
                 .thenReturn(List.of(entityHit(ENTITY_USER, 0.88D, List.of(CHUNK_GRAPH_1))));
         when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
                 eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
-        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), eq(CUSTOM_EDGE_TOP)))
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), eq(CUSTOM_EDGE_TOP), any()))
                 .thenReturn(List.of());
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "graph-1.md")));
@@ -465,9 +468,9 @@ class DefaultRecallServiceTest {
         recallService.recall(queryWithGraphLimits(CUSTOM_EDGE_TOP, null), mixConfig());
 
         // then：relatedEdges 收到请求侧上限（而非 RetrievalConstants 常量），常量值从未被使用
-        verify(retrievalRepository).relatedEdges(eq(KB_ID), anyList(), eq(CUSTOM_EDGE_TOP));
+        verify(retrievalRepository).relatedEdges(eq(KB_ID), anyList(), eq(CUSTOM_EDGE_TOP), any());
         verify(retrievalRepository, never()).relatedEdges(eq(KB_ID), anyList(),
-                eq(RetrievalConstants.GRAPH_EDGE_TOP));
+                eq(RetrievalConstants.GRAPH_EDGE_TOP), any());
     }
 
     @Test
@@ -486,7 +489,7 @@ class DefaultRecallServiceTest {
                         List.of(CHUNK_GRAPH_1, CHUNK_GRAPH_2, CHUNK_GRAPH_3))));
         when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
                 eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
-        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt())).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any())).thenReturn(List.of());
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "graph-1.md"),
                 CHUNK_GRAPH_2, graphChunkText(CHUNK_GRAPH_2, "graph-2.md"),
@@ -577,7 +580,7 @@ class DefaultRecallServiceTest {
         when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
                 eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
         when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(),
-                eq(RetrievalConstants.GRAPH_EDGE_TOP))).thenReturn(List.of());
+                eq(RetrievalConstants.GRAPH_EDGE_TOP), any())).thenReturn(List.of());
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "graph-1.md")));
 
@@ -593,6 +596,45 @@ class DefaultRecallServiceTest {
         assertEquals(RetrievalChannel.GRAPH, candidates.get(1).channel());
         assertEquals(0.9D, candidates.get(1).score(), DELTA);
         assertEquals(List.of(ENTITY_USER), entityNames(outcome.kgResult()));
+    }
+
+    @Test
+    void should_logErrorAndReturnOtherChannels_when_recall_given_bm25ChannelThrows() {
+        // given：BM25 通道异常（如扩展未预加载 / 索引缺失），VECTOR 正常、图谱无命中
+        ch.qos.logback.classic.Logger recallLogger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(DefaultRecallService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        recallLogger.addAppender(appender);
+        try {
+            stubEmbeddingProfile(KB_ID, EMBED_PROFILE);
+            when(embeddingClient.embedBatch(eq(EMBED_PROFILE), anyList()))
+                    .thenReturn(List.of(QUERY_VECTOR, LL_VECTOR, HL_VECTOR));
+            when(knowledgeBaseApi.searchByVector(eq(KB_ID), eq(DISTANCE_THRESHOLD),
+                    eq(QUERY_VECTOR_LITERAL), eq(CHUNK_TOP_K)))
+                    .thenReturn(List.of(new ChunkScoreDTO(CHUNK_VECTOR, 0.92D)));
+            when(knowledgeBaseApi.searchByKeywords(eq(KB_ID), eq(QUERY), eq(CHUNK_TOP_K)))
+                    .thenThrow(new RuntimeException("全文检索扩展不可用"));
+            when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
+                    eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
+            when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
+                    eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
+
+            // when
+            RecallService.RecallOutcome outcome = recallService.recall(query(), mixConfig());
+
+            // then：BM25 降级为空、不向调用方抛异常，VECTOR 候选仍完整返回
+            List<RetrievalCandidate> candidates = outcome.candidates();
+            assertEquals(1, candidates.size());
+            assertEquals(CHUNK_VECTOR, candidates.get(0).chunkId());
+            assertEquals(RetrievalChannel.VECTOR, candidates.get(0).channel());
+            // then：全文通道不可用必须 ERROR 级留痕（含知识库标识），不得静默降级
+            assertTrue(appender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR
+                    && event.getFormattedMessage().contains("BM25 通道召回失败")
+                    && event.getFormattedMessage().contains(String.valueOf(KB_ID))));
+        } finally {
+            recallLogger.detachAppender(appender);
+        }
     }
 
     @Test
@@ -704,7 +746,7 @@ class DefaultRecallServiceTest {
         when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
                 eq(DISTANCE_THRESHOLD), eq(TOP_K)))
                 .thenReturn(List.of(relationHit("张三", "李四", 0.77D, List.of(CHUNK_GRAPH_3))));
-        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt())).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any())).thenReturn(List.of());
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "graph-1.md"),
                 CHUNK_GRAPH_3, graphChunkText(CHUNK_GRAPH_3, "graph-3.md")));
@@ -739,7 +781,7 @@ class DefaultRecallServiceTest {
                 eq(DISTANCE_THRESHOLD), eq(TOP_K)))
                 .thenReturn(List.of(relationHit("R1a", "R1b", 0.7D, List.of()),
                         relationHit("R2a", "R2b", 0.6D, List.of())));
-        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt())).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any())).thenReturn(List.of());
 
         // when
         RecallService.RecallOutcome outcome = recallService.recall(query(), mixConfig());
@@ -747,7 +789,7 @@ class DefaultRecallServiceTest {
         // then：候选集逐位交错 ll₁,hl₁,ll₂,hl₂…（每关系命中按源、目标顺序展开为端点流）
         List<String> expectedOrder = List.of("E1", "R1a", "E2", "R1b", "R2a", "R2b");
         ArgumentCaptor<List<String>> namesCaptor = ArgumentCaptor.forClass(List.class);
-        verify(retrievalRepository).relatedEdges(eq(KB_ID), namesCaptor.capture(), anyInt());
+        verify(retrievalRepository).relatedEdges(eq(KB_ID), namesCaptor.capture(), anyInt(), any());
         assertEquals(expectedOrder, namesCaptor.getValue());
         assertEquals(expectedOrder, entityNames(outcome.kgResult()));
     }
@@ -761,7 +803,7 @@ class DefaultRecallServiceTest {
                 .thenReturn(List.of(entityHit("A", 0.9D, List.of(CHUNK_GRAPH_1))));
         when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
                 eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
-        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt()))
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any()))
                 .thenReturn(List.of(graphEdgeWithChunks("A", "B", List.of(205L))));
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "graph-1.md"),
@@ -791,8 +833,8 @@ class DefaultRecallServiceTest {
         when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
                 eq(DISTANCE_THRESHOLD), eq(TOP_K)))
                 .thenReturn(List.of(relationHit("C", "D", 0.8D, List.of(CHUNK_GRAPH_3))));
-        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt()))
-                .thenReturn(List.of(new GraphEdgeHit("C", "D", 2, 5.0D, List.of(207L),
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any()))
+                .thenReturn(List.of(new GraphEdgeHit("C", "D", 2, 5.0D, null, List.of(207L),
                         "边描述", List.of(), List.of("edge.md"), CREATED_AT)));
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "graph-1.md"),
@@ -824,7 +866,7 @@ class DefaultRecallServiceTest {
         when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
                 eq(DISTANCE_THRESHOLD), eq(TOP_K)))
                 .thenReturn(List.of(relationHit("C", "D", 0.7D, List.of(CHUNK_GRAPH_1, CHUNK_GRAPH_3))));
-        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt())).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any())).thenReturn(List.of());
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "a.md"),
                 CHUNK_GRAPH_2, graphChunkText(CHUNK_GRAPH_2, "b.md"),
@@ -839,22 +881,23 @@ class DefaultRecallServiceTest {
     }
 
     @Test
-    void should_truncateGraphCandidatesToQuotaPrefix_when_recall_given_candidatesExceedChunkTopK() {
-        // given：入场配额（chunkTopK）收紧为 2，实体 A 账本 [201,202,203] 三块均单背书
+    void should_truncateGraphCandidatesToQuotaPrefix_when_recall_given_candidatesExceedGraphQueryCount() {
+        // given：入场配额（graphQueryCount，与实体/关系路共用单值）收紧为 2，实体 A 账本 [201,202,203] 三块均单背书
         stubGraphBase();
         when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
-                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                eq(DISTANCE_THRESHOLD), eq(GRAPH_ENTRY_QUOTA)))
                 .thenReturn(List.of(entityHit("A", 0.9D, List.of(CHUNK_GRAPH_1, CHUNK_GRAPH_2, CHUNK_GRAPH_3))));
         when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
-                eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
-        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt())).thenReturn(List.of());
+                eq(DISTANCE_THRESHOLD), eq(GRAPH_ENTRY_QUOTA))).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any())).thenReturn(List.of());
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "a.md"),
                 CHUNK_GRAPH_2, graphChunkText(CHUNK_GRAPH_2, "b.md"),
                 CHUNK_GRAPH_3, graphChunkText(CHUNK_GRAPH_3, "c.md")));
 
         // when
-        RecallService.RecallOutcome outcome = recallService.recall(queryWith(2, null, null), mixConfig());
+        RecallService.RecallOutcome outcome = recallService.recall(
+                queryWith(GRAPH_ENTRY_QUOTA, null, null), mixConfig());
 
         // then：GRAPH 候选截断为配额内前缀 [201,202]，第 3 块丢弃
         List<Long> graphChunks = outcome.candidates().stream()
@@ -879,7 +922,7 @@ class DefaultRecallServiceTest {
         when(retrievalRepository.findEntityAttributes(eq(KB_ID), eq(List.of("B"))))
                 .thenReturn(Map.of("B", new EntityHit("B", 0.0D, List.of(CHUNK_GRAPH_3),
                         "类型B", "描述B", List.of("docs/B.md"), CREATED_AT)));
-        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt())).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any())).thenReturn(List.of());
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "a.md"),
                 CHUNK_GRAPH_2, graphChunkText(CHUNK_GRAPH_2, "rel.md"),
@@ -915,7 +958,7 @@ class DefaultRecallServiceTest {
                 eq(DISTANCE_THRESHOLD), eq(TOP_K)))
                 .thenReturn(List.of(relationHit("A", "B", 0.7D, List.of(CHUNK_GRAPH_2))));
         when(retrievalRepository.findEntityAttributes(eq(KB_ID), anyList())).thenReturn(Map.of());
-        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt())).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any())).thenReturn(List.of());
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_2, graphChunkText(CHUNK_GRAPH_2, "rel.md")));
         ch.qos.logback.classic.Logger recallLogger =
@@ -950,26 +993,265 @@ class DefaultRecallServiceTest {
         // given：每源上限收紧为 2（实体 A 三块仅取 201/202），入场配额 2；关系 C-D 二次背书 201
         stubGraphBase();
         when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
-                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                eq(DISTANCE_THRESHOLD), eq(GRAPH_ENTRY_QUOTA)))
                 .thenReturn(List.of(entityHit("A", 0.9D,
                         List.of(CHUNK_GRAPH_1, CHUNK_GRAPH_2, CHUNK_GRAPH_3))));
         when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
-                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                eq(DISTANCE_THRESHOLD), eq(GRAPH_ENTRY_QUOTA)))
                 .thenReturn(List.of(relationHit("C", "D", 0.7D, List.of(CHUNK_GRAPH_1))));
-        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt())).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any())).thenReturn(List.of());
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "a.md"),
                 CHUNK_GRAPH_2, graphChunkText(CHUNK_GRAPH_2, "b.md")));
 
         // when：每源上限 2、配额 2、关联边上限走默认
-        RecallService.RecallOutcome outcome = recallService.recall(queryWith(2, null, 2), mixConfig());
+        RecallService.RecallOutcome outcome = recallService.recall(
+                queryWith(GRAPH_ENTRY_QUOTA, null, CUSTOM_CHUNK_LIMIT), mixConfig());
 
         // then：每源截断先于背书（201 被 A+关系双背书→排首），配额取前缀 [201,202]；
         //        A 的第 3 块 203 因每源上限被排除
         List<Long> graphChunks = outcome.candidates().stream()
                 .map(candidate -> candidate.chunkId()).toList();
         assertEquals(List.of(CHUNK_GRAPH_1, CHUNK_GRAPH_2), graphChunks);
-        verify(retrievalRepository).relatedEdges(eq(KB_ID), anyList(), eq(RetrievalConstants.GRAPH_EDGE_TOP));
+        verify(retrievalRepository).relatedEdges(eq(KB_ID), anyList(),
+                eq(RetrievalConstants.GRAPH_EDGE_TOP), any());
+    }
+
+    @Test
+    void should_useVectorCosine_when_toRelationHit_givenVectorSimilarityPresent() {
+        // given：边携带关系向量余弦 0.87，端点实体分 0.6 / 0.9，weight 10
+        stubGraphBase();
+        when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                .thenReturn(List.of(entityHit("A", 0.6D, List.of(CHUNK_GRAPH_1)),
+                        entityHit("B", 0.9D, List.of())));
+        when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any()))
+                .thenReturn(List.of(graphEdgeWithVector("A", "B", 0.87D, 10.0D, List.of())));
+        when(retrievalRepository.chunksOf(eq(KB_ID), anyList()))
+                .thenReturn(Map.of(CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "a.md")));
+
+        // when
+        RecallService.RecallOutcome outcome = recallService.recall(query(), mixConfig());
+
+        // then：边关系分取向量余弦（不取端点回退值 0.9），weight 仍原样展示
+        RelationHit relation = outcome.kgResult().relations().get(0);
+        assertEquals(0.87D, relation.score(), DELTA);
+        assertEquals(10.0D, relation.weight(), DELTA);
+    }
+
+    @Test
+    void should_keepSameRelationScore_when_toRelationHit_givenWeightChanged() {
+        // given：两条边向量余弦相同、weight 相差 10 倍
+        stubGraphBase();
+        when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                .thenReturn(List.of(entityHit("A", 0.6D, List.of(CHUNK_GRAPH_1)),
+                        entityHit("B", 0.7D, List.of()), entityHit("C", 0.7D, List.of())));
+        when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any()))
+                .thenReturn(List.of(graphEdgeWithVector("A", "B", 0.8D, 1.0D, List.of()),
+                        graphEdgeWithVector("A", "C", 0.8D, 10.0D, List.of())));
+        when(retrievalRepository.chunksOf(eq(KB_ID), anyList()))
+                .thenReturn(Map.of(CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "a.md")));
+
+        // when
+        RecallService.RecallOutcome outcome = recallService.recall(query(), mixConfig());
+
+        // then：分数与 weight 无关，仅由关系向量余弦决定
+        List<RelationHit> relations = outcome.kgResult().relations();
+        assertEquals(2, relations.size());
+        assertEquals(0.8D, relations.get(0).score(), DELTA);
+        assertEquals(0.8D, relations.get(1).score(), DELTA);
+    }
+
+    @Test
+    void should_useMaxEndpointScore_when_resolveFallback_givenBothEndpointsScored() {
+        // given：向量分为 null，两端实体 A/B 同时在实体候选集，分 0.6 / 0.8
+        stubGraphBase();
+        when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                .thenReturn(List.of(entityHit("A", 0.6D, List.of(CHUNK_GRAPH_1)),
+                        entityHit("B", 0.8D, List.of())));
+        when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any()))
+                .thenReturn(List.of(graphEdgeWithVector("A", "B", null, 99.0D, List.of())));
+        when(retrievalRepository.chunksOf(eq(KB_ID), anyList()))
+                .thenReturn(Map.of(CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "a.md")));
+
+        // when
+        RecallService.RecallOutcome outcome = recallService.recall(query(), mixConfig());
+
+        // then：两端都在候选集取 max，weight 不参与
+        assertEquals(0.8D, outcome.kgResult().relations().get(0).score(), DELTA);
+    }
+
+    @Test
+    void should_useSingleEndpointScore_when_resolveFallback_givenOnlyOneEndpointScored() {
+        // given：向量分为 null，仅源端点 A 在实体候选集（分 0.6），目标端点 B 无分
+        stubGraphBase();
+        stubSingleEdgeRecall("A", "B", null, 99.0D, List.of());
+
+        // when
+        RecallService.RecallOutcome outcome = recallService.recall(query(), mixConfig());
+
+        // then：只有一端带分数时取该端
+        assertEquals(0.6D, outcome.kgResult().relations().get(0).score(), DELTA);
+    }
+
+    @Test
+    void should_useZeroScore_when_resolveFallback_givenNoEndpointScored() {
+        // given：向量分为 null，边两端 X/Y 均不在实体候选集，weight 极大
+        stubGraphBase();
+        stubSingleEdgeRecall("X", "Y", null, 99.0D, List.of());
+
+        // when
+        RecallService.RecallOutcome outcome = recallService.recall(query(), mixConfig());
+
+        // then：两端都无分取 0.0，MUST NOT 回退 weight
+        assertFalse(outcome.kgResult().relations().isEmpty());
+        assertEquals(0.0D, outcome.kgResult().relations().get(0).score(), DELTA);
+        assertEquals(99.0D, outcome.kgResult().relations().get(0).weight(), DELTA);
+    }
+
+    @Test
+    void should_clipRelationScore_when_toRelationHit_givenOutOfRangeVectorSimilarity() {
+        // given：向量余弦越界 -0.05 / 1.2
+        stubGraphBase();
+        when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                .thenReturn(List.of(entityHit("A", 0.6D, List.of(CHUNK_GRAPH_1)),
+                        entityHit("B", 0.6D, List.of()), entityHit("C", 0.6D, List.of())));
+        when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any()))
+                .thenReturn(List.of(graphEdgeWithVector("A", "B", -0.05D, 1.0D, List.of()),
+                        graphEdgeWithVector("A", "C", 1.2D, 1.0D, List.of())));
+        when(retrievalRepository.chunksOf(eq(KB_ID), anyList()))
+                .thenReturn(Map.of(CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "a.md")));
+
+        // when
+        RecallService.RecallOutcome outcome = recallService.recall(query(), mixConfig());
+
+        // then：裁剪到 [0,1]
+        List<RelationHit> relations = outcome.kgResult().relations();
+        assertEquals(0.0D, relations.get(0).score(), DELTA);
+        assertEquals(1.0D, relations.get(1).score(), DELTA);
+    }
+
+    @Test
+    void should_keepGraphChannelOrder_when_recall_givenEdgeScoreChanged() {
+        // given：同一实体账本与边账本，仅边向量余弦从 0.9 变为 -0.9
+        stubGraphBase();
+        when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                .thenReturn(List.of(entityHit("A", 0.6D, List.of(CHUNK_GRAPH_1, CHUNK_GRAPH_2)),
+                        entityHit("B", 0.7D, List.of(CHUNK_GRAPH_3))));
+        when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any()))
+                .thenReturn(List.of(graphEdgeWithVector("A", "C", 0.9D, 1.0D, List.of(CHUNK_GRAPH_3))));
+        when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
+                CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "a.md"),
+                CHUNK_GRAPH_2, graphChunkText(CHUNK_GRAPH_2, "a.md"),
+                CHUNK_GRAPH_3, graphChunkText(CHUNK_GRAPH_3, "b.md")));
+
+        // when：正/负向量余弦两次召回
+        List<Long> positiveOrder = graphChunkIds(recallService.recall(query(), mixConfig()));
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any()))
+                .thenReturn(List.of(graphEdgeWithVector("A", "C", -0.9D, 1.0D, List.of(CHUNK_GRAPH_3))));
+        List<Long> negativeOrder = graphChunkIds(recallService.recall(query(), mixConfig()));
+
+        // then：图谱通道 chunk 顺序由背书频次与入场序决定，不随关系分变化
+        assertEquals(positiveOrder, negativeOrder);
+    }
+
+    @Test
+    void should_passNullRelayVector_when_recall_givenHlKeywordsEmpty() {
+        // given：ll 非空、hl 为空（无 hl 查询向量）
+        stubEmbeddingProfile(KB_ID, EMBED_PROFILE);
+        when(embeddingClient.embedBatch(eq(EMBED_PROFILE), anyList()))
+                .thenReturn(List.of(QUERY_VECTOR, LL_VECTOR));
+        when(knowledgeBaseApi.searchByVector(eq(KB_ID), eq(DISTANCE_THRESHOLD),
+                eq(QUERY_VECTOR_LITERAL), eq(CHUNK_TOP_K))).thenReturn(List.of());
+        when(knowledgeBaseApi.searchByKeywords(eq(KB_ID), eq(QUERY), eq(CHUNK_TOP_K))).thenReturn(List.of());
+        when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                .thenReturn(List.of(entityHit("A", 0.6D, List.of(CHUNK_GRAPH_1))));
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any()))
+                .thenReturn(List.of());
+        when(retrievalRepository.chunksOf(eq(KB_ID), anyList()))
+                .thenReturn(Map.of(CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "a.md")));
+
+        // when
+        recallService.recall(query(List.of("A"), List.of()), mixConfig());
+
+        // then：relatedEdges 收到 null 向量（边分全部走端点回退）
+        ArgumentCaptor<float[]> vectorCaptor = ArgumentCaptor.forClass(float[].class);
+        verify(retrievalRepository).relatedEdges(eq(KB_ID), anyList(), anyInt(), vectorCaptor.capture());
+        assertNull(vectorCaptor.getValue());
+    }
+
+    @Test
+    void should_passHlVector_when_recall_givenHlKeywordsPresent() {
+        // given：ll/hl 均非空
+        stubGraphBase();
+        when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                .thenReturn(List.of(entityHit("A", 0.6D, List.of(CHUNK_GRAPH_1))));
+        when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any()))
+                .thenReturn(List.of());
+        when(retrievalRepository.chunksOf(eq(KB_ID), anyList()))
+                .thenReturn(Map.of(CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "a.md")));
+
+        // when
+        recallService.recall(query(), mixConfig());
+
+        // then：relatedEdges 收到 hl 查询向量
+        ArgumentCaptor<float[]> vectorCaptor = ArgumentCaptor.forClass(float[].class);
+        verify(retrievalRepository).relatedEdges(eq(KB_ID), anyList(), anyInt(), vectorCaptor.capture());
+        assertSame(HL_VECTOR, vectorCaptor.getValue());
+    }
+
+    /**
+     * 桩化「单实体 + 单边」最小图谱链路：实体路命中 A（0.6）、关系路空、关联边 A-B。
+     * <p>目标端点 B 不在候选集时用于“仅一端带分数”；源端点不在候选集时用于“两端都无分”。</p>
+     *
+     * @param sourceName       边源端点
+     * @param targetName       边目标端点
+     * @param vectorSimilarity 边向量余弦分（可空）
+     * @param weight           边权重
+     * @param edgeChunkIds     边账本
+     */
+    private void stubSingleEdgeRecall(String sourceName, String targetName, Double vectorSimilarity,
+                                      Double weight, List<Long> edgeChunkIds) {
+        when(retrievalRepository.searchEntities(eq(KB_ID), eq(LL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K)))
+                .thenReturn(List.of(entityHit("A", 0.6D, List.of(CHUNK_GRAPH_1))));
+        when(retrievalRepository.searchRelations(eq(KB_ID), eq(HL_VECTOR),
+                eq(DISTANCE_THRESHOLD), eq(TOP_K))).thenReturn(List.of());
+        when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(), anyInt(), any()))
+                .thenReturn(List.of(graphEdgeWithVector(sourceName, targetName, vectorSimilarity,
+                        weight, edgeChunkIds)));
+        when(retrievalRepository.chunksOf(eq(KB_ID), anyList()))
+                .thenReturn(Map.of(CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "a.md")));
+    }
+
+    /**
+     * 取召回结果中 GRAPH 通道候选的 chunkId 序列（顺序即通道内排序结果）。
+     *
+     * @param outcome 召回产物
+     * @return GRAPH 通道 chunkId 列表
+     */
+    private static List<Long> graphChunkIds(RecallService.RecallOutcome outcome) {
+        return outcome.candidates().stream()
+                .filter(candidate -> RetrievalChannel.GRAPH.equals(candidate.channel()))
+                .map(RetrievalCandidate::chunkId).toList();
     }
 
     /**
@@ -994,21 +1276,39 @@ class DefaultRecallServiceTest {
      * @return 关联边记录
      */
     private static GraphEdgeHit graphEdgeWithChunks(String sourceName, String targetName, List<Long> chunkIds) {
-        return new GraphEdgeHit(sourceName, targetName, 3, 1.0D, chunkIds, "边描述",
+        return new GraphEdgeHit(sourceName, targetName, 3, 1.0D, null, chunkIds, "边描述",
                 List.of("边关键词"), List.of("docs/edge.md"), CREATED_AT);
     }
 
     /**
-     * 构造指定图谱上限与入场配额的检索请求（REST 不承载图谱上限，仅内部契约可设）。
+     * 构造携带关系向量余弦分的 1 跳边夹具（用于验证余弦优先 / 端点回退 / 裁剪 / weight 退出打分）。
      *
-     * @param chunkTopK           chunk 召回数量 / GRAPH 入场配额（可空走默认）
+     * @param sourceName       归一端点一
+     * @param targetName       归一端点二
+     * @param vectorSimilarity 关系向量余弦分，可空（{@code null} 表示走端点回退）
+     * @param weight           边权重（仅展示与选边，不得参与打分）
+     * @param chunkIds         边账本
+     * @return 关联边记录
+     */
+    private static GraphEdgeHit graphEdgeWithVector(String sourceName, String targetName,
+                                                    Double vectorSimilarity, Double weight,
+                                                    List<Long> chunkIds) {
+        return new GraphEdgeHit(sourceName, targetName, 3, weight, vectorSimilarity, chunkIds, "边描述",
+                List.of("边关键词"), List.of("docs/edge.md"), CREATED_AT);
+    }
+
+    /**
+     * 构造指定图谱数量与图谱上限的检索请求（REST 不承载通道数量与图谱上限，仅内部契约可设）。
+     *
+     * @param graphQueryCount     图谱通道召回数量 / GRAPH 入场配额（可空走默认）
      * @param graphEdgeTop        关联边 Top 上限（可空走默认）
      * @param graphEdgeChunkLimit 每源 chunk 上限（可空走默认）
      * @return 检索请求
      */
-    private static RetrievalQuery queryWith(Integer chunkTopK, Integer graphEdgeTop, Integer graphEdgeChunkLimit) {
+    private static RetrievalQuery queryWith(Integer graphQueryCount, Integer graphEdgeTop,
+                                            Integer graphEdgeChunkLimit) {
         return new RetrievalQuery(KB_ID, QUERY, HL_KEYWORDS, LL_KEYWORDS,
-                TOP_K, chunkTopK, null, null, null, List.of(), null,
+                CHUNK_TOP_K, CHUNK_TOP_K, graphQueryCount, null, null, null, List.of(), null,
                 graphEdgeTop, graphEdgeChunkLimit);
     }
 
@@ -1035,7 +1335,7 @@ class DefaultRecallServiceTest {
                 .thenReturn(List.of(relationHit(ENTITY_USER, ENTITY_ORDER, 0.77D,
                         List.of(CHUNK_GRAPH_3))));
         when(retrievalRepository.relatedEdges(eq(KB_ID), anyList(),
-                eq(RetrievalConstants.GRAPH_EDGE_TOP)))
+                eq(RetrievalConstants.GRAPH_EDGE_TOP), any()))
                 .thenReturn(List.of(graphEdge(ENTITY_USER, ENTITY_ORDER)));
         when(retrievalRepository.chunksOf(eq(KB_ID), anyList())).thenReturn(Map.of(
                 CHUNK_GRAPH_1, graphChunkText(CHUNK_GRAPH_1, "graph-1.md"),
@@ -1079,7 +1379,7 @@ class DefaultRecallServiceTest {
      * @return 关联边记录
      */
     private static GraphEdgeHit graphEdge(String sourceName, String targetName) {
-        return new GraphEdgeHit(sourceName, targetName, 3, 1.0D, List.of(), "边描述",
+        return new GraphEdgeHit(sourceName, targetName, 3, 1.0D, null, List.of(), "边描述",
                 List.of("边关键词"), List.of("docs/edge.md"), CREATED_AT);
     }
 
@@ -1132,7 +1432,7 @@ class DefaultRecallServiceTest {
      */
     private static RetrievalQuery query(Long kbId) {
         return new RetrievalQuery(kbId, QUERY, HL_KEYWORDS, LL_KEYWORDS,
-                TOP_K, CHUNK_TOP_K, null, null, null);
+                CHUNK_TOP_K, CHUNK_TOP_K, TOP_K, null, null, null, List.of(), null, null, null);
     }
 
     /**
@@ -1144,7 +1444,7 @@ class DefaultRecallServiceTest {
      */
     private static RetrievalQuery query(List<String> llKeywords, List<String> hlKeywords) {
         return new RetrievalQuery(KB_ID, QUERY, hlKeywords, llKeywords,
-                TOP_K, CHUNK_TOP_K, null, null, null);
+                CHUNK_TOP_K, CHUNK_TOP_K, TOP_K, null, null, null, List.of(), null, null, null);
     }
 
     /**
@@ -1156,7 +1456,7 @@ class DefaultRecallServiceTest {
      */
     private static RetrievalQuery queryWithGraphLimits(Integer graphEdgeTop, Integer graphEdgeChunkLimit) {
         return new RetrievalQuery(KB_ID, QUERY, HL_KEYWORDS, LL_KEYWORDS,
-                TOP_K, CHUNK_TOP_K, null, null, null, List.of(), null,
+                CHUNK_TOP_K, CHUNK_TOP_K, TOP_K, null, null, null, List.of(), null,
                 graphEdgeTop, graphEdgeChunkLimit);
     }
 
@@ -1180,7 +1480,7 @@ class DefaultRecallServiceTest {
      */
     private static RetrievalStrategyConfig mixConfig() {
         return new RetrievalStrategyConfig(RetrievalStrategyType.MIX,
-                null, null, SIMILAR_THRESHOLD, null, null);
+                null, null, SIMILAR_THRESHOLD, null, null, null);
     }
 
     /**
@@ -1190,7 +1490,7 @@ class DefaultRecallServiceTest {
      */
     private static RetrievalStrategyConfig naiveConfig() {
         return new RetrievalStrategyConfig(RetrievalStrategyType.NAIVE,
-                null, null, null, null, null);
+                null, null, null, null, null, null);
     }
 
     /**

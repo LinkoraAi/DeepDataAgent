@@ -41,7 +41,8 @@ import static org.mockito.Mockito.when;
  *
  * <p>覆盖场景：未启用（含策略配置/重排配置缺失）直出且不产生任何依赖交互；topK 截断；
  * <b>多候选只发生一次批量打分调用</b>；重排分降序（同分保持粗排相对次序）+ similarThreshold 过滤
- * + resultChunkCount 截断；批量打分异常/返回对齐违约降级直出粗排；chunk 正文缺失候选未打分置于尾部；
+ * （resultChunkCount 截断已上移编排层，本层不再截断，返回全部过滤后候选）；批量打分异常/返回对齐违约
+ * 降级直出粗排；chunk 正文缺失候选未打分置于尾部；
  * 全部候选无正文时不发起打分调用；kbId 与 chunkId 集合正确传递到正文回取；空候选边界。</p>
  *
  * @author DeepDataAgent
@@ -124,7 +125,7 @@ class DefaultRerankerTest {
                                                            Integer resultChunkCount) {
         RerankModelConfig rerankConfig = new RerankModelConfig(Boolean.TRUE, RERANK_PROFILE, topK);
         return new RetrievalStrategyConfig(RetrievalStrategyType.NAIVE, Boolean.FALSE,
-                resultChunkCount, similarThreshold, rerankConfig, null);
+                resultChunkCount, similarThreshold, rerankConfig, null, null);
     }
 
     /**
@@ -135,7 +136,7 @@ class DefaultRerankerTest {
     private static RetrievalStrategyConfig disabledStrategy() {
         RerankModelConfig rerankConfig = new RerankModelConfig(Boolean.FALSE, RERANK_PROFILE, 50);
         return new RetrievalStrategyConfig(RetrievalStrategyType.NAIVE, Boolean.FALSE,
-                5, 0.3F, rerankConfig, null);
+                5, 0.3F, rerankConfig, null, null);
     }
 
     /**
@@ -178,7 +179,7 @@ class DefaultRerankerTest {
         // given
         List<RankedChunk> candidates = List.of(coarse(1L, 0.9D));
         RetrievalStrategyConfig cfg = new RetrievalStrategyConfig(RetrievalStrategyType.NAIVE,
-                Boolean.FALSE, 5, 0.3F, null, null);
+                Boolean.FALSE, 5, 0.3F, null, null, null);
 
         // when
         List<RankedChunk> result = reranker.rerank(QUERY, candidates, cfg, KB_ID);
@@ -258,13 +259,14 @@ class DefaultRerankerTest {
     }
 
     /**
-     * 场景②-3：similarThreshold 过滤低分候选 + resultChunkCount 截断输出条数。
+     * 场景②-3：similarThreshold 过滤低分候选；resultChunkCount 不再于本层截断（截断已上移编排层）。
      */
     @Test
-    void should_filterByThresholdAndLimitResult_when_rerank_given_thresholdAndResultChunkCount() {
-        // given：topK 未配置按默认 50 全量打分；3 打分后 0.10 低于阈值 0.3 被过滤
+    void should_filterByThresholdWithoutTruncation_when_rerank_given_thresholdAndResultChunkCount() {
+        // given：topK 未配置按默认 50 全量打分；3 打分后 0.10 低于阈值 0.3 被过滤；
+        //        resultChunkCount=1 收紧亦不触发本层截断（历史截断已上移编排层统一收口）
         List<RankedChunk> candidates = List.of(coarse(1L, 0.9D), coarse(2L, 0.8D), coarse(3L, 0.7D));
-        RetrievalStrategyConfig cfg = enabledStrategy(null, 0.3F, 2);
+        RetrievalStrategyConfig cfg = enabledStrategy(null, 0.3F, 1);
         when(knowledgeBaseApi.findChunksByKbIdAndChunkIds(eq(KB_ID), anyCollection()))
                 .thenReturn(List.of(chunkWithContent(1L, PASSAGE_1), chunkWithContent(2L, PASSAGE_2),
                         chunkWithContent(3L, PASSAGE_3)));
@@ -274,7 +276,7 @@ class DefaultRerankerTest {
         // when
         List<RankedChunk> result = reranker.rerank(QUERY, candidates, cfg, KB_ID);
 
-        // then：3 全量打分；0.10 被阈值剔除；按 resultChunkCount 保留 2 条
+        // then：3 全量打分；0.10 被阈值剔除；过滤后 2 条全量返回（不按 resultChunkCount 截断）
         verify(rerankClient, times(1)).scoreBatch(eq(RERANK_PROFILE), eq(QUERY), anyList());
         assertEquals(2, result.size());
         assertEquals(2L, result.get(0).chunkId());
@@ -284,10 +286,10 @@ class DefaultRerankerTest {
     }
 
     /**
-     * 场景②-4：resultChunkCount=1 时只输出重排最优候选（截断边界）。
+     * 场景②-4：resultChunkCount=1 时本层不再截断（截断已上移编排层），全量返回重排结果。
      */
     @Test
-    void should_returnSingleChunk_when_rerank_given_resultChunkCountOne() {
+    void should_returnAllChunks_when_rerank_given_resultChunkCountOne() {
         // given
         List<RankedChunk> candidates = List.of(coarse(1L, 0.9D), coarse(2L, 0.8D));
         RetrievalStrategyConfig cfg = enabledStrategy(50, 0.0F, 1);
@@ -299,9 +301,10 @@ class DefaultRerankerTest {
         // when
         List<RankedChunk> result = reranker.rerank(QUERY, candidates, cfg, KB_ID);
 
-        // then
-        assertEquals(1, result.size());
+        // then：全部候选按重排分降序返回（截断由编排层统一收口，本层不截断）
+        assertEquals(2, result.size());
         assertEquals(2L, result.get(0).chunkId());
+        assertEquals(1L, result.get(1).chunkId());
     }
 
     /**

@@ -46,4 +46,12 @@ public class GraphEdgeProjection {
 
     /** 图行创建时间（列级 {@code created_at}） */
     private OffsetDateTime createdAt;
+
+    /**
+     * 关系向量余弦分（{@code 1 - (content_vector <=> hl查询向量)}，SQL 在 {@code LIMIT} 之后计算）。
+     * <p>可空：{@code null} 表示本次无 hl 查询向量、该边在 {@code relation_info_vector} 无行，
+     * 或 {@code content_vector} 为 {@code NULL}；届时由服务层回退到端点实体余弦分。
+     * 该值 MUST NOT 以 {@code weight} 兜底。</p>
+     */
+    private Double relationScore;
 }

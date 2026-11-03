@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.DocumentStatus;
+import com.linkroa.deepdataagent.knowledgebase.infrastructure.persistence.entity.ChunkBm25Hit;
 import com.linkroa.deepdataagent.knowledgebase.infrastructure.persistence.entity.ChunkEntity;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -35,6 +36,52 @@ public interface ChunkMapper extends BaseMapper<ChunkEntity> {
      */
     String RETRIEVAL_VISIBLE_DOCUMENT_SUB_QUERY = "SELECT id FROM document WHERE status = '"
             + DocumentStatus.PROCESSED.name() + "'";
+
+    /**
+     * BM25 全文索引名单点常量。
+     * <p>与 {@code V1__init_full_schema.sql} 的 {@code CREATE INDEX idx_chunk_bm25_content ... USING bm25}
+     * 同名；索引改名 / 迁移分区时必须两处同步。</p>
+     */
+    String BM25_INDEX_NAME = "idx_chunk_bm25_content";
+
+    /**
+     * BM25 通道全文检索：按关键词命中切片并返回相关度分。
+     * <p>分词与语料统计全部由 {@code idx_chunk_bm25_content}（{@code text_config=public.zhparser_cfg}）
+     * 在索引内部承载；查询侧通过 {@link #BM25_INDEX_NAME} 显式指名索引，
+     * 与写入侧共用同一分词口径（真库实测：查询分词完全由索引 text_config 决定，无需传配置名）。</p>
+     * <p><b>分值口径</b>：pg_textsearch 的 {@code <@>} 返回负分（越小越相关），
+     * 本查询在 SQL 出口取反为「越大越相关」，直接供下游 min-max 归一与 RRF 融合使用。
+     * 注意 IDF 不截断：高 df 词（df→N）的 BM25 可为负，故分值<b>不保证非负</b>，
+     * 仅保证降序语义。{@code ORDER BY} 保留未取反的原始表达式，以走索引的有序扫描
+     * （Block-Max WAND top-k，真库 EXPLAIN 已验证）。</p>
+     * <p><b>零分占位剔除</b>：切片正文 UPDATE 后其 docid 的旧词条以恰为 0 的占位分残留
+     * （VACUUM 不清除，直至 compaction），故以 {@code <> 0} 剔除占位——IDF 可为负，
+     * 禁用 {@code > 0}（会把高 df 词的真实命中一并丢掉，真库实测复现）。
+     * DELETE 路径无占位残留，索引随行删除立即收敛。</p>
+     * <p><b>可见性过滤</b>：仅返回「所属文档状态命中 {@code documentStatus}」的切片；
+     * 摄入未完成的文档其切片虽已落库，但图谱与向量尚未就绪，SHALL NOT 占用召回名额。</p>
+     * <p>正文为空 / NULL 的切片不产生词条，不会出现在结果中。</p>
+     *
+     * @param kbId           所属知识库ID
+     * @param query          用户关键词（或改写后 query）
+     * @param limit          返回上限 topN（必填，避免无 LIMIT 时按扩展默认批大小评分）
+     * @param documentStatus 可见性过滤的文档状态取值（非空，由调用方以受控枚举名传入）
+     * @return 命中切片（score 为取反后的 BM25 分，降序；可为负，零分占位已剔除）
+     */
+    @Select("SELECT c.id AS chunk_id, "
+            + "-(c.chunk_content <@> to_bm25query(#{query}, '" + BM25_INDEX_NAME + "')) AS score "
+            + "FROM chunk c "
+            + "WHERE c.kb_id = #{kbId} "
+            + "AND c.chunk_content IS NOT NULL "
+            + "AND -(c.chunk_content <@> to_bm25query(#{query}, '" + BM25_INDEX_NAME + "')) <> 0 "
+            + "AND EXISTS (SELECT 1 FROM document d "
+            + "WHERE d.id = c.document_id AND d.status = #{documentStatus}) "
+            + "ORDER BY c.chunk_content <@> to_bm25query(#{query}, '" + BM25_INDEX_NAME + "') "
+            + "LIMIT #{limit}")
+    List<ChunkBm25Hit> searchByBm25(@Param("kbId") Long kbId,
+                                    @Param("query") String query,
+                                    @Param("limit") int limit,
+                                    @Param("documentStatus") String documentStatus);
 
     /**
      * 批量插入切片（多值 INSERT）。

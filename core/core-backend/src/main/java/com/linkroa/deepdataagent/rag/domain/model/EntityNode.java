@@ -58,7 +58,7 @@ public record EntityNode(Long kbId, String entityName, EntityProperties properti
         if (ObjectUtils.isEmpty(other)) {
             return this;
         }
-        if (!Objects.equals(kbId, other.kbId) || !StringUtils.equals(entityName, other.entityName)) {
+        if (!Objects.equals(kbId, other.kbId) || !Objects.equals(entityName, other.entityName)) {
             throw new IllegalArgumentException("仅同知识库同名实体可合并");
         }
         return new EntityNode(kbId, entityName, properties.merge(other.properties));

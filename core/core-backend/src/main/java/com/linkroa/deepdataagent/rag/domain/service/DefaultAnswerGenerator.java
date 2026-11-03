@@ -397,7 +397,8 @@ public class DefaultAnswerGenerator implements AnswerGenerator {
      * 要素组成与顺序与改动前逐字一致，仅取值来源由全局配置改为知识库配置。</p>
      *
      * @param cfg            检索策略配置（mode / enable_rerank 要素来源）
-     * @param q              检索内部执行请求（top_k / chunk_top_k / 各 token 预算 / 关键词要素来源）
+     * @param q              检索内部执行请求（vector_query_count / bm25_query_count / graph_query_count /
+     *                       各 token 预算 / 关键词要素来源）
      * @param query          实际送入 LLM 的用户问题（query 要素）
      * @param renderedPrompt 渲染后的提示词全文（user_prompt 要素）
      * @param images         通路 B 实际直读的原图载荷（为空表示纯文本请求，不追加图片要素，保持基线键逐字节不变）
@@ -406,36 +407,38 @@ public class DefaultAnswerGenerator implements AnswerGenerator {
      */
     private String buildCacheKey(RetrievalStrategyConfig cfg, RetrievalQuery q, String query,
                                  String renderedPrompt, List<LlmImage> images, String chatProfileId) {
-        List<String> parts = new ArrayList<>(15);
+        List<String> parts = new ArrayList<>(16);
         // 1. mode：检索策略类型（MIX / NAIVE）
         parts.add(ObjectUtils.isEmpty(cfg.strategyType()) ? StringUtils.EMPTY : cfg.strategyType().name());
         // 2. query：实际送入 LLM 的用户问题
         parts.add(StringUtils.defaultString(query));
         // 3. response_type：答案形态（本期恒为默认值，与 AnswerProfile 默认变量同源）
         parts.add(AnswerProfile.DEFAULT_RESPONSE_TYPE);
-        // 4. top_k：每通道向量召回数量
-        parts.add(stringifyNumber(q.topK()));
-        // 5. chunk_top_k：切片召回数量
-        parts.add(stringifyNumber(q.chunkTopK()));
-        // 6. max_total_tokens：上下文总 token 预算
+        // 4. vector_query_count：向量通道召回数量（库级通道数量配置的运行时取值）
+        parts.add(stringifyNumber(q.vectorQueryCount()));
+        // 5. bm25_query_count：BM25 通道召回数量
+        parts.add(stringifyNumber(q.bm25QueryCount()));
+        // 6. graph_query_count：图谱通道召回数量（实体/关系路与入场配额共用单值）
+        parts.add(stringifyNumber(q.graphQueryCount()));
+        // 7. max_total_tokens：上下文总 token 预算
         parts.add(stringifyNumber(q.maxTotalTokens()));
-        // 7. max_entity_tokens：实体上下文 token 预算
+        // 8. max_entity_tokens：实体上下文 token 预算
         parts.add(stringifyNumber(q.maxEntityTokens()));
-        // 8. max_relation_tokens：关系上下文 token 预算
+        // 9. max_relation_tokens：关系上下文 token 预算
         parts.add(stringifyNumber(q.maxRelationTokens()));
-        // 9. hl_keywords：高层关键词规范化串
+        // 10. hl_keywords：高层关键词规范化串
         parts.add(normalizeKeywords(q.hlKeywords()));
-        // 10. ll_keywords：低层关键词规范化串
+        // 11. ll_keywords：低层关键词规范化串
         parts.add(normalizeKeywords(q.llKeywords()));
-        // 11. user_prompt：渲染后的提示词全文
+        // 12. user_prompt：渲染后的提示词全文
         parts.add(StringUtils.defaultString(renderedPrompt));
-        // 12. enable_rerank：重排开关（无重排配置视为关闭）
+        // 13. enable_rerank：重排开关（无重排配置视为关闭）
         parts.add(resolveRerankFlag(cfg));
-        // 13. enable_content_headings：本期无该配置项，恒为缺省占位
+        // 14. enable_content_headings：本期无该配置项，恒为缺省占位
         parts.add(CONTENT_HEADINGS_ABSENT);
-        // 14. llmIdentity：CHAT 模型 profileId
+        // 15. llmIdentity：CHAT 模型 profileId
         parts.add(StringUtils.defaultString(chatProfileId));
-        // 15.（可选）图片集合摘要：通路 B 带图作答时追加，防止与无图/不同图集合互串缓存；无图时不追加
+        // 16.（可选）图片集合摘要：通路 B 带图作答时追加，防止与无图/不同图集合互串缓存；无图时不追加
         if (CollectionUtils.isNotEmpty(images)) {
             parts.add(imageSetDigest(images));
         }

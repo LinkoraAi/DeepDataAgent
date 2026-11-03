@@ -24,6 +24,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 文档判重组件（应用层）。
@@ -270,11 +271,11 @@ public class DocumentDedupService {
     private List<String> resolveMatchAxes(DedupMatchRule rule, String queryName, String queryHash, Document duplicate) {
         List<String> axes = new ArrayList<>(2);
         if (needNameAxis(rule) && StringUtils.isNotBlank(queryName)
-                && StringUtils.equals(queryName, duplicate.fileName())) {
+                && Objects.equals(queryName, duplicate.fileName())) {
             axes.add(AXIS_FILE_NAME);
         }
         if (needHashAxis(rule) && StringUtils.isNotBlank(queryHash)
-                && StringUtils.equals(queryHash, duplicate.fileContentHash())) {
+                && Objects.equals(queryHash, duplicate.fileContentHash())) {
             axes.add(AXIS_CONTENT_HASH);
         }
         if (axes.isEmpty()) {

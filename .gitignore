@@ -70,3 +70,5 @@ AGENTS.md
 .ua/tmp/
 
 /.test/
+
+e2e/

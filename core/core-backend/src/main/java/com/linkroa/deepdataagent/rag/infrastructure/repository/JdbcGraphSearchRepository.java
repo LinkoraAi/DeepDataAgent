@@ -68,6 +68,12 @@ public class JdbcGraphSearchRepository implements RetrievalRepository {
     /** pgvector 字面量分量分隔符 */
     private static final String VECTOR_COMPONENT_SEPARATOR = ",";
 
+    /**
+     * {@code relation_info_vector.content_vector} 的建表固定维度（{@code vector(1024)}）。
+     * <p>仅用于 hl 查询向量维度不一致时的 WARN 提示，不参与任何计算或过滤。</p>
+     */
+    private static final int EXPECTED_CONTENT_VECTOR_DIMENSION = 1024;
+
     private final EntityInfoVectorMapper entityInfoVectorMapper;
     private final RelationInfoVectorMapper relationInfoVectorMapper;
     private final RelationEdgeGraphMapper relationEdgeGraphMapper;
@@ -152,21 +158,31 @@ public class JdbcGraphSearchRepository implements RetrievalRepository {
      * 1 跳关联边查询：实体候选集经度数 CTE Mapper 按「度数 + 权重」双键降序取边，
      * 端点对已由 SQL 侧 LEAST/GREATEST 无向归一并按归一对折叠历史双向残留行（取最新一行属性），
      * 本层仅做投影 → 值对象转换（边记录自带 chunk 账本，无需回查关系向量）。
+     * <p>边分数取 SQL 在 {@code LIMIT} 之后计算的关系向量余弦（{@code relation_score}），
+     * 原样映射到 {@link GraphEdgeHit#vectorSimilarity()}，<b>不做拆箱</b>（{@code null} 即
+     * “向量不可用”，交由服务层回退端点余弦）。hl 查询向量非空但查询失败时（如维度与
+     * {@code content_vector} 不一致导致 {@code <=>} 抛 SQL 异常），去掉向量参数重试一次，
+     * 使 {@code relation_score} 退化为 {@code NULL} 而不是让整个 GRAPH 通道降级为 MISSING。</p>
+     *
+     * @param kbId        所属知识库ID（单库隔离）
+     * @param entityNames 实体候选集名称列表（为空时短路返回空表）
+     * @param limit       返回上限
+     * @param queryVector hl 查询向量，可空；{@code null} 表示本次无 hl 关键词
+     * @return 关联边记录列表（{@code vectorSimilarity} 可空）
      */
     @Override
-    public List<GraphEdgeHit> relatedEdges(Long kbId, List<String> entityNames, int limit) {
+    public List<GraphEdgeHit> relatedEdges(Long kbId, List<String> entityNames, int limit, float[] queryVector) {
         if (CollectionUtils.isEmpty(entityNames) || limit <= 0) {
             return List.of();
         }
-        List<GraphEdgeProjection> rows =
-                relationEdgeGraphMapper.searchRelatedEdgesByDegree(kbId, entityNames, limit);
+        List<GraphEdgeProjection> rows = queryRelatedEdges(kbId, entityNames, limit, queryVector);
         if (CollectionUtils.isEmpty(rows)) {
             return List.of();
         }
         List<GraphEdgeHit> edges = new ArrayList<>(rows.size());
         for (GraphEdgeProjection row : rows) {
             edges.add(new GraphEdgeHit(row.getSourceName(), row.getTargetName(),
-                    safeDegree(row.getEdgeDegree()), row.getWeight(),
+                    safeDegree(row.getEdgeDegree()), row.getWeight(), row.getRelationScore(),
                     RagGraphPersistenceConvert.INSTANCE.jsonToLongListQuietly(row.getChunkIdsRaw()),
                     row.getDescription(),
                     RagGraphPersistenceConvert.INSTANCE.jsonToStringListQuietly(row.getKeywordsRaw()),
@@ -174,6 +190,35 @@ public class JdbcGraphSearchRepository implements RetrievalRepository {
                     row.getCreatedAt()));
         }
         return edges;
+    }
+
+    /**
+     * 1 跳关联边查询的执行壳：hl 向量可用时带向量取分，失败则去参重试一次。
+     * <p>去参重试只针对“带向量查询失败”这一种情形（典型为查询向量维度与
+     * {@code content_vector(1024)} 不一致导致 {@code <=>} 抛 SQL 异常），重试仅一次，
+     * 避免放大数据库压力；重试仍失败时按原异常抛出，由 {@code recallGraphSafely} 统一降级。
+     * 重试前记录 WARN（含 kbId、查询向量长度与期望维度），便于定位向量口径漂移。</p>
+     *
+     * @param kbId        所属知识库ID
+     * @param entityNames 实体候选集名称列表（非空）
+     * @param limit       返回上限
+     * @param queryVector hl 查询向量，可空
+     * @return 关联边投影列表
+     */
+    private List<GraphEdgeProjection> queryRelatedEdges(Long kbId, List<String> entityNames, int limit,
+                                                        float[] queryVector) {
+        if (ObjectUtils.isEmpty(queryVector)) {
+            return relationEdgeGraphMapper.searchRelatedEdgesByDegree(kbId, entityNames, limit, null);
+        }
+        String vectorLiteral = toVectorLiteral(queryVector);
+        try {
+            return relationEdgeGraphMapper.searchRelatedEdgesByDegree(kbId, entityNames, limit, vectorLiteral);
+        } catch (RuntimeException e) {
+            log.warn("1 跳关联边向量打分失败（疑似查询向量与 content_vector 维度不一致），去参重试一次: "
+                            + "kbId={} queryVectorLength={} expectedContentVectorDimension={}",
+                    kbId, queryVector.length, EXPECTED_CONTENT_VECTOR_DIMENSION, e);
+            return relationEdgeGraphMapper.searchRelatedEdgesByDegree(kbId, entityNames, limit, null);
+        }
     }
 
     /**

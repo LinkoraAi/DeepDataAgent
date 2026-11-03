@@ -238,6 +238,30 @@ class DefaultFusionServiceTest {
         assertThrows(IllegalArgumentException.class, () -> fusionService.fuse(channelResults, null));
     }
 
+    @Test
+    void should_keepRrfResultUnchanged_when_fuse_givenGraphScoresChanged() {
+        // given：GRAPH 通道顺序相同、通道内分数由 [0.9,0.1] 变为 [0.1,0.9]
+        Map<RetrievalChannel, List<RetrievalCandidate>> highFirst = new EnumMap<>(RetrievalChannel.class);
+        highFirst.put(RetrievalChannel.GRAPH, List.of(
+                candidate(CHUNK_1, RetrievalChannel.GRAPH, 0.9D, null),
+                candidate(CHUNK_2, RetrievalChannel.GRAPH, 0.1D, null)));
+        Map<RetrievalChannel, List<RetrievalCandidate>> lowFirst = new EnumMap<>(RetrievalChannel.class);
+        lowFirst.put(RetrievalChannel.GRAPH, List.of(
+                candidate(CHUNK_1, RetrievalChannel.GRAPH, 0.1D, null),
+                candidate(CHUNK_2, RetrievalChannel.GRAPH, 0.9D, null)));
+
+        // when
+        List<RankedChunk> before = fusionService.fuse(highFirst, rrfConfig());
+        List<RankedChunk> after = fusionService.fuse(lowFirst, rrfConfig());
+
+        // then：RRF 只消费通道内排名，边打分数值变化不影响融合结果
+        assertEquals(before.size(), after.size());
+        for (int index = 0; index < before.size(); index++) {
+            assertEquals(before.get(index).chunkId(), after.get(index).chunkId());
+            assertEquals(before.get(index).score(), after.get(index).score(), DELTA);
+        }
+    }
+
     /**
      * 构造 RRF 融合配置（rrfK=60）。
      *

@@ -1148,17 +1148,18 @@ class DefaultAnswerGeneratorTest {
      */
     private RetrievalStrategyConfig strategyConfig(RetrievalStrategyType strategyType, Integer resultChunkCount) {
         return new RetrievalStrategyConfig(strategyType, Boolean.TRUE, resultChunkCount, 0.2F,
-                new RerankModelConfig(Boolean.FALSE, "model-rerank-001", 50), null);
+                new RerankModelConfig(Boolean.FALSE, "model-rerank-001", 50), null, null);
     }
 
     /**
-     * 构造检索内部执行请求（缓存键要素齐备且取值确定）。
+     * 构造检索内部执行请求（缓存键要素齐备且取值确定，通道数量取历史 topK/chunkTopK 的
+     * 等价映射值：vector/bm25=10、graph=20，供键要素参与且可复现）。
      *
      * @return 检索请求
      */
     private RetrievalQuery retrievalQuery() {
         return new RetrievalQuery(KB_ID, QUERY, List.of("营收"), List.of("公司", "年报"),
-                20, 10, 4096, 2000, 3000);
+                10, 10, 20, 4096, 2000, 3000, List.of(), null, null, null);
     }
 
     /**
@@ -1170,7 +1171,7 @@ class DefaultAnswerGeneratorTest {
      */
     private RetrievalQuery retrievalQuery(RetrievalMultimodalOptions options) {
         return new RetrievalQuery(KB_ID, QUERY, List.of("营收"), List.of("公司", "年报"),
-                20, 10, 4096, 2000, 3000, List.of(), options, null, null);
+                10, 10, 20, 4096, 2000, 3000, List.of(), options, null, null);
     }
 
     /**

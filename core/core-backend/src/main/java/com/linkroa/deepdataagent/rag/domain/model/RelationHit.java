@@ -17,10 +17,11 @@ import java.util.List;
  *
  * @param sourceName 源实体名称
  * @param targetName 目标实体名称
- * @param score      通道内分数：关系路命中为向量相似度（余弦距离换算，越高越相关）；
- *                   关联边转换记录为边权重（口径见
- *                   {@code DefaultRecallService#toRelationView}，仅影响 GRAPH 通道内
- *                   WEIGHTED_SUM 的 min-max 归一，RRF 只消费排名故无感）
+ * @param score      通道内分数（落在 [0,1]）：关系路命中为向量相似度（余弦距离换算，越高越相关）；
+ *                   关联边转换记录优先为关系向量余弦（{@code 1 - (content_vector <=> hl向量)}），
+ *                   向量不可用时回退端点实体余弦，边 {@code weight} 不再参与打分
+ *                   （口径见 {@code DefaultRecallService#toRelationView}；该分数决定 GRAPH 通道内
+ *                   WEIGHTED_SUM 的候选排序，RRF 只消费排名故无感）
  * @param chunkIds   关联 chunk 账本（向量表 {@code chunk_ids} 权威，空账本回退图行
  *                   {@code properties.sourceIds} 整数组；两源皆空为空列表）
  * @param description 关系描述（图行 {@code properties.description}，可为 null）

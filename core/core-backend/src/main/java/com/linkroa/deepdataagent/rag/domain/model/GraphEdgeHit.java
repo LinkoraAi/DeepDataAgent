@@ -17,7 +17,11 @@ import java.util.List;
  * @param sourceName 源端点实体名（无向归一后的字典序较小者）
  * @param targetName 目标端点实体名（无向归一后的字典序较大者）
  * @param edgeDegree 边度数（两端节点度数之和，实时现算，仅作通道内排序键）
- * @param weight     边权重（图行 {@code properties.weight}，缺失归一 {@link RelationHit#DEFAULT_WEIGHT}）
+ * @param weight     边权重（图行 {@code properties.weight}，缺失归一 {@link RelationHit#DEFAULT_WEIGHT}；
+ *                   仅用于选边排序与 {@link RelationHit#weight()} 展示，MUST NOT 作为通道分数）
+ * @param vectorSimilarity 关系向量余弦分（{@code 1 - (content_vector <=> hl查询向量)}，可空）。
+ *                   {@code null} 表示 hl 为空 / 无向量行 / {@code content_vector} 为 {@code NULL}，
+ *                   由服务层回退端点实体余弦；MUST NOT 回落 {@code weight}
  * @param chunkIds   关联 chunk 账本（{@code relation_info_vector.chunk_ids} 权威，
  *                   空账本回退边行 {@code properties.sourceIds} 整数组；两源皆空为空列表）
  * @param description 边描述（图行 {@code properties.description}，可为 null）
@@ -31,6 +35,7 @@ public record GraphEdgeHit(
         String targetName,
         int edgeDegree,
         Double weight,
+        Double vectorSimilarity,
         List<Long> chunkIds,
         String description,
         List<String> keywords,
@@ -41,6 +46,8 @@ public record GraphEdgeHit(
     /**
      * 紧凑构造器：列表分量 null 归一（并剔除空元素）、权重缺失归一
      * {@link RelationHit#DEFAULT_WEIGHT}；文本与时间分量维持 null 容忍（渲染侧按空串落）。
+     * <p>{@code vectorSimilarity} <b>不做兜底</b>：{@code null} 即“向量不可用”语义，
+     * 由服务层按端点余弦回退，禁止在此回填 {@code weight}。</p>
      */
     public GraphEdgeHit {
         chunkIds = ObjectUtils.isEmpty(chunkIds) ? List.of()

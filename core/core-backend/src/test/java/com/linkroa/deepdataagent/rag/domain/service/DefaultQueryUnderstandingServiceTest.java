@@ -353,7 +353,7 @@ class DefaultQueryUnderstandingServiceTest {
     void should_returnEmptyPairAndSkipLlm_when_extract_given_naiveStrategy() {
         // given：NAIVE 策略不做关键词提取
         RetrievalStrategyConfig cfg = new RetrievalStrategyConfig(
-                RetrievalStrategyType.NAIVE, Boolean.TRUE, null, null, null, null);
+                RetrievalStrategyType.NAIVE, Boolean.TRUE, null, null, null, null, null);
 
         // when
         KeywordPair pair = service.extract(QUERY, List.of(), List.of(), cfg, KB_ID);
@@ -855,7 +855,8 @@ class DefaultQueryUnderstandingServiceTest {
      * @return 检索策略配置
      */
     private static RetrievalStrategyConfig mixConfig(Boolean rewriteQuestion) {
-        return new RetrievalStrategyConfig(RetrievalStrategyType.MIX, rewriteQuestion, null, null, null, null);
+        return new RetrievalStrategyConfig(RetrievalStrategyType.MIX, rewriteQuestion, null, null, null,
+                null, null);
     }
 
     /**

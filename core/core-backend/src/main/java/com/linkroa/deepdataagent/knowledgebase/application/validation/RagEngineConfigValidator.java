@@ -10,6 +10,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * RAG 引擎配置应用级校验器（知识库创建 / 更新入口共用，仅校验不回写原文）。
@@ -88,7 +89,7 @@ public final class RagEngineConfigValidator {
         if (StringUtils.isBlank(raw)) {
             return;
         }
-        if (!StringUtils.equals(RagEngineType.DOCUMENT_ENGINE.name(),
+        if (!Objects.equals(RagEngineType.DOCUMENT_ENGINE.name(),
                 StringUtils.trim(raw).toUpperCase(Locale.ROOT))) {
             throw new DeepDataAgentException("本期不提供该引擎类型：当前值=" + raw
                     + "，本期仅支持 " + RagEngineType.DOCUMENT_ENGINE.name());

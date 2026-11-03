@@ -86,7 +86,7 @@ public record EntityInfoVector(
         if (ObjectUtils.isEmpty(other)) {
             return this;
         }
-        if (!Objects.equals(kbId, other.kbId) || !StringUtils.equals(entityName, other.entityName)) {
+        if (!Objects.equals(kbId, other.kbId) || !Objects.equals(entityName, other.entityName)) {
             throw new IllegalArgumentException("仅同知识库同名实体向量可合并");
         }
         Set<Long> merged = new LinkedHashSet<>(chunkIds);

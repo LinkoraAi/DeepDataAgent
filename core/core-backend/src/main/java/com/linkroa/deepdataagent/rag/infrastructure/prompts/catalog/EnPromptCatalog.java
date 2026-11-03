@@ -304,6 +304,7 @@ public final class EnPromptCatalog {
     Format: {equation_format}
 
     Focus on providing mathematical insights and explaining the equation's significance.
+    Use a semantic entity_name; do not return file names, equation numbers such as figure_30_1, or bare numeric fragments unless they are the actual title.
     """;
     /** 模板 <code>equation_prompt_with_context</code> 正文（迁移自 prompts/document-engine/en/equation-prompt.md） */
     public static final String EQUATION_PROMPT_WITH_CONTEXT = """
@@ -336,6 +337,7 @@ public final class EnPromptCatalog {
     Format: {equation_format}
 
     Focus on providing mathematical insights and explaining the equation's significance within the broader context.
+    Use a semantic entity_name; do not return file names, equation numbers such as figure_30_1, or bare numeric fragments unless they are the actual title.
     """;
     /** 模板 <code>fail_response</code> 正文（迁移自 prompts/document-engine/en/fail-response.md） */
     public static final String FAIL_RESPONSE = """
@@ -366,6 +368,7 @@ public final class EnPromptCatalog {
     Content: {content}
 
     Focus on extracting meaningful information that would be useful for knowledge retrieval.
+    Use a semantic entity_name; do not return file names, figure or content numbers such as figure_30_1, or bare numeric fragments unless they are the actual title.
     """;
     /** 模板 <code>generic_prompt_with_context</code> 正文（迁移自 prompts/document-engine/en/generic-prompt.md） */
     public static final String GENERIC_PROMPT_WITH_CONTEXT = """
@@ -394,6 +397,7 @@ public final class EnPromptCatalog {
     Content: {content}
 
     Focus on extracting meaningful information that would be useful for knowledge retrieval and understanding the content's role in the broader context.
+    Use a semantic entity_name; do not return file names, figure or content numbers such as figure_30_1, or bare numeric fragments unless they are the actual title.
     """;
     /** 模板 <code>keywords_extraction</code> 正文（迁移自 prompts/document-engine/en/keywords-extraction.md） */
     public static final String KEYWORDS_EXTRACTION = """
@@ -744,6 +748,7 @@ public final class EnPromptCatalog {
     Footnotes: {table_footnote}
 
     Focus on extracting meaningful insights and relationships from the tabular data.
+    Use a semantic entity_name; do not return file names, figure or table numbers such as figure_30_1, or bare numeric fragments unless they are the actual title.
     """;
     /** 模板 <code>table_prompt_with_context</code> 正文（迁移自 prompts/document-engine/en/table-prompt.md） */
     public static final String TABLE_PROMPT_WITH_CONTEXT = """
@@ -777,6 +782,7 @@ public final class EnPromptCatalog {
     Footnotes: {table_footnote}
 
     Focus on extracting meaningful insights and relationships from the tabular data in the context of the surrounding content.
+    Use a semantic entity_name; do not return file names, figure or table numbers such as figure_30_1, or bare numeric fragments unless they are the actual title.
     """;
     /** 模板 <code>vision_prompt</code> 正文（迁移自 prompts/document-engine/en/vision-prompt.md） */
     public static final String VISION_PROMPT = """
@@ -807,7 +813,7 @@ public final class EnPromptCatalog {
     - Footnotes: {footnotes}
 
     Focus on providing accurate, detailed visual analysis that would be useful for knowledge retrieval.
-    Use a semantic entity_name; do not return file names or figure numbers such as figure_30_1 unless they are the actual title.
+    Use a semantic entity_name; do not return file names, figure numbers such as figure_30_1, or bare numeric fragments unless they are the actual title.
     """;
     /** 模板 <code>vision_prompt_with_context</code> 正文（迁移自 prompts/document-engine/en/vision-prompt.md） */
     public static final String VISION_PROMPT_WITH_CONTEXT = """
@@ -844,7 +850,7 @@ public final class EnPromptCatalog {
     - Footnotes: {footnotes}
 
     Focus on providing accurate, detailed visual analysis that incorporates the context and would be useful for knowledge retrieval.
-    Use a semantic entity_name; do not return file names or figure numbers such as figure_30_1 unless they are the actual title.
+    Use a semantic entity_name; do not return file names, figure numbers such as figure_30_1, or bare numeric fragments unless they are the actual title.
     """;
     /** 全部模板不可变注册表（模板名 -> 正文），供 {@link PromptCatalog} 渲染路由 */
     public static final Map<String, String> TEMPLATES = Map.ofEntries(

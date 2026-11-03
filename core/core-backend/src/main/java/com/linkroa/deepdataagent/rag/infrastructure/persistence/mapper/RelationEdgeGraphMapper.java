@@ -97,7 +97,7 @@ public interface RelationEdgeGraphMapper extends BaseMapper<RelationEdgeGraphEnt
 
     /**
      * 检索侧只读：1 跳关联边查询（③，实体候选集 → 关联边记录，双向）。
-     * <p><b>三层形态（风险 R-4：{@code DISTINCT ON} 要求表达式前缀排序键，与度数排序互斥）</b>：</p>
+     * <p><b>五段形态（选边顺序与去重口径逐字不变，仅在 {@code LIMIT} 后追加取分）：</b></p>
      * <ol>
      *     <li>{@code degree_map} CTE：统计实体在边表中作为 source/target 的出现次数
      *     （对齐参考 edge_degrees_batch，边度数 = 两端节点度数之和，不落存储列）；</li>
@@ -110,20 +110,28 @@ public interface RelationEdgeGraphMapper extends BaseMapper<RelationEdgeGraphEnt
      *     向量表侧 {@code v.source_name = 归一小端} 仍是唯一索引
      *     {@code uk_relation_info_vector_kb_src_tgt} 的等值前缀）取 {@code v.chunk_ids}，
      *     同款 {@code COALESCE} 兜底回落边行
-     *     {@code properties.sourceIds} 整数组；{@code source/target} 任一实体名命中候选集即返回，
-     *     命中边数由 {@code limit} 截断（默认 50）；</li>
-     *     <li>外层：先 {@code DISTINCT ON (source_name, target_name)} + 内层
+     *     {@code properties.sourceIds} 整数组；{@code source/target} 任一实体名命中候选集即返回；</li>
+     *     <li>{@code deduped}：{@code DISTINCT ON (source_name, target_name)} + 内层
      *     {@code ORDER BY 归一对, edge_updated_at DESC} 折叠历史双向残留行（同一归一对只保留
-     *     {@code updated_at} 最新的<b>整行</b>属性与账本，摄入侧收敛完成后行为不变），
-     *     再按「度数 + 权重」双键降序（同键以端点名字典序保证确定性）截断 {@code limit}。</li>
+     *     {@code updated_at} 最新的<b>整行</b>属性与账本，摄入侧收敛完成后行为不变）；</li>
+     *     <li>{@code limited}：按「度数 + 权重」双键降序（同键以端点名字典序保证确定性）截断
+     *     {@code limit}。<b>去重与排序键 MUST NOT 变化</b>；</li>
+     *     <li>最外层：仅对 {@code limited} 的至多 {@code limit} 条边再 {@code LEFT JOIN}
+     *     {@code relation_info_vector v2} 计算 {@code relation_score}——
+     *     {@code CASE WHEN v2.content_vector IS NULL THEN NULL
+     *     ELSE 1 - (v2.content_vector <=> CAST(#{queryVector} AS vector)) END}。
+     *     该段严格位于 {@code LIMIT} 之后，避免对枢纽实体的上万条候选边读取 4KB
+     *     {@code content_vector} 触发 TOAST 解压；{@code queryVector} 为空或
+     *     {@code content_vector} 为 {@code NULL} 时输出 {@code NULL}（由服务层回退端点余弦）。</li>
      * </ol>
-     * <p>{@code LIMIT} 位于去重之后的外层，故去重不会挤占候选席位（度数 Top-N 语义不变）。
-     * 实体候选集为空时不得调用（IN 空列表非法），由仓储层前置判空。</p>
+     * <p>实体候选集为空时不得调用（IN 空列表非法），由仓储层前置判空。</p>
      *
      * @param kbId        所属知识库ID（单库隔离）
      * @param entityNames 实体候选集名称列表（非空，调用方保证）
      * @param limit       返回上限（关联边 Top，默认 {@code RetrievalConstants.GRAPH_EDGE_TOP} = 50）
-     * @return 关联边投影列表（无向归一 + 归一对去重取新行，度数+权重双键降序）
+     * @param queryVector hl 查询向量 pgvector 字面量，可空；{@code null} 时 {@code relation_score} 恒为
+     *                    {@code NULL}（边分全部走端点回退）
+     * @return 关联边投影列表（无向归一 + 归一对去重取新行，度数+权重双键降序，含关系向量余弦分）
      */
     @Select("""
             <script>
@@ -160,28 +168,41 @@ public interface RelationEdgeGraphMapper extends BaseMapper<RelationEdgeGraphEnt
                        <foreach collection="entityNames" item="name" open="(" separator="," close=")">#{name}</foreach>
                        OR e.target_name IN
                        <foreach collection="entityNames" item="name" open="(" separator="," close=")">#{name}</foreach>)
-            )
-            SELECT deduped.source_name,
-                   deduped.target_name,
-                   deduped.edge_degree,
-                   deduped.weight,
-                   deduped.chunk_ids_raw,
-                   deduped.description,
-                   deduped.keywords_raw,
-                   deduped.file_paths_raw,
-                   deduped.created_at
-            FROM (
+            ),
+            deduped AS (
                 SELECT DISTINCT ON (source_name, target_name) *
                 FROM candidate_edges
                 ORDER BY source_name, target_name, edge_updated_at DESC
-            ) deduped
-            ORDER BY edge_degree DESC, weight DESC, source_name, target_name
-            LIMIT #{limit}
+            ),
+            limited AS (
+                SELECT * FROM deduped
+                ORDER BY edge_degree DESC, weight DESC, source_name, target_name
+                LIMIT #{limit}
+            )
+            SELECT limited.source_name,
+                   limited.target_name,
+                   limited.edge_degree,
+                   limited.weight,
+                   limited.chunk_ids_raw,
+                   limited.description,
+                   limited.keywords_raw,
+                   limited.file_paths_raw,
+                   limited.created_at,
+                   CASE WHEN v2.content_vector IS NULL THEN NULL
+                        ELSE 1 - (v2.content_vector &lt;=&gt;
+                                  CAST(#{queryVector,jdbcType=VARCHAR} AS vector))
+                   END AS relation_score
+            FROM limited
+            LEFT JOIN relation_info_vector v2
+                   ON v2.kb_id = #{kbId}
+                  AND v2.source_name = limited.source_name
+                  AND v2.target_name = limited.target_name
             </script>
             """)
     List<GraphEdgeProjection> searchRelatedEdgesByDegree(@Param("kbId") Long kbId,
                                                          @Param("entityNames") List<String> entityNames,
-                                                         @Param("limit") int limit);
+                                                         @Param("limit") int limit,
+                                                         @Param("queryVector") String queryVector);
 
     /**
      * 整库清退分片：按 kb_id 主键子查询分片物理删除关系图行（彻底物理删，无逻辑删墓碑）。

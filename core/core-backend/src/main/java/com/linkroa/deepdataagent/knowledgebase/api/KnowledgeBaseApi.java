@@ -182,7 +182,8 @@ public interface KnowledgeBaseApi {
 
     /**
      * BM25 通道只读检索：按关键词做全文检索并返回相关度分。
-     * <p>关键词按 websearch_to_tsquery 语法解析，命中返回 ts_rank_cd 相关度分。
+     * <p>由 pg_textsearch 在存储侧完成分词与 BM25 打分（语料级 TF/IDF），
+     * 返回值为取反后的非负分（越大越相关）。
      * 只读不加锁，不区分知识库生命周期状态（与 {@link #resolveById(Long)} 口径一致）。</p>
      * <p><b>可见性约束</b>：仅命中所属文档处于「已处理」（{@code PROCESSED}）状态的切片，
      * 摄入中、失败与删除链状态的文档其切片 MUST NOT 进入召回结果（不占用 {@code limit} 名额）。</p>

@@ -24,11 +24,8 @@ public final class RetrievalConstants {
      */
     public static final int GRAPH_EDGE_CHUNK_LIMIT = 5;
 
-    /** 精排保留 top K 默认值（rerank_top_k） */
+    /** 精排保留 top K 默认值（rerank_top_k；前后端统一唯一口径，前端草稿默认值与此一致） */
     public static final int RERANK_TOP_K_DEFAULT = 50;
-
-    /** 每通道向量召回数量默认值（参考 QueryParam） */
-    public static final int DEFAULT_TOP_K = 20;
 
     /**
      * 全局兜底语言全名（由历史裸语言码 {@code zh} 退役为全局兜底缺省值）。

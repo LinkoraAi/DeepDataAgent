@@ -87,11 +87,11 @@ export const FUSION_TYPES: Array<{ value: string; label: string }> = [
   { value: 'WEIGHTED_SUM', label: '加权求和' },
 ];
 
-/** 召回通道（RetrievalChannel，加权时的三键） */
+/** 召回通道（RetrievalChannel，加权时的三键；label 直接用作融合权重控件名称） */
 export const RETRIEVAL_CHANNELS: Array<{ value: string; label: string }> = [
-  { value: 'VECTOR', label: '向量' },
-  { value: 'BM25', label: '全文（BM25）' },
-  { value: 'GRAPH', label: '图谱' },
+  { value: 'VECTOR', label: 'VECTOR 通道' },
+  { value: 'BM25', label: 'BM25 通道' },
+  { value: 'GRAPH', label: 'GRAPH 通道' },
 ];
 
 /** 切片内容类型（ChunkContentType） */

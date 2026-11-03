@@ -1,5 +1,6 @@
 package com.linkroa.deepdataagent.knowledgebase.application.validation;
 
+import com.linkroa.deepdataagent.knowledgebase.application.contract.ChannelQueryCountDTO;
 import com.linkroa.deepdataagent.knowledgebase.application.contract.RetrievalConfigDTO;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.FusionStrategyConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.FusionStrategyType;
@@ -15,6 +16,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * 检索配置应用级校验器（写入口共用：REST 更新检索配置；另由保留能力 saveRetrievalConfig 复用）。
@@ -25,9 +27,13 @@ import java.util.Locale;
  *   <li>similarThreshold 取值 0~{@value RetrievalConfigDTO#SIMILAR_THRESHOLD_MAX}；</li>
  *   <li>rerankConfig 仅做结构校验：enabled=true 时必须提供非空 modelProfileId，
  *       MUST NOT 查询模型注册表（未注册标识可落库）；</li>
+ *   <li>channelQueryCountConfig 仅做范围校验：提供时任一通道数量必须为 1~{@value ChannelQueryCountDTO#QUERY_COUNT_MAX}
+ *       的整数，三字段均可省略（省略=未配置，运行时按默认值处理）；不做策略类型联动拦截
+ *       （NAIVE 不保存图谱数量由前端序列化约束，后端存什么读什么）；</li>
  *   <li>fusionConfig：fusionType 仅支持 RRF / WEIGHTED_SUM（回写为枚举名）；
  *       RRF 时 rrfK 必须大于 0，缺省回写默认值 60；
- *       WEIGHTED_SUM 时各通道稠密权重必须落在开区间 (0,1)。</li>
+ *       WEIGHTED_SUM 时各通道稠密权重必须落在开区间 (0,1)，
+ *       且已提供通道的权重合计不得大于 1（加权求和语义：权重是占比，不能超过总量）；</li>
  * </ul>
  * <p>无外部 BC 依赖、无状态静态工具；校验须在事务开启前完成。</p>
  */
@@ -44,6 +50,21 @@ public final class RetrievalConfigValidator {
     /** 结果返回数量下限 */
     private static final int RESULT_CHUNK_COUNT_MIN = 1;
 
+    /** 通道召回数量下限 */
+    private static final int QUERY_COUNT_MIN = 1;
+
+    /** 检索策略 JSON 字段名：通道召回数量配置 */
+    private static final String FIELD_CHANNEL_QUERY_COUNT_CONFIG = "channelQueryCountConfig";
+
+    /** 通道召回数量字段名：向量通道数量 */
+    private static final String FIELD_VECTOR_QUERY_COUNT = "vectorQueryCount";
+
+    /** 通道召回数量字段名：BM25 通道数量 */
+    private static final String FIELD_BM25_QUERY_COUNT = "bm25QueryCount";
+
+    /** 通道召回数量字段名：图谱通道数量 */
+    private static final String FIELD_GRAPH_QUERY_COUNT = "graphQueryCount";
+
     /** 相似度阈值下限 */
     private static final float SIMILAR_THRESHOLD_MIN = 0F;
 
@@ -55,6 +76,12 @@ public final class RetrievalConfigValidator {
 
     /** 融合配置字段名：各通道稠密权重 */
     private static final String FIELD_CHANNEL_DENSE_WEIGHT = "channelDenseWeight";
+
+    /** 通道稠密权重合计上限（加权求和语义：各通道权重是占比，合计不得超过 1） */
+    private static final double CHANNEL_DENSE_WEIGHT_TOTAL_MAX = 1D;
+
+    /** 浮点比较容差（0.1 步长输入下规避 0.7+0.2+0.1 这类二进制误差误判） */
+    private static final double WEIGHT_SUM_EPSILON = 1E-9D;
 
     /** 重排配置字段名：是否启用 */
     private static final String FIELD_ENABLED = "enabled";
@@ -113,6 +140,7 @@ public final class RetrievalConfigValidator {
         validateResultChunkCount(strategy);
         validateSimilarThreshold(strategy);
         validateRerankConfig(strategy);
+        validateChannelQueryCountConfig(strategy);
         normalizeAndValidateFusionConfig(strategy);
         return strategy;
     }
@@ -125,7 +153,7 @@ public final class RetrievalConfigValidator {
         String raw = typeNode.isTextual() ? typeNode.stringValue() : null;
         String normalized = StringUtils.trimToEmpty(raw).toUpperCase(Locale.ROOT);
         for (RetrievalStrategyType candidate : RetrievalStrategyType.values()) {
-            if (StringUtils.equals(candidate.name(), normalized)) {
+            if (Objects.equals(candidate.name(), normalized)) {
                 strategy.put(FIELD_STRATEGY_TYPE, candidate.name());
                 return;
             }
@@ -160,6 +188,45 @@ public final class RetrievalConfigValidator {
                 || thresholdNode.doubleValue() > RetrievalConfigDTO.SIMILAR_THRESHOLD_MAX) {
             throw new DeepDataAgentException("相似度阈值（similarThreshold）必须在"
                     + SIMILAR_THRESHOLD_MIN + "到" + RetrievalConfigDTO.SIMILAR_THRESHOLD_MAX + "之间");
+        }
+    }
+
+    /**
+     * 通道召回数量配置校验：节点可整体省略；提供时必须是 JSON 对象，
+     * 三字段（向量/BM25/图谱）均可独立省略，提供时必须为整数且落在 [1, 100]。
+     * <p>图谱数量不按策略类型拦截（NAIVE 下不保存由前端序列化约束；后端保存的值
+     * 在 NAIVE 运行时不被图谱通道消费）。</p>
+     */
+    private static void validateChannelQueryCountConfig(ObjectNode strategy) {
+        JsonNode countConfigNode = strategy.path(FIELD_CHANNEL_QUERY_COUNT_CONFIG);
+        if (countConfigNode.isMissingNode() || countConfigNode.isNull()) {
+            return;
+        }
+        if (!countConfigNode.isObject()) {
+            throw new DeepDataAgentException("通道召回数量配置（channelQueryCountConfig）必须是JSON对象");
+        }
+        validateQueryCountField(countConfigNode, FIELD_VECTOR_QUERY_COUNT, "向量通道");
+        validateQueryCountField(countConfigNode, FIELD_BM25_QUERY_COUNT, "BM25通道");
+        validateQueryCountField(countConfigNode, FIELD_GRAPH_QUERY_COUNT, "图谱通道");
+    }
+
+    /**
+     * 校验单个通道召回数量字段：省略跳过；提供时必须为整数且落在 [1, 100]。
+     *
+     * @param countConfig 通道召回数量配置节点
+     * @param fieldName   字段名
+     * @param channelLabel 通道中文名（错误消息用）
+     */
+    private static void validateQueryCountField(JsonNode countConfig, String fieldName, String channelLabel) {
+        JsonNode countNode = countConfig.path(fieldName);
+        if (countNode.isMissingNode() || countNode.isNull()) {
+            return;
+        }
+        if (!countNode.isNumber() || !countNode.isIntegralNumber()
+                || countNode.intValue() < QUERY_COUNT_MIN
+                || countNode.intValue() > ChannelQueryCountDTO.QUERY_COUNT_MAX) {
+            throw new DeepDataAgentException(channelLabel + "召回数量（channelQueryCountConfig." + fieldName
+                    + "）必须在" + QUERY_COUNT_MIN + "到" + ChannelQueryCountDTO.QUERY_COUNT_MAX + "之间的整数");
         }
     }
 
@@ -209,7 +276,7 @@ public final class RetrievalConfigValidator {
         String raw = typeNode.isTextual() ? typeNode.stringValue() : null;
         String normalized = StringUtils.trimToEmpty(raw).toUpperCase(Locale.ROOT);
         for (FusionStrategyType candidate : FusionStrategyType.values()) {
-            if (StringUtils.equals(candidate.name(), normalized)) {
+            if (Objects.equals(candidate.name(), normalized)) {
                 fusion.put(FIELD_FUSION_TYPE, candidate.name());
                 return candidate;
             }
@@ -232,7 +299,8 @@ public final class RetrievalConfigValidator {
     }
 
     /**
-     * 加权求和稠密权重校验：各已提供通道的权重必须为数值且落在开区间 (0,1)。
+     * 加权求和稠密权重校验：各已提供通道的权重必须为数值且落在开区间 (0,1)；
+     * 已提供通道的权重合计不得大于 1（缺失通道视为未配置，不参与合计）。
      */
     private static void validateChannelDenseWeights(ObjectNode fusion) {
         JsonNode weightsNode = fusion.path(FIELD_CHANNEL_DENSE_WEIGHT);
@@ -242,6 +310,7 @@ public final class RetrievalConfigValidator {
         if (!weightsNode.isObject()) {
             throw new DeepDataAgentException("通道稠密权重（channelDenseWeight）必须是JSON对象");
         }
+        double total = 0D;
         for (RetrievalChannel channel : RetrievalChannel.values()) {
             JsonNode weightNode = weightsNode.path(channel.name());
             if (weightNode.isMissingNode() || weightNode.isNull()) {
@@ -251,6 +320,11 @@ public final class RetrievalConfigValidator {
                 throw new DeepDataAgentException("通道" + channel.name()
                         + "的稠密权重必须落在开区间(0,1)，当前值=" + weightNode);
             }
+            total += weightNode.doubleValue();
+        }
+        if (total > CHANNEL_DENSE_WEIGHT_TOTAL_MAX + WEIGHT_SUM_EPSILON) {
+            throw new DeepDataAgentException("通道稠密权重合计不能大于" + CHANNEL_DENSE_WEIGHT_TOTAL_MAX
+                    + "，当前合计=" + total);
         }
     }
 }

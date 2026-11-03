@@ -299,16 +299,17 @@ class DefaultAnswerGeneratorStreamTest {
      * @return 策略配置
      */
     private static RetrievalStrategyConfig strategyConfig() {
-        return new RetrievalStrategyConfig(RetrievalStrategyType.MIX, Boolean.TRUE, 5, 0.2F, null, null);
+        return new RetrievalStrategyConfig(RetrievalStrategyType.MIX, Boolean.TRUE, 5, 0.2F, null,
+                null, null);
     }
 
     /**
-     * 构造检索内部执行请求。
+     * 构造检索内部执行请求（通道召回数量不指定，走紧凑构造器默认值）。
      *
      * @return 检索请求
      */
     private static RetrievalQuery retrievalQuery() {
         return new RetrievalQuery(KB_ID, QUERY, List.of("营收"), List.of("公司", "年报"),
-                20, 10, 4096, 2000, 3000);
+                4096, 2000, 3000);
     }
 }

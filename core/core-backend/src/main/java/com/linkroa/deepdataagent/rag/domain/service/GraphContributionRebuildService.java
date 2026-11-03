@@ -508,7 +508,7 @@ public class GraphContributionRebuildService {
                 continue;
             }
             result.nodes().stream()
-                    .filter(node -> ObjectUtils.isNotEmpty(node) && StringUtils.equals(node.entityName(), name))
+                    .filter(node -> ObjectUtils.isNotEmpty(node) && Objects.equals(node.entityName(), name))
                     .findFirst()
                     .ifPresent(records::add);
         }
@@ -996,7 +996,7 @@ public class GraphContributionRebuildService {
      * @return 向量分量数组
      */
     private float[] reuseOrEmbedEntity(GraphRebuildContext ctx, EntityLedgerSnapshot snapshot, String content) {
-        if (ObjectUtils.isNotEmpty(snapshot.vector()) && StringUtils.equals(snapshot.content(), content)) {
+        if (ObjectUtils.isNotEmpty(snapshot.vector()) && Objects.equals(snapshot.content(), content)) {
             return snapshot.vector();
         }
         return embeddingClient.embed(ctx.embeddingModelProfileId(), content);
@@ -1012,7 +1012,7 @@ public class GraphContributionRebuildService {
      */
     private float[] reuseOrEmbedRelation(GraphRebuildContext ctx, RelationLedgerSnapshot snapshot,
                                          String content) {
-        if (ObjectUtils.isNotEmpty(snapshot.vector()) && StringUtils.equals(snapshot.content(), content)) {
+        if (ObjectUtils.isNotEmpty(snapshot.vector()) && Objects.equals(snapshot.content(), content)) {
             return snapshot.vector();
         }
         return embeddingClient.embed(ctx.embeddingModelProfileId(), content);
@@ -1028,7 +1028,7 @@ public class GraphContributionRebuildService {
      * @return 可复用向量；不可复用返回 {@code null}
      */
     private static float[] reusableVector(String expectedContent, String currentContent, float[] currentVector) {
-        return StringUtils.equals(currentContent, expectedContent) ? currentVector : null;
+        return Objects.equals(currentContent, expectedContent) ? currentVector : null;
     }
 
     // ================================================================ 收集与重算共用小工具
@@ -1264,8 +1264,8 @@ public class GraphContributionRebuildService {
             return null;
         }
         return rows.stream()
-                .filter(row -> StringUtils.equals(row.sourceName(), source)
-                        && StringUtils.equals(row.targetName(), target))
+                .filter(row -> Objects.equals(row.sourceName(), source)
+                        && Objects.equals(row.targetName(), target))
                 .findFirst()
                 .orElseGet(() -> rows.get(0));
     }

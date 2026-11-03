@@ -2,6 +2,7 @@ package com.linkroa.deepdataagent.rag.application.service;
 
 import com.linkroa.deepdataagent.knowledgebase.api.KnowledgeBaseApi;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.Chunk;
+import com.linkroa.deepdataagent.knowledgebase.domain.model.ChannelQueryCountConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.FusionStrategyConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.RetrievalStrategyConfig;
 import com.linkroa.deepdataagent.knowledgebase.domain.model.enums.ChunkContentType;
@@ -226,16 +227,17 @@ class RetrievalApplicationServiceTest {
      */
     private RetrievalStrategyConfig mixConfig() {
         return new RetrievalStrategyConfig(RetrievalStrategyType.MIX, true, 5, 0.5F, null,
-                new FusionStrategyConfig(FusionStrategyType.RRF, FusionStrategyConfig.DEFAULT_RRF_K, null));
+                new FusionStrategyConfig(FusionStrategyType.RRF, FusionStrategyConfig.DEFAULT_RRF_K, null),
+                null);
     }
 
     /**
-     * 构造基础检索请求（预算字段全部走紧凑构造器默认值）。
+     * 构造基础检索请求（预算字段全部走紧凑构造器默认值，通道召回数量恒 null 由库级配置填充）。
      *
      * @return 检索请求
      */
     private RetrievalQuery request() {
-        return new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null, null);
+        return new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null);
     }
 
     /**
@@ -244,7 +246,7 @@ class RetrievalApplicationServiceTest {
      * @return 含附图的检索请求
      */
     private RetrievalQuery requestWithImage() {
-        return new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null, null, List.of(ATTACHMENT));
+        return new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, List.of(ATTACHMENT));
     }
 
     /**
@@ -255,7 +257,7 @@ class RetrievalApplicationServiceTest {
      */
     private RetrievalQuery requestWithImage(RetrievalMultimodalOptions options) {
         return new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null, null,
-                List.of(ATTACHMENT), options, null, null);
+                null, List.of(ATTACHMENT), options, null, null);
     }
 
     /**
@@ -387,8 +389,8 @@ class RetrievalApplicationServiceTest {
         // given：无附图但显式携带开关（A=false），链路与基线同桩
         RetrievalStrategyConfig cfg = mixConfig();
         stubMixChain(cfg, QUERY, REWRITTEN);
-        RetrievalQuery request = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null, null,
-                List.of(), new RetrievalMultimodalOptions(false, true), null, null);
+        RetrievalQuery request = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null,
+                null, null, List.of(), new RetrievalMultimodalOptions(false, true), null, null);
 
         // when
         RetrievalResult result = retrievalApplicationService.search(request);
@@ -436,8 +438,8 @@ class RetrievalApplicationServiceTest {
         // given
         RetrievalStrategyConfig cfg = mixConfig();
         stubMixChain(cfg, QUERY, REWRITTEN);
-        RetrievalQuery request = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null, null,
-                List.of(), RetrievalMultimodalOptions.defaults(), 12, 2);
+        RetrievalQuery request = new RetrievalQuery(KB_ID, QUERY, null, null, null, null, null, null,
+                null, null, List.of(), RetrievalMultimodalOptions.defaults(), 12, 2);
 
         // when
         retrievalApplicationService.search(request);
@@ -610,9 +612,9 @@ class RetrievalApplicationServiceTest {
 
         // when：总预算同额（12000），唯一差异为实体截断份额——缺省 2000 vs 小值 50
         RetrievalResult baseline = serviceWithRealBuilder.search(new RetrievalQuery(KB_ID, QUERY, null, null,
-                null, null, 12000, null, null));
+                12000, null, null));
         RetrievalResult smallShare = serviceWithRealBuilder.search(new RetrievalQuery(KB_ID, QUERY, null, null,
-                null, null, 12000, 50, null));
+                12000, 50, null));
 
         // then：默认份额装入全部 5 条实体记录；小值逐条累加截断后仅剩首条轻量记录（实体段缩短）
         assertEquals(5, countEntityRecordLines(baseline.context().contextData()));
@@ -649,8 +651,8 @@ class RetrievalApplicationServiceTest {
     @Test
     void should_completePipelineWithoutKeywordAbort_when_search_given_naiveStrategyAndEmptyKeywords() {
         // given：NAIVE 模式提取返回空关键词对，不得触发关键词失败终止
-        RetrievalStrategyConfig cfg =
-                new RetrievalStrategyConfig(RetrievalStrategyType.NAIVE, false, null, null, null, null);
+        RetrievalStrategyConfig cfg = new RetrievalStrategyConfig(RetrievalStrategyType.NAIVE, false,
+                null, null, null, null, null);
         when(knowledgeBaseApi.isActive(KB_ID)).thenReturn(true);
         when(knowledgeBaseApi.findRetrievalStrategyByKbId(KB_ID)).thenReturn(cfg);
         when(queryUnderstandingService.rewrite(eq(QUERY), eq(cfg), eq(KB_ID), any(AtomicInteger.class)))
@@ -983,7 +985,7 @@ class RetrievalApplicationServiceTest {
     void should_fuseWithDefaultRrf_when_search_given_nullFusionConfig() {
         // given：库级策略未携带 fusionConfig → 编排层兜底默认 RRF（k=60）
         RetrievalStrategyConfig cfg = new RetrievalStrategyConfig(
-                RetrievalStrategyType.MIX, false, null, null, null, null);
+                RetrievalStrategyType.MIX, false, null, null, null, null, null);
         KeywordPair pair = new KeywordPair(List.of("发货超时"), List.of("订单"));
         when(knowledgeBaseApi.isActive(KB_ID)).thenReturn(true);
         when(knowledgeBaseApi.findRetrievalStrategyByKbId(KB_ID)).thenReturn(cfg);
@@ -1080,12 +1082,116 @@ class RetrievalApplicationServiceTest {
         assertEquals(REWRITTEN, effective.query());
         assertEquals(pair.hl(), effective.hlKeywords());
         assertEquals(pair.ll(), effective.llKeywords());
-        assertEquals(RetrievalQuery.DEFAULT_TOP_K, effective.topK());
-        assertEquals(RetrievalQuery.DEFAULT_TOP_K, effective.chunkTopK());
+        // 库级策略未携带 channelQueryCountConfig → 三通道数量归一默认值（请求侧不再承载）
+        assertEquals(RetrievalQuery.DEFAULT_QUERY_COUNT, effective.vectorQueryCount());
+        assertEquals(RetrievalQuery.DEFAULT_QUERY_COUNT, effective.bm25QueryCount());
+        assertEquals(RetrievalQuery.DEFAULT_QUERY_COUNT, effective.graphQueryCount());
         assertEquals(RetrievalQuery.DEFAULT_MAX_TOTAL_TOKENS, effective.maxTotalTokens());
         // Stage 5 锚定用户原始提问（改写文本只服务检索链路）
         verify(answerGenerator).generate(eq(QUERY), any(KgContext.class), eq(cfg),
                 any(RetrievalQuery.class), any(AtomicInteger.class));
+    }
+
+    @Test
+    void should_fillChannelCountsFromStrategy_when_search_given_configuredChannelQueryCounts() {
+        // given：库级策略携带三通道数量（向量 30 / BM25 15 / 图谱 25）
+        RetrievalStrategyConfig cfg = new RetrievalStrategyConfig(RetrievalStrategyType.MIX, true, 5, 0.5F, null,
+                new FusionStrategyConfig(FusionStrategyType.RRF, FusionStrategyConfig.DEFAULT_RRF_K, null),
+                new ChannelQueryCountConfig(30, 15, 25));
+        when(knowledgeBaseApi.isActive(KB_ID)).thenReturn(true);
+        when(knowledgeBaseApi.findRetrievalStrategyByKbId(KB_ID)).thenReturn(cfg);
+        when(queryUnderstandingService.rewrite(eq(QUERY), eq(cfg), eq(KB_ID), any(AtomicInteger.class)))
+                .thenReturn(REWRITTEN);
+        when(queryUnderstandingService.extract(eq(REWRITTEN), any(), any(), eq(cfg), eq(KB_ID),
+                any(AtomicInteger.class))).thenReturn(new KeywordPair(List.of(), List.of()));
+        when(recallService.recall(any(RetrievalQuery.class), eq(cfg)))
+                .thenReturn(new RecallService.RecallOutcome(List.of(VECTOR_CANDIDATE), KG_RESULT));
+        when(fusionService.fuse(anyMap(), any(FusionStrategyConfig.class))).thenReturn(RANKED);
+        when(reranker.rerank(anyString(), anyList(), any(), any())).thenReturn(RANKED);
+        when(contextBuilder.build(eq(KB_ID), anyList(), any(), any(ContextBudget.class))).thenReturn(KG_CONTEXT);
+        when(answerGenerator.generate(anyString(), any(KgContext.class), any(), any(RetrievalQuery.class),
+                any(AtomicInteger.class))).thenReturn(ANSWER);
+
+        // when
+        retrievalApplicationService.search(request());
+
+        // then：effective 请求的通道数量来自库级配置（请求侧不再承载，统一取值点在编排层）
+        ArgumentCaptor<RetrievalQuery> queryCaptor = ArgumentCaptor.forClass(RetrievalQuery.class);
+        verify(recallService).recall(queryCaptor.capture(), eq(cfg));
+        RetrievalQuery effective = queryCaptor.getValue();
+        assertEquals(30, effective.vectorQueryCount());
+        assertEquals(15, effective.bm25QueryCount());
+        assertEquals(25, effective.graphQueryCount());
+    }
+
+    @Test
+    void should_fillDefaultsPerChannel_when_search_given_partialChannelQueryCounts() {
+        // given：库级策略仅配置向量数量（部分配置，其余通道独立归默认值）
+        RetrievalStrategyConfig cfg = new RetrievalStrategyConfig(RetrievalStrategyType.MIX, true, 5, 0.5F, null,
+                new FusionStrategyConfig(FusionStrategyType.RRF, FusionStrategyConfig.DEFAULT_RRF_K, null),
+                new ChannelQueryCountConfig(30, null, null));
+        when(knowledgeBaseApi.isActive(KB_ID)).thenReturn(true);
+        when(knowledgeBaseApi.findRetrievalStrategyByKbId(KB_ID)).thenReturn(cfg);
+        when(queryUnderstandingService.rewrite(eq(QUERY), eq(cfg), eq(KB_ID), any(AtomicInteger.class)))
+                .thenReturn(REWRITTEN);
+        when(queryUnderstandingService.extract(eq(REWRITTEN), any(), any(), eq(cfg), eq(KB_ID),
+                any(AtomicInteger.class))).thenReturn(new KeywordPair(List.of(), List.of()));
+        when(recallService.recall(any(RetrievalQuery.class), eq(cfg)))
+                .thenReturn(new RecallService.RecallOutcome(List.of(VECTOR_CANDIDATE), KG_RESULT));
+        when(fusionService.fuse(anyMap(), any(FusionStrategyConfig.class))).thenReturn(RANKED);
+        when(reranker.rerank(anyString(), anyList(), any(), any())).thenReturn(RANKED);
+        when(contextBuilder.build(eq(KB_ID), anyList(), any(), any(ContextBudget.class))).thenReturn(KG_CONTEXT);
+        when(answerGenerator.generate(anyString(), any(KgContext.class), any(), any(RetrievalQuery.class),
+                any(AtomicInteger.class))).thenReturn(ANSWER);
+
+        // when
+        retrievalApplicationService.search(request());
+
+        // then：已配置通道取配置值，未配置通道独立归默认值
+        ArgumentCaptor<RetrievalQuery> queryCaptor = ArgumentCaptor.forClass(RetrievalQuery.class);
+        verify(recallService).recall(queryCaptor.capture(), eq(cfg));
+        RetrievalQuery effective = queryCaptor.getValue();
+        assertEquals(30, effective.vectorQueryCount());
+        assertEquals(RetrievalQuery.DEFAULT_QUERY_COUNT, effective.bm25QueryCount());
+        assertEquals(RetrievalQuery.DEFAULT_QUERY_COUNT, effective.graphQueryCount());
+    }
+
+    @Test
+    void should_truncateRankedCandidates_when_search_given_resultChunkCountWithRerankDisabled() {
+        // given：重排关闭（默认态，无 rerankConfig）+ 结果返回数量 2；融合产出 3 条候选
+        List<RankedChunk> fused = List.of(
+                new RankedChunk(203L, 0.90D, "a.pdf"),
+                new RankedChunk(202L, 0.80D, "b.pdf"),
+                new RankedChunk(201L, 0.70D, "c.pdf"));
+        RetrievalStrategyConfig cfg = new RetrievalStrategyConfig(RetrievalStrategyType.MIX, true, 2, 0.5F, null,
+                new FusionStrategyConfig(FusionStrategyType.RRF, FusionStrategyConfig.DEFAULT_RRF_K, null),
+                null);
+        when(knowledgeBaseApi.isActive(KB_ID)).thenReturn(true);
+        when(knowledgeBaseApi.findRetrievalStrategyByKbId(KB_ID)).thenReturn(cfg);
+        when(queryUnderstandingService.rewrite(eq(QUERY), eq(cfg), eq(KB_ID), any(AtomicInteger.class)))
+                .thenReturn(REWRITTEN);
+        when(queryUnderstandingService.extract(eq(REWRITTEN), any(), any(), eq(cfg), eq(KB_ID),
+                any(AtomicInteger.class))).thenReturn(new KeywordPair(List.of(), List.of()));
+        when(recallService.recall(any(RetrievalQuery.class), eq(cfg)))
+                .thenReturn(new RecallService.RecallOutcome(List.of(VECTOR_CANDIDATE), KG_RESULT));
+        when(fusionService.fuse(anyMap(), any(FusionStrategyConfig.class))).thenReturn(fused);
+        // 重排关闭语义的等价桩：精排直通（未启用重排时 rerank 原样返回候选）
+        when(reranker.rerank(anyString(), anyList(), any(), any())).thenReturn(fused);
+        when(contextBuilder.build(eq(KB_ID), anyList(), any(), any(ContextBudget.class))).thenReturn(KG_CONTEXT);
+        when(answerGenerator.generate(anyString(), any(KgContext.class), any(), any(RetrievalQuery.class),
+                any(AtomicInteger.class))).thenReturn(ANSWER);
+
+        // when
+        retrievalApplicationService.search(request());
+
+        // then：Stage 4 收到的候选已按 resultChunkCount 截断（截断与重排开关无关，
+        // 历史实现仅在精排开启路径截断属口径缺陷，本用例锁定修复后语义）
+        ArgumentCaptor<List<RankedChunk>> rankedCaptor = ArgumentCaptor.forClass(List.class);
+        verify(contextBuilder).build(eq(KB_ID), rankedCaptor.capture(), any(), any(ContextBudget.class));
+        List<RankedChunk> ranked = rankedCaptor.getValue();
+        assertEquals(2, ranked.size());
+        assertEquals(203L, ranked.get(0).chunkId());
+        assertEquals(202L, ranked.get(1).chunkId());
     }
 
     @Test
@@ -1187,7 +1293,7 @@ class RetrievalApplicationServiceTest {
 
         // when
         RetrievalResult result = retrievalApplicationService.search(
-                new RetrievalQuery(KB_ID, LONG_QUERY, null, null, null, null, null, null, null));
+                new RetrievalQuery(KB_ID, LONG_QUERY, null, null, null, null, null));
 
         // then：明细恒为空表且零切片回取
         assertNotNull(result.chunkViews());

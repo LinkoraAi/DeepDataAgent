@@ -114,6 +114,10 @@ public class RetrievalController {
      * 请求体 → 检索执行契约（两端点共用的唯一组装口径）。
      * <p>附图校验解码与开关缺省归一在此完成：校验先于任何检索与模型调用，
      * 开关缺省视为 true（维持条件自动触发基线）。</p>
+     * <p>通道召回数量（向量/BM25/图谱）与图谱召回上限均不入 REST 契约：请求体不承载，
+     * 恒传 null——通道数量由编排层在 Stage 1 从库级 {@code channelQueryCountConfig} 填充
+     * （未配置回落契约默认值 20），图谱上限由 RetrievalQuery 紧凑构造器回落
+     * RetrievalConstants 默认值。</p>
      *
      * @param request 检索请求体（已通过 jakarta 必填校验）
      * @return 检索执行契约（预算字段 null 由契约紧凑构造器归一为默认值）
@@ -124,10 +128,8 @@ public class RetrievalController {
         RetrievalMultimodalOptions options = new RetrievalMultimodalOptions(
                 ObjectUtils.defaultIfNull(request.queryImageTranscribe(), Boolean.TRUE),
                 ObjectUtils.defaultIfNull(request.answerImageDirectRead(), Boolean.TRUE));
-        // 图谱召回上限（关联边 Top / 每源 chunk 数）不入 REST 契约：请求体不承载，恒传 null
-        // 由 RetrievalQuery 紧凑构造器回落 RetrievalConstants 默认值（与常量化时代行为逐字一致）
         return new RetrievalQuery(request.kbId(), request.query(), request.hlKeywords(), request.llKeywords(),
-                request.topK(), request.chunkTopK(), request.maxTotalTokens(), request.maxEntityTokens(),
+                null, null, null, request.maxTotalTokens(), request.maxEntityTokens(),
                 request.maxRelationTokens(), images, options, null, null);
     }
 }
